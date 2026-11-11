@@ -27,7 +27,7 @@ else ifeq ($(TARGET),x86_64)
 else ifeq ($(TARGET),host-sim)
     CC         := gcc
     CFLAGS     := -std=c11 $(COMMON_CFLAGS) -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM
-    LDFLAGS    := -lpthread
+    LDFLAGS    := -lpthread -lrt -lm
     OUT_DIR    := $(BUILD_DIR)/host-sim
 else
     $(error Unknown TARGET '$(TARGET)'. Use rpi4, x86_64, or host-sim)

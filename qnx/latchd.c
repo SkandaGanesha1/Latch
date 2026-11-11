@@ -132,7 +132,9 @@ static latch_tape_entry_t     g_latch_tape[LATCH_TAPE_CAPACITY];
 static _Atomic uint32_t       g_tape_write_idx = 0u;
 static latch_publish_buffer_t g_pub_buf;
 static latch_simplex_state_t  g_simplex;
+#ifdef __QNXNTO__
 static volatile sig_atomic_t  g_running = 1;
+#endif
 static uint64_t               g_cycles_per_sec = 0;
 
 /* ==========================================================================

@@ -33,7 +33,9 @@ static void send_frame(int fd, uint32_t seq, int32_t u_mrad, uint16_t fault) {
     p.u_mrad         = u_mrad;
     p.pre_fault_bits = fault;
     p.ingest_cycles  = ClockCycles();
-    write(fd, &p, sizeof(p));
+    if (write(fd, &p, sizeof(p)) < 0) {
+        /* Ignore write failures during test sequences */
+    }
     usleep(2000);
 }
 

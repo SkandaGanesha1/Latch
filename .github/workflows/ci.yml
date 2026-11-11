@@ -27,7 +27,7 @@ jobs:
 
       - name: Execute 5-Fault, Seqlock & Manifest Self-Tests
         run: |
-          ./qnx/build/host-sim/latchd
+          ./qnx/build/host-sim/latchd -m qnx/latch.manifest
 
       - name: Run 200-Tick End-to-End Pipeline Suite
         run: |
