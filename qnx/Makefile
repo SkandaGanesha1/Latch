@@ -56,8 +56,8 @@ $(LATCHD_BIN): latchd.c latch_protocol.h $(MANIFEST_OBJ) | dirs
 $(INGEST_BIN): latch_ingest.c latch_protocol.h $(MANIFEST_OBJ) | dirs
 	$(CC) $(CFLAGS) latch_ingest.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
 
-$(LATCHCTL_BIN): latchctl.c latch_protocol.h | dirs
-	$(CC) $(CFLAGS) latchctl.c -o $@ $(LDFLAGS)
+$(LATCHCTL_BIN): latchctl.c latch_protocol.h $(MANIFEST_OBJ) | dirs
+	$(CC) $(CFLAGS) latchctl.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
 
 $(LATCHLOG_BIN): latchlog.c latch_protocol.h | dirs
 	$(CC) $(CFLAGS) latchlog.c -o $@ $(LDFLAGS)
@@ -76,15 +76,19 @@ host-sim:
 
 check: host-sim
 	./$(BUILD_DIR)/host-sim/latchd -m latch.manifest
+	./$(BUILD_DIR)/host-sim/latchctl manifest-verify latch.manifest
 	python3 ../guest/liar.py suite --raw-stdout | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv
+
+secpol: | dirs
+	secpolc -v -o $(BUILD_DIR)/secpol.bin latch.secpol
 
 qemu:
 	./run_qemu.sh
 
-ifs-rpi4: rpi4
+ifs-rpi4: rpi4 secpol
 	mkifs -v latch_rpi4.build $(BUILD_DIR)/nto-aarch64-le/latch_rpi4.ifs
 
-ifs-qemu: rpi4
+ifs-qemu: rpi4 secpol
 	mkifs -v latch_qemu.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu.ifs
 
 clean:

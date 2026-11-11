@@ -119,6 +119,26 @@ static int latch_read_exact(int fd, void *buf, size_t len) {
     return (total == len) ? 1 : -1;
 }
 
+static int latch_write_exact(int fd, const void *buf, size_t len) {
+    const uint8_t *p = (const uint8_t *)buf;
+    size_t total = 0u;
+
+    while (total < len && g_ingest_running) {
+        ssize_t n = write(fd, p + total, len - total);
+        if (n > 0) {
+            total += (size_t)n;
+        } else if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        } else {
+            return -1;
+        }
+    }
+    return (total == len) ? 0 : -1;
+}
+
 static void latch_parse_wire_frame(const latch_wire_frame_t *frame,
                                    latch_ipc_proposal_t *out_prop) {
     uint16_t faults = LATCH_FAULT_NONE;
@@ -272,11 +292,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        ssize_t written = write(out_fd, &ipc_prop, sizeof(ipc_prop));
-        if (written != (ssize_t)sizeof(ipc_prop)) {
-            if (errno == EINTR) {
-                continue;
-            }
+        if (latch_write_exact(out_fd, &ipc_prop, sizeof(ipc_prop)) != 0) {
             break;
         }
 

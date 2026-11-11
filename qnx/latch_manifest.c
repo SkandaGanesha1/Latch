@@ -221,6 +221,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     strncpy(m->axes[0].unit, "mrad", sizeof(m->axes[0].unit) - 1);
     m->axes[0].min = -1000;
     m->axes[0].max = 1000;
+    m->axes[0].fullscale_counts_span = 2000;
 
     m->envelope.theta_min_mrad = -1000;
     m->envelope.theta_max_mrad = 1000;
@@ -239,6 +240,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     m->timing.period_us = 1000;
     m->timing.watchdog_ticks = 2;
     m->timing.wcet_budget_us = 100;
+    m->timing.max_backlog_ticks = 4;
 
     m->recovery.hysteresis_clean_frames = 25;
     m->recovery.hold_to_home_ticks = 50;
@@ -265,6 +267,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     m->actuator.pwm_max = 410;
     m->actuator.retries = 1;
     m->actuator.init_delay_us = 600;
+    m->actuator.required = false;
 
     m->tape.capacity = 4096;
 
@@ -363,6 +366,53 @@ static const char *json_find_key(const char *json, const char *key) {
     return skip_ws(p);
 }
 
+int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex, char *err_buf, size_t err_len) {
+    if (manifest_path == NULL || computed_hex == NULL) {
+        if (err_buf) snprintf(err_buf, err_len, "Invalid arguments to sidecar verification");
+        return -EINVAL;
+    }
+    char sidecar_path[512];
+    snprintf(sidecar_path, sizeof(sidecar_path), "%s.sha256", manifest_path);
+
+    FILE *sf = fopen(sidecar_path, "r");
+    if (!sf) {
+        /* Sidecar is optional, absence is not an error */
+        return 0;
+    }
+
+    char expected_hex[128];
+    if (fscanf(sf, "%127s", expected_hex) != 1) {
+        fclose(sf);
+        if (err_buf) snprintf(err_buf, err_len, "Malformed sidecar file '%s'", sidecar_path);
+        return -EINVAL;
+    }
+    fclose(sf);
+
+    /* Strip potential trailing newline or whitespace */
+    char *end = expected_hex;
+    while (*end && isxdigit((unsigned char)*end)) {
+        end++;
+    }
+    *end = '\0';
+
+    if (strlen(expected_hex) != 64) {
+        if (err_buf) snprintf(err_buf, err_len, "Sidecar digest length invalid (%zu != 64)", strlen(expected_hex));
+        return -EINVAL;
+    }
+
+    for (size_t i = 0; i < 64; ++i) {
+        if (tolower((unsigned char)expected_hex[i]) != tolower((unsigned char)computed_hex[i])) {
+            if (err_buf) {
+                snprintf(err_buf, err_len,
+                         "Sidecar SHA-256 mismatch: computed %.16s... != expected %.16s... (Fail-Closed)",
+                         computed_hex, expected_hex);
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf, size_t err_len) {
     if (out_m == NULL || path == NULL) {
         if (err_buf) snprintf(err_buf, err_len, "Invalid arguments to latch_manifest_load");
@@ -408,21 +458,55 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
         snprintf(&out_m->sha256_hex[i * 2], 3, "%02x", out_m->sha256[i]);
     }
 
+    /* Verify sidecar SHA-256 file if present (<path>.sha256) */
+    if (latch_manifest_verify_sidecar(path, out_m->sha256_hex, err_buf, err_len) != 0) {
+        free(buf);
+        return -1;
+    }
+
     const char *p;
 
     /* Parse schema_version */
     if ((p = json_find_key(buf, "schema_version")) != NULL) {
-        if (!json_match_uint32(&p, &out_m->schema_version) || out_m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION) {
+        if (!json_match_uint32(&p, &out_m->schema_version) ||
+            (out_m->schema_version != 1u && out_m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION)) {
             free(buf);
-            if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u != %u)",
-                                  out_m->schema_version, LATCH_MANIFEST_SCHEMA_VERSION);
+            if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u)",
+                                  out_m->schema_version);
             return -EINVAL;
         }
     }
 
-    /* Parse plant name */
+    /* Parse plant name and axes */
     if ((p = json_find_key(buf, "name")) != NULL) {
         json_match_str(&p, out_m->plant_name, sizeof(out_m->plant_name));
+    }
+    if ((p = json_find_key(buf, "axes")) != NULL) {
+        p = strchr(p, '[');
+        if (p) {
+            p++;
+            out_m->num_axes = 0;
+            while (*p && *p != ']' && out_m->num_axes < LATCH_MAX_AXES) {
+                const char *obj = strchr(p, '{');
+                if (!obj) break;
+                uint32_t idx = out_m->num_axes;
+                const char *id_ptr   = json_find_key(obj, "id");
+                const char *kind_ptr = json_find_key(obj, "kind");
+                const char *unit_ptr = json_find_key(obj, "unit");
+                const char *min_ptr  = json_find_key(obj, "min");
+                const char *max_ptr  = json_find_key(obj, "max");
+                if (id_ptr)   json_match_uint32(&id_ptr, &out_m->axes[idx].id);
+                if (kind_ptr) json_match_str(&kind_ptr, out_m->axes[idx].kind, sizeof(out_m->axes[idx].kind));
+                if (unit_ptr) json_match_str(&unit_ptr, out_m->axes[idx].unit, sizeof(out_m->axes[idx].unit));
+                if (min_ptr)  json_match_int32(&min_ptr, &out_m->axes[idx].min);
+                if (max_ptr)  json_match_int32(&max_ptr, &out_m->axes[idx].max);
+                out_m->axes[idx].fullscale_counts_span = out_m->axes[idx].max - out_m->axes[idx].min;
+                out_m->num_axes++;
+                p = strchr(obj, '}');
+                if (!p) break;
+                p++;
+            }
+        }
     }
 
     /* Parse envelope constants */
@@ -466,9 +550,10 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     }
 
     /* Parse timing */
-    if ((p = json_find_key(buf, "period_us")) != NULL)      json_match_uint32(&p, &out_m->timing.period_us);
-    if ((p = json_find_key(buf, "watchdog_ticks")) != NULL) json_match_uint32(&p, &out_m->timing.watchdog_ticks);
-    if ((p = json_find_key(buf, "wcet_budget_us")) != NULL) json_match_uint32(&p, &out_m->timing.wcet_budget_us);
+    if ((p = json_find_key(buf, "period_us")) != NULL)        json_match_uint32(&p, &out_m->timing.period_us);
+    if ((p = json_find_key(buf, "watchdog_ticks")) != NULL)   json_match_uint32(&p, &out_m->timing.watchdog_ticks);
+    if ((p = json_find_key(buf, "wcet_budget_us")) != NULL)   json_match_uint32(&p, &out_m->timing.wcet_budget_us);
+    if ((p = json_find_key(buf, "max_backlog_ticks")) != NULL) json_match_uint32(&p, &out_m->timing.max_backlog_ticks);
 
     /* Parse recovery */
     if ((p = json_find_key(buf, "hysteresis_clean_frames")) != NULL) json_match_uint32(&p, &out_m->recovery.hysteresis_clean_frames);
@@ -476,17 +561,19 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
 
     /* Parse decision / ingest cpu */
     if ((p = json_find_key(buf, "decision")) != NULL) {
-        const char *cpu_ptr = json_find_key(p, "cpu");
+        const char *cpu_ptr   = json_find_key(p, "cpu");
         if (cpu_ptr) json_match_uint32(&cpu_ptr, &out_m->decision.cpu);
-        const char *pri_ptr = json_find_key(p, "priority");
+        const char *pri_ptr   = json_find_key(p, "priority");
         if (pri_ptr) json_match_uint32(&pri_ptr, &out_m->decision.priority);
+        const char *ppri_ptr  = json_find_key(p, "pulse_priority");
+        if (ppri_ptr) json_match_uint32(&ppri_ptr, &out_m->decision.pulse_priority);
     }
     if ((p = json_find_key(buf, "ingest")) != NULL) {
-        const char *cpu_ptr = json_find_key(p, "cpu");
+        const char *cpu_ptr   = json_find_key(p, "cpu");
         if (cpu_ptr) json_match_uint32(&cpu_ptr, &out_m->ingest.cpu);
         const char *deliv_ptr = json_find_key(p, "delivery");
         if (deliv_ptr) json_match_str(&deliv_ptr, out_m->ingest.delivery, sizeof(out_m->ingest.delivery));
-        const char *qd_ptr = json_find_key(p, "queue_depth");
+        const char *qd_ptr    = json_find_key(p, "queue_depth");
         if (qd_ptr) json_match_uint32(&qd_ptr, &out_m->ingest.queue_depth);
     }
 
@@ -496,10 +583,47 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     if ((p = json_find_key(buf, "ability")) != NULL)  json_match_str(&p, out_m->paths.ability, sizeof(out_m->paths.ability));
     if ((p = json_find_key(buf, "i2c_bus")) != NULL)  json_match_str(&p, out_m->paths.i2c_bus, sizeof(out_m->paths.i2c_bus));
 
-    /* Parse actuator PCA9685 calibration */
+    /* Parse actuator PCA9685 configuration and calibration */
+    if ((p = json_find_key(buf, "actuator")) != NULL) {
+        const char *t_ptr   = json_find_key(p, "type");
+        if (t_ptr) json_match_str(&t_ptr, out_m->actuator.type, sizeof(out_m->actuator.type));
+        const char *a_ptr   = json_find_key(p, "addr");
+        if (a_ptr) json_match_uint32(&a_ptr, &out_m->actuator.addr);
+        const char *f_ptr   = json_find_key(p, "freq_hz");
+        if (f_ptr) json_match_uint32(&f_ptr, &out_m->actuator.freq_hz);
+        const char *pr_ptr  = json_find_key(p, "prescale");
+        if (pr_ptr) json_match_uint32(&pr_ptr, &out_m->actuator.prescale);
+        const char *ret_ptr = json_find_key(p, "retries");
+        if (ret_ptr) json_match_uint32(&ret_ptr, &out_m->actuator.retries);
+        const char *id_ptr  = json_find_key(p, "init_delay_us");
+        if (id_ptr) json_match_uint32(&id_ptr, &out_m->actuator.init_delay_us);
+        const char *req_ptr = json_find_key(p, "required");
+        if (req_ptr) {
+            if (strncmp(req_ptr, "true", 4) == 0) out_m->actuator.required = true;
+            else if (strncmp(req_ptr, "false", 5) == 0) out_m->actuator.required = false;
+        }
+    }
     if ((p = json_find_key(buf, "pwm_center")) != NULL) json_match_int32(&p, &out_m->actuator.pwm_center);
     if ((p = json_find_key(buf, "pwm_min")) != NULL)    json_match_int32(&p, &out_m->actuator.pwm_min);
     if ((p = json_find_key(buf, "pwm_max")) != NULL)    json_match_int32(&p, &out_m->actuator.pwm_max);
+
+    /* Parse tape capacity */
+    if ((p = json_find_key(buf, "tape")) != NULL) {
+        const char *cap_ptr = json_find_key(p, "capacity");
+        if (cap_ptr) json_match_uint32(&cap_ptr, &out_m->tape.capacity);
+    }
+
+    /* Parse protocol metadata */
+    if ((p = json_find_key(buf, "protocol")) != NULL) {
+        const char *mag_ptr = json_find_key(p, "magic");
+        if (mag_ptr) json_match_str(&mag_ptr, out_m->protocol.magic, sizeof(out_m->protocol.magic));
+        const char *ver_ptr = json_find_key(p, "version");
+        if (ver_ptr) json_match_uint32(&ver_ptr, &out_m->protocol.version);
+        const char *crc_ptr = json_find_key(p, "crc");
+        if (crc_ptr) json_match_str(&crc_ptr, out_m->protocol.crc, sizeof(out_m->protocol.crc));
+        const char *cov_ptr = json_find_key(p, "coverage");
+        if (cov_ptr) json_match_uint32(&cov_ptr, &out_m->protocol.coverage);
+    }
 
     free(buf);
 
@@ -518,9 +642,9 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
     }
 
     /* 1. Completeness of Prerequisites (Ak(m) in {0,1}) */
-    if (m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION) {
-        if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u != %u)",
-                              m->schema_version, LATCH_MANIFEST_SCHEMA_VERSION);
+    if (m->schema_version != 1u && m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION) {
+        if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u)",
+                              m->schema_version);
         return LATCH_ADMIT_UNRESOLVED;
     }
     if (m->timing.period_us == 0u || m->timing.watchdog_ticks == 0u) {
@@ -559,6 +683,35 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
         if (err_buf) snprintf(err_buf, err_len, "Fail closed: Home position (%d mrad) sits inside keep-out interval!",
                               m->envelope.home_mrad);
         return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->envelope.lookahead_ticks < 1 || m->envelope.lookahead_ticks > 64) {
+        if (err_buf) snprintf(err_buf, err_len, "Lookahead ticks %u outside [1, 64]", m->envelope.lookahead_ticks);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->decision.priority < 1 || m->decision.priority > 255 || m->decision.cpu >= 256) {
+        if (err_buf) snprintf(err_buf, err_len, "Invalid decision priority %u or CPU %u",
+                              m->decision.priority, m->decision.cpu);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->protocol.magic[0] != '\0') {
+        if (strcmp(m->protocol.magic, "LATH") != 0 ||
+            m->protocol.version != 1u ||
+            (strcmp(m->protocol.crc, "ieee32") != 0 && strcmp(m->protocol.crc, "crc32-ieee") != 0) ||
+            m->protocol.coverage != 16u) {
+            if (err_buf) snprintf(err_buf, err_len, "Protocol metadata mismatch (magic='%s', ver=%u, crc='%s', cov=%u)",
+                                  m->protocol.magic, m->protocol.version, m->protocol.crc, m->protocol.coverage);
+            return LATCH_ADMIT_VIOLATED;
+        }
+    }
+    for (uint32_t i = 0; i < m->envelope.num_keepouts; ++i) {
+        if (m->envelope.keepout[i].lo_mrad >= m->envelope.keepout[i].hi_mrad ||
+            m->envelope.keepout[i].lo_mrad < m->envelope.theta_min_mrad ||
+            m->envelope.keepout[i].hi_mrad > m->envelope.theta_max_mrad) {
+            if (err_buf) snprintf(err_buf, err_len, "Keep-out interval [%d, %d] invalid or exceeds stops [%d, %d]",
+                                  m->envelope.keepout[i].lo_mrad, m->envelope.keepout[i].hi_mrad,
+                                  m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
+            return LATCH_ADMIT_VIOLATED;
+        }
     }
     if (m->actuator.pwm_min >= m->actuator.pwm_center ||
         m->actuator.pwm_center >= m->actuator.pwm_max) {

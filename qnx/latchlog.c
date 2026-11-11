@@ -46,7 +46,7 @@ static const char *mode_str(uint16_t mode) {
 int main(int argc, char *argv[]) {
     const char *dev_path    = LATCH_DEV_ACTUATOR;
     const char *output_file = "/var/log/latch_tape.csv";
-    uint32_t    interval_ms = 1000u;
+    uint32_t    interval_ms = 100u;
 
     int opt;
     while ((opt = getopt(argc, argv, "d:o:i:")) != -1) {

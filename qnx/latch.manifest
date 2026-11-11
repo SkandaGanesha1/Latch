@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plant": {
     "name": "servo-horn-1d",
     "axes": [
@@ -32,7 +32,8 @@
   "timing": {
     "period_us": 1000,
     "watchdog_ticks": 2,
-    "wcet_budget_us": 100
+    "wcet_budget_us": 100,
+    "max_backlog_ticks": 4
   },
   "recovery": {
     "hysteresis_clean_frames": 25,
@@ -63,7 +64,8 @@
     "pwm_min": 205,
     "pwm_max": 410,
     "retries": 1,
-    "init_delay_us": 600
+    "init_delay_us": 600,
+    "required": false
   },
   "tape": {
     "capacity": 4096

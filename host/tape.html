@@ -4,23 +4,120 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LATCH — QNX SDP 8.0 Simplex Evidence Tape &amp; Cycle Histogram Viewer</title>
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
-    /* Full offline fallback styling in case CDN is unreachable */
-    *, ::before, ::after { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif; background-color: #090d16; color: #e2e8f0; margin: 0; padding: 0; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "JetBrains Mono", monospace; }
-    canvas { display: block; width: 100%; height: 100%; }
-    .grid { display: grid; }
+    /* 100% Offline Self-Contained Stylesheet — Zero External CDN / Web Font Dependencies */
+    *, ::before, ::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: #334155; }
+    html { line-height: 1.5; -webkit-text-size-adjust: 100%; tab-size: 4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { margin: 0; background-color: #020617; color: #f8fafc; font-family: inherit; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .max-w-7xl { max-width: 80rem; }
+    .mx-auto { margin-left: auto; margin-right: auto; }
+    .px-4 { padding-left: 1rem; padding-right: 1rem; }
+    .py-5 { padding-top: 1.25rem; padding-bottom: 1.25rem; }
+    .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
     .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .flex-wrap { flex-wrap: wrap; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .gap-2 { gap: 0.5rem; }
+    .gap-3 { gap: 0.75rem; }
+    .gap-4 { gap: 1rem; }
+    .grid { display: grid; }
+    .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (min-width: 640px) {
+      .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .sm\:px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+      .sm\:text-2xl { font-size: 1.5rem; line-height: 2rem; }
+      .sm\:text-xl { font-size: 1.25rem; line-height: 1.75rem; }
+    }
+    @media (min-width: 1024px) {
+      .lg\:flex-row { flex-direction: row; }
+      .lg\:items-center { align-items: center; }
+      .lg\:justify-between { justify-content: space-between; }
+      .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .lg\:col-span-2 { grid-column: span 2 / span 2; }
+    }
+    .rounded-xl { border-radius: 0.75rem; }
+    .rounded-lg { border-radius: 0.5rem; }
+    .rounded-full { border-radius: 9999px; }
+    .border { border-width: 1px; }
+    .border-slate-800 { border-color: #1e293b; }
+    .border-slate-700 { border-color: #334155; }
+    .border-emerald-500\/30 { border-color: rgba(16, 185, 129, 0.3); }
+    .border-amber-500\/30 { border-color: rgba(245, 158, 11, 0.3); }
+    .border-rose-500\/30 { border-color: rgba(244, 63, 94, 0.3); }
+    .bg-slate-950 { background-color: #020617; }
+    .bg-slate-900\/90 { background-color: rgba(15, 23, 42, 0.9); }
+    .bg-slate-900\/80 { background-color: rgba(15, 23, 42, 0.8); }
+    .bg-slate-800 { background-color: #1e293b; }
+    .bg-slate-800\/70 { background-color: rgba(30, 41, 59, 0.7); }
+    .bg-slate-800\/40 { background-color: rgba(30, 41, 59, 0.4); }
+    .bg-emerald-500\/15 { background-color: rgba(16, 185, 129, 0.15); }
+    .bg-amber-500\/15 { background-color: rgba(245, 158, 11, 0.15); }
+    .bg-emerald-600 { background-color: #059669; }
+    .hover\:bg-slate-700:hover { background-color: #334155; }
+    .hover\:bg-slate-800:hover { background-color: #1e293b; }
+    .hover\:bg-emerald-500:hover { background-color: #10b981; }
+    .text-white { color: #ffffff; }
+    .text-slate-100 { color: #f1f5f9; }
+    .text-slate-200 { color: #e2e8f0; }
+    .text-slate-300 { color: #cbd5e1; }
+    .text-slate-400 { color: #94a3b8; }
+    .text-slate-500 { color: #64748b; }
+    .text-emerald-300 { color: #6ee7b7; }
+    .text-emerald-400 { color: #34d399; }
+    .text-amber-300 { color: #fcd34d; }
+    .text-amber-400 { color: #fbbf24; }
+    .text-rose-400 { color: #fb7185; }
+    .text-sky-400 { color: #38bdf8; }
+    .p-2\.5 { padding: 0.625rem; }
+    .p-3 { padding: 0.75rem; }
+    .p-3\.5 { padding: 0.875rem; }
+    .p-4 { padding: 1rem; }
+    .px-2\.5 { padding-left: 0.625rem; padding-right: 0.625rem; }
+    .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+    .px-4 { padding-left: 1rem; padding-right: 1rem; }
+    .py-0\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
+    .py-1\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+    .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+    .py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
+    .text-xs { font-size: 0.75rem; line-height: 1rem; }
+    .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+    .text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+    .text-xl { font-size: 1.25rem; line-height: 1.75rem; }
+    .text-\[11px\] { font-size: 11px; }
+    .font-medium { font-weight: 500; }
+    .font-semibold { font-weight: 600; }
+    .font-bold { font-weight: 700; }
+    .uppercase { text-transform: uppercase; }
+    .tracking-wider { letter-spacing: 0.05em; }
+    .tracking-tight { letter-spacing: -0.025em; }
+    .cursor-pointer { cursor: pointer; }
     .hidden { display: none; }
-    table { width: 100%; border-collapse: collapse; }
+    .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3); }
+    .transition { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+    .overflow-x-auto { overflow-x: auto; }
+    .overflow-y-auto { overflow-y: auto; }
+    .max-h-\[420px\] { max-height: 420px; }
+    .h-\[320px\] { height: 320px; }
+    .h-\[160px\] { height: 160px; }
+    .w-full { width: 100%; }
+    .mt-0\.5 { margin-top: 0.125rem; }
+    .mt-1 { margin-top: 0.25rem; }
+    .mt-2 { margin-top: 0.5rem; }
+    .mb-2 { margin-bottom: 0.5rem; }
+    .mb-2\.5 { margin-bottom: 0.625rem; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { padding: 0.5rem 0.75rem; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #94a3b8; background-color: #0f172a; border-bottom: 1px solid #1e293b; }
+    td { padding: 0.5rem 0.75rem; font-size: 12px; border-bottom: 1px solid rgba(30, 41, 59, 0.6); }
+    tr:hover td { background-color: rgba(30, 41, 59, 0.5); }
+    canvas { display: block; width: 100%; height: 100%; }
+    button { cursor: pointer; }
   </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-emerald-500/30">
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-5">
 
     <!-- Top Header -->
@@ -35,11 +132,15 @@
           LATCH — Last Authority for Trusted Control Handoff
         </h1>
         <p class="text-xs sm:text-sm text-slate-400 mt-0.5">
-          4096-entry <span class="mono text-slate-300">.bss</span> Evidence Tape &amp; <span class="mono text-slate-300">ClockCycles()</span> Decision Latency Analyzer
+          4096-entry <span class="mono text-slate-300">.bss</span> Evidence Tape &amp; <span class="mono text-slate-300">ClockCycles()</span> Decision Latency Analyzer (100% Offline)
         </p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <label for="manifestFileInput" class="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+          <span>Import Manifest JSON</span>
+          <input id="manifestFileInput" type="file" accept=".json,.manifest" class="hidden" />
+        </label>
         <label for="csvFileInput" class="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
           <span>Load Tape CSV / JSON</span>
           <input id="csvFileInput" type="file" accept=".csv,.json" class="hidden" />
@@ -335,8 +436,8 @@
 
       ctx.clearRect(0, 0, w, h);
 
-      const yMin = -1000;
-      const yMax = 1000;
+      const yMin = (currentManifest.envelope && currentManifest.envelope.theta_min_mrad) || -1000;
+      const yMax = (currentManifest.envelope && currentManifest.envelope.theta_max_mrad) || 1000;
       const yToPx = (val) => {
         const clamped = Math.max(yMin, Math.min(yMax, val));
         return pad.t + ph * (1 - (clamped - yMin) / (yMax - yMin));
@@ -360,20 +461,23 @@
         }
       }
 
-      // Shaded Keep-Out Box [+250, +650] mrad
-      const yKeepHi = yToPx(650);
-      const yKeepLo = yToPx(250);
-      ctx.fillStyle = "rgba(244, 63, 94, 0.20)";
-      ctx.fillRect(pad.l, yKeepHi, pw, yKeepLo - yKeepHi);
-      ctx.strokeStyle = "rgba(244, 63, 94, 0.65)";
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(pad.l, yKeepHi);
-      ctx.lineTo(pad.l + pw, yKeepHi);
-      ctx.moveTo(pad.l, yKeepLo);
-      ctx.lineTo(pad.l + pw, yKeepLo);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      // Shaded Keep-Out Boxes dynamically from manifest
+      const kList = (currentManifest.envelope && currentManifest.envelope.keepout) || [{ lo_mrad: 250, hi_mrad: 650, label: "PERSON" }];
+      for (const k of kList) {
+        const yKeepHi = yToPx(k.hi_mrad);
+        const yKeepLo = yToPx(k.lo_mrad);
+        ctx.fillStyle = "rgba(244, 63, 94, 0.20)";
+        ctx.fillRect(pad.l, yKeepHi, pw, yKeepLo - yKeepHi);
+        ctx.strokeStyle = "rgba(244, 63, 94, 0.65)";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, yKeepHi);
+        ctx.lineTo(pad.l + pw, yKeepHi);
+        ctx.moveTo(pad.l, yKeepLo);
+        ctx.lineTo(pad.l + pw, yKeepLo);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
 
       // Horizontal grid lines
       ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
@@ -628,6 +732,34 @@
       URL.revokeObjectURL(url);
     });
 
+    let currentManifest = {
+      envelope: {
+        theta_min_mrad: -1000,
+        theta_max_mrad: 1000,
+        keepout: [{ lo_mrad: 250, hi_mrad: 650, label: "PERSON" }]
+      }
+    };
+
+    document.getElementById("manifestFileInput").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const m = JSON.parse(String(reader.result || ""));
+          if (m && m.envelope) {
+            currentManifest = m;
+            drawTrajectoryChart();
+            computeKpis();
+            showToast("Imported manifest: " + (m.plant && m.plant.name ? m.plant.name : "custom plant"));
+          }
+        } catch (err) {
+          showToast("Failed to parse manifest: " + err);
+        }
+      };
+      reader.readAsText(file);
+    });
+
     document.getElementById("csvFileInput").addEventListener("change", (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
@@ -642,7 +774,11 @@
             const parsed = [];
             for (let i = 1; i < lines.length; i++) {
               const p = lines[i].split(",");
-              if (p.length < 10) continue;
+              if (p.length < 9) continue;
+              const hasModeName = p.length >= 10;
+              const modeVal = parseInt(p[7], 10);
+              const modeStr = hasModeName ? p[8].trim() : (modeVal === 0 ? "HP" : (modeVal === 1 ? "HOLD" : "HOME"));
+              const faultStr = (hasModeName ? p[9] : p[8]).trim();
               parsed.push({
                 tick: parseInt(p[0], 10),
                 cycles_in: parseInt(p[1], 10),
@@ -651,10 +787,10 @@
                 seq: parseInt(p[4], 10),
                 u_proposed: parseInt(p[5], 10),
                 theta_applied: parseInt(p[6], 10),
-                mode: parseInt(p[7], 10),
-                mode_name: p[8].trim(),
-                fault_bits: parseInt(p[9], 16),
-                fault_hex: p[9].trim()
+                mode: modeVal,
+                mode_name: modeStr,
+                fault_bits: parseInt(faultStr, 16),
+                fault_hex: faultStr
               });
             }
             if (parsed.length > 0) tapeData = parsed;

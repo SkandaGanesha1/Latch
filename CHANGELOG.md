@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.1.0] - 2026-11-11
+
+### Major Architecture Upgrades
+- **Dedicated Read-Only Ability Probe (`P0-1, P0-7`)**: Added non-mutating devctl `DCMD_LATCH_PROBE_ABILITY` (`__DION(_DCMD_MISC, 0x43)`). Replaced hold mutation probe in `latchctl grant-check` with pure read-only ability verification, eliminating risk of mutating operator hold state.
+- **Fail-Closed Manifest Loading & Sidecar SHA-256 Verification (`P0-2, P0-3, P0-4`)**: Enforced strict fail-closed manifest loading across both native QNX Neutrino and host-sim modes. Automatically validates cryptographic integrity against `<path>.sha256` sidecar file and added `latchctl manifest-verify <path> [sha256]`.
+- **Manifest Schema v2 Completion**: Implemented full parsing and admissibility validation for all declared schema keys (`actuator.addr`, `freq_hz`, `prescale`, `retries`, `init_delay_us`, `required`, `tape.capacity`, `protocol.*`, `plant.axes[]`, `pulse_priority`, `wcet_budget_us`, `max_backlog_ticks`).
+- **Dynamic Full-Scale PWM Math**: Converted PWM calculation from fixed `1000` divisor to dynamic span calculated from active manifest plant axis stops.
+- **QEMU & Guest Bring-Up Hardening (`P0-5, P1-8`)**: Updated `startup-qemu-virt -v -Q enable` for EL2 hypervisor host mode, corrected vdev DLL paths to `/lib/dll/qvm/`, added `libqvm.so.1`, parameterized guest kernel Image, and added `--loop` continuous streaming mode to `liar.py`.
+- **Architectural Consistency Automation (`P2-1, P2-2`)**: Added `tools/consistency_check.py` and semantic CI assertions validating 0 keep-out breaches, monotonic sequence advancement, and verified latching of microkernel abilities.
+
+---
+
 ## [2.0.0] - 2026-11-10
 
 ### Major Architecture Upgrades

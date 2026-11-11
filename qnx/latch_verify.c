@@ -178,24 +178,32 @@ int main(int argc, char *argv[]) {
 
         close(prop_fd);
 
-        /* 5. Process Manager Ability Verification */
-        latch_force_hold_cmd_t hold_cmd = { .lock_hold = 1u, .reason_code = 99u };
-        int rc = devctl(act_fd, DCMD_LATCH_FORCE_HOLD, &hold_cmd, sizeof(hold_cmd), NULL);
-        if (rc != 0) {
-            printf("[5/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> %d (%s)\n",
-                   rc, strerror(rc));
+        /* 5. Process Manager Ability Verification (Read-Only Probe & Mutating devctl) */
+        int rc_probe = devctl(act_fd, DCMD_LATCH_PROBE_ABILITY, NULL, 0, NULL);
+        if (rc_probe == EPERM) {
+            printf("[5a/5] PASS: Dedicated probe devctl(PROBE_ABILITY) WITHOUT 'latch/actuator' ability -> EPERM (Fail-closed)\n");
         } else {
-            printf("[5/5] FAIL: devctl(FORCE_HOLD) unexpectedly succeeded without ability!\n");
+            printf("[5a/5] FAIL: devctl(PROBE_ABILITY) returned %d instead of EPERM\n", rc_probe);
             all_passed = false;
         }
 
-        /* 5b. Write-open verification */
+        latch_force_hold_cmd_t hold_cmd = { .lock_hold = 1u, .reason_code = 99u };
+        int rc = devctl(act_fd, DCMD_LATCH_FORCE_HOLD, &hold_cmd, sizeof(hold_cmd), NULL);
+        if (rc != 0) {
+            printf("[5b/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> %d (%s)\n",
+                   rc, strerror(rc));
+        } else {
+            printf("[5b/5] FAIL: devctl(FORCE_HOLD) unexpectedly succeeded without ability!\n");
+            all_passed = false;
+        }
+
+        /* 5c. Write-open verification */
         int wfd = open(LATCH_DEV_ACTUATOR, O_WRONLY);
         if (wfd < 0 && errno == EPERM) {
-            printf("[5b/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)\n");
+            printf("[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)\n");
         } else {
             if (wfd >= 0) close(wfd);
-            printf("[5b/5] FAIL: open with O_WRONLY returned %d (errno=%d)\n", wfd, errno);
+            printf("[5c/5] FAIL: open with O_WRONLY returned %d (errno=%d)\n", wfd, errno);
             all_passed = false;
         }
     }

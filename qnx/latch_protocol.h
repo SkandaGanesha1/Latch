@@ -262,6 +262,8 @@ typedef struct latch_tape_dump {
     __DIOF(_DCMD_MISC, 0x41, latch_status_reply_t)
 #define DCMD_LATCH_DUMP_TAPE \
     __DIOTF(_DCMD_MISC, 0x42, latch_tape_dump_t)
+#define DCMD_LATCH_PROBE_ABILITY \
+    __DION(_DCMD_MISC, 0x43)
 
 /* ==========================================================================
  * 8. Self-Contained IEEE 802.3 CRC32 (Reflected Polynomial 0xEDB88320)

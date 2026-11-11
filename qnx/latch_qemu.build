@@ -12,9 +12,9 @@
 
 [image=0x40200000]
 [virtual=aarch64le,raw] boot = {
-    startup-qemu-virt -v
+    startup-qemu-virt -v -Q enable
     PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
-    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/lib/dll/qvm
     procnto-smp-instr -v
 }
 
@@ -58,10 +58,12 @@ libm.so
 libgcc_s.so.1
 libsecpol.so.1
 libqh.so.1
+libqvm.so.1
 
-[perms=0755] /lib/dll/vdev-virtio-console.so = vdev-virtio-console.so
-[perms=0755] /lib/dll/vdev-shmem.so = vdev-shmem.so
-[perms=0755] /lib/dll/vdev-pl011.so = vdev-pl011.so
+[perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
+[perms=0755] /lib/dll/qvm/vdev-shmem.so = vdev-shmem.so
+[perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
+[perms=0755] /lib/dll/qvm/vdev-gic.so = vdev-gic.so
 
 [perms=0755] secpollaunch
 [perms=0755] devc-serpl011
@@ -78,6 +80,8 @@ libqh.so.1
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog
 [uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = latch.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest.sha256 = latch.manifest.sha256
 [uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
 [uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin
+[perms=0644] /proc/boot/linux-guest.Image = $(GUEST_IMAGE)
 

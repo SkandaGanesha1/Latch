@@ -178,6 +178,11 @@ def main() -> int:
         action="store_true",
         help="Write raw 32-byte binary frames to stdout",
     )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Continuously stream frames in an endless loop until process killed",
+    )
     args = parser.parse_args()
 
     keepout_target = 450
@@ -228,21 +233,33 @@ def main() -> int:
                 frames.append(pack_wire_frame(seq=seq, u_mrad=LATCH_NAN_MRAD))
                 seq += 1
 
+    def send_frames(dest_stream, dest_fd):
+        for f in frames:
+            if dest_stream:
+                dest_stream.write(f)
+                if args.period_ms > 0:
+                    dest_stream.flush()
+                    time.sleep(args.period_ms / 1000.0)
+            elif dest_fd is not None:
+                os.write(dest_fd, f)
+                if args.period_ms > 0:
+                    time.sleep(args.period_ms / 1000.0)
+        if dest_stream:
+            dest_stream.flush()
+
     if args.device == "-" or args.raw_stdout:
         out = sys.stdout.buffer
-        for f in frames:
-            out.write(f)
-            if args.period_ms > 0:
-                out.flush()
-                time.sleep(args.period_ms / 1000.0)
-        out.flush()
+        while True:
+            send_frames(out, None)
+            if not args.loop:
+                break
     else:
         fd = os.open(args.device, os.O_WRONLY)
         try:
-            for f in frames:
-                os.write(fd, f)
-                if args.period_ms > 0:
-                    time.sleep(args.period_ms / 1000.0)
+            while True:
+                send_frames(None, fd)
+                if not args.loop:
+                    break
         finally:
             os.close(fd)
 

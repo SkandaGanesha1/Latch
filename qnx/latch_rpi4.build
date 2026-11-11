@@ -90,5 +90,6 @@ libqvm.so.1
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog
 [uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = latch.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest.sha256 = latch.manifest.sha256
 [uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
 [uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin

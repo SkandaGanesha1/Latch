@@ -22,9 +22,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "latch_protocol.h"
+#include "latch_manifest.h"
 
 static const char *mode_name(uint16_t m) {
     switch (m) {
@@ -65,10 +67,11 @@ static void print_usage(const char *prog) {
     fprintf(stderr,
             "Usage: %s [-d /dev/latch/actuator] <command> [args...]\n\n"
             "Commands:\n"
-            "  status              Query live Simplex supervisor state & telemetry\n"
-            "  grant-check         Verify whether caller holds 'latch/actuator' ability\n"
-            "  hold <1|0> [reason] Set (1) or release (0) operator emergency HA-HOLD\n"
-            "  dump <output.csv>   Dump evidence tape records to CSV\n",
+            "  status                             Query live Simplex supervisor state & telemetry\n"
+            "  grant-check                        Verify whether caller holds 'latch/actuator' ability\n"
+            "  hold <1|0> [reason]                Set (1) or release (0) operator emergency HA-HOLD\n"
+            "  dump <output.csv>                  Dump evidence tape records to CSV\n"
+            "  manifest-verify <path> [sha256]    Verify manifest integrity, admissibility & sidecar\n",
             prog);
 }
 
@@ -118,18 +121,9 @@ static int do_status(int fd) {
 }
 
 static int do_grant_check(int fd) {
-    latch_status_reply_t rep;
-    memset(&rep, 0, sizeof(rep));
-    uint32_t current_lock = 0u;
-    if (devctl(fd, DCMD_LATCH_GET_STATUS, &rep, sizeof(rep), NULL) == EOK) {
-        current_lock = rep.operator_hold_locked ? 1u : 0u;
-    }
-
-    latch_force_hold_cmd_t cmd = { .lock_hold = current_lock, .reason_code = 0u };
-
-    int rc = devctl(fd, DCMD_LATCH_FORCE_HOLD, &cmd, sizeof(cmd), NULL);
+    int rc = devctl(fd, DCMD_LATCH_PROBE_ABILITY, NULL, 0, NULL);
     if (rc == EOK) {
-        printf("[AUTH] SUCCESS: Process holds 'latch/actuator' ability. Actuator access granted.\n");
+        printf("[AUTH] GRANTED: Process holds 'latch/actuator' ability. Actuation permitted.\n");
         return 0;
     }
     if (rc == EPERM) {
@@ -138,6 +132,28 @@ static int do_grant_check(int fd) {
     }
     fprintf(stderr, "[AUTH] ERROR: Unexpected devctl failure: %s (%d)\n", strerror(rc), rc);
     return 1;
+}
+
+static int do_manifest_verify(const char *manifest_path, const char *expected_arg) {
+    if (manifest_path == NULL) {
+        fprintf(stderr, "Usage: latchctl manifest-verify <path> [expected_sha256]\n");
+        return 1;
+    }
+    latch_manifest_t m;
+    char err_buf[256];
+    if (latch_manifest_load(manifest_path, &m, err_buf, sizeof(err_buf)) != 0) {
+        fprintf(stderr, "[MANIFEST] REJECTED: Could not load or validate '%s': %s\n", manifest_path, err_buf);
+        return 1;
+    }
+    if (expected_arg != NULL) {
+        if (strncasecmp(m.sha256_hex, expected_arg, 64) != 0) {
+            fprintf(stderr, "[MANIFEST] MISMATCH: Computed %s != Expected %s\n", m.sha256_hex, expected_arg);
+            return 1;
+        }
+    }
+    printf("[MANIFEST] VERIFIED: Manifest '%s' SHA-256=%s (admissibility SATISFIED)\n",
+           manifest_path, m.sha256_hex);
+    return 0;
 }
 
 static int do_hold(int fd, int argc, char *argv[]) {
@@ -227,6 +243,12 @@ int main(int argc, char *argv[]) {
     }
 
     const char *cmd = argv[optind++];
+
+    if (strcmp(cmd, "manifest-verify") == 0) {
+        const char *mpath = (optind < argc) ? argv[optind++] : NULL;
+        const char *exp_sha = (optind < argc) ? argv[optind++] : NULL;
+        return do_manifest_verify(mpath, exp_sha);
+    }
 
     int oflag = (strcmp(cmd, "hold") == 0 || strcmp(cmd, "grant-check") == 0) ? O_RDWR : O_RDONLY;
     int fd = open(dev_path, oflag);

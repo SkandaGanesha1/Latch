@@ -22,11 +22,11 @@ fi
 
 echo "Connecting untrusted policy generator to $CONSOLE_DEV..."
 
-# Run liar.py fault injection suite or continuous loop
+# Run liar.py continuous loop or fault injection suite
 if [ -f "/app/liar.py" ]; then
-    python3 /app/liar.py suite --device "$CONSOLE_DEV" --period-ms 1.0
+    python3 /app/liar.py suite --loop --device "$CONSOLE_DEV" --period-ms 1.0
 elif [ -f "./liar.py" ]; then
-    python3 ./liar.py suite --device "$CONSOLE_DEV" --period-ms 1.0
+    python3 ./liar.py suite --loop --device "$CONSOLE_DEV" --period-ms 1.0
 else
     echo "liar.py not found in /app. Entering fallback idle loop."
     while true; do sleep 1; done

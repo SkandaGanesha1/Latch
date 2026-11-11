@@ -32,6 +32,7 @@ allow_ability latchd_t PROCMGR_AID_PATHSPACE;
 allow_ability latchd_t PROCMGR_AID_PRIORITY;
 allow_ability latchd_t PROCMGR_AID_RUNMASK;
 allow_ability latchd_t PROCMGR_AID_ABLE_CREATE;
+allow_ability latchd_t PROCMGR_AID_MEM_LOCK;
 
 # Ingest process holds NO latch/actuator ability and NO root abilities
 allow_ability latch_ingest_t PROCMGR_AID_RUNMASK;
@@ -52,6 +53,8 @@ neverallow qvm_guest_host_t /dev/i2c1:all;
 neverallow qvm_guest_host_t /dev/latch/actuator:all;
 neverallow qvm_guest_host_t /dev/latch/proposal:all;
 
-# Logging daemon queries actuator node
+# Logging daemon queries actuator node and writes evidence tape
 allow latchlog_t /dev/latch/actuator:read,write;
+allow latchlog_t /dev/shmem/latch_tape.csv:all;
+allow latchd_t /dev/shmem:all;
 

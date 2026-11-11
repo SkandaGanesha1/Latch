@@ -405,11 +405,20 @@ static uint16_t latch_mrad_to_pca9685_off(int32_t theta_mrad) {
     int32_t pmin   = g_manifest.actuator.pwm_min;
     int32_t pmax   = g_manifest.actuator.pwm_max;
 
+    int32_t span_pos = (g_manifest.num_axes > 0 && g_manifest.axes[0].max > 0)
+                           ? g_manifest.axes[0].max
+                           : g_manifest.envelope.theta_max_mrad;
+    int32_t span_neg = (g_manifest.num_axes > 0 && g_manifest.axes[0].min < 0)
+                           ? -g_manifest.axes[0].min
+                           : -g_manifest.envelope.theta_min_mrad;
+    if (span_pos <= 0) span_pos = 1000;
+    if (span_neg <= 0) span_neg = 1000;
+
     int32_t counts;
     if (safe_theta >= 0) {
-        counts = center + ((safe_theta * (pmax - center)) / 1000);
+        counts = center + ((safe_theta * (pmax - center)) / span_pos);
     } else {
-        counts = center + ((safe_theta * (center - pmin)) / 1000);
+        counts = center + ((safe_theta * (center - pmin)) / span_neg);
     }
     counts = latch_clamp_i32(counts, pmin, pmax);
     return (uint16_t)((uint32_t)counts & 0x0FFFu);
@@ -992,6 +1001,12 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             nbytes_out = 0u;
             break;
         }
+        case (unsigned int)DCMD_LATCH_PROBE_ABILITY: {
+            int perm_status = latch_verify_actuator_ability(ctp, io_ocb);
+            if (perm_status != EOK) return perm_status;
+            nbytes_out = 0u;
+            break;
+        }
         case (unsigned int)DCMD_LATCH_GET_STATUS: {
             if (msg->i.nbytes < (int)sizeof(latch_status_reply_t)) {
                 return EBADMSG;
@@ -1129,16 +1144,15 @@ int main(int argc, char *argv[]) {
 
     latch_time_init();
 
-    /* Load zero-hardcoding manifest */
+    /* Load zero-hardcoding manifest strictly (fail-closed) */
     char err_buf[256];
     if (latch_manifest_load(manifest_path, &g_manifest, err_buf, sizeof(err_buf)) != 0) {
-        fprintf(stderr, "latchd: WARNING: Could not load '%s' (%s), using conservative defaults\n",
+        fprintf(stderr, "latchd: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
                 manifest_path, err_buf);
-        latch_manifest_init_defaults(&g_manifest);
-    } else {
-        printf("latchd: Loaded manifest '%s' (plant='%s', SHA-256=%.16s...)\n",
-               manifest_path, g_manifest.plant_name, g_manifest.sha256_hex);
+        return EXIT_FAILURE;
     }
+    printf("latchd: Loaded manifest '%s' (plant='%s', SHA-256=%.16s...)\n",
+           manifest_path, g_manifest.plant_name, g_manifest.sha256_hex);
 
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
         perror("latchd: mlockall (warning: requires PROCMGR_AID_MEM_LOCK or root)");
@@ -1275,9 +1289,12 @@ static void latch_sim_reset(void) {
 static int latch_sim_devctl_actuator(bool caller_has_ability,
                                      unsigned int dcmd,
                                      void *payload) {
-    if (dcmd == (unsigned int)DCMD_LATCH_FORCE_HOLD && !caller_has_ability) {
+    if ((dcmd == (unsigned int)DCMD_LATCH_FORCE_HOLD || dcmd == (unsigned int)DCMD_LATCH_PROBE_ABILITY) && !caller_has_ability) {
         latch_record_eperm_fault();
         return EPERM;
+    }
+    if (dcmd == (unsigned int)DCMD_LATCH_PROBE_ABILITY) {
+        return 0;
     }
     if (dcmd == (unsigned int)DCMD_LATCH_FORCE_HOLD && payload != NULL) {
         const latch_force_hold_cmd_t *cmd = (const latch_force_hold_cmd_t *)payload;
@@ -1522,11 +1539,23 @@ static int latch_run_self_tests(void) {
         return EXIT_FAILURE;
     }
 
-    /* Fault 5: Unauthorized caller gets EPERM */
+    /* Fault 5: Unauthorized caller gets EPERM on mutation devctl */
     latch_force_hold_cmd_t fcmd = { .lock_hold = 1u, .reason_code = 1u };
     int rc_unauth = latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_FORCE_HOLD, &fcmd);
     if (rc_unauth != EPERM) {
         fprintf(stderr, "FAIL: Fault 5 (ability EPERM check) returned %d\n", rc_unauth);
+        return EXIT_FAILURE;
+    }
+
+    /* Dedicated read-only ability probe test */
+    int probe_unauth = latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_PROBE_ABILITY, NULL);
+    if (probe_unauth != EPERM) {
+        fprintf(stderr, "FAIL: Ability probe unauthorized check returned %d (expected EPERM)\n", probe_unauth);
+        return EXIT_FAILURE;
+    }
+    int probe_auth = latch_sim_devctl_actuator(true, (unsigned int)DCMD_LATCH_PROBE_ABILITY, NULL);
+    if (probe_auth != 0) {
+        fprintf(stderr, "FAIL: Ability probe authorized check returned %d (expected 0)\n", probe_auth);
         return EXIT_FAILURE;
     }
 
@@ -1553,8 +1582,15 @@ int main(int argc, char *argv[]) {
     latch_time_init();
 
     char err_buf[256];
+    if (access(manifest_path, F_OK) != 0 && strcmp(manifest_path, "latch.manifest") == 0) {
+        if (access("qnx/latch.manifest", F_OK) == 0) {
+            manifest_path = "qnx/latch.manifest";
+        }
+    }
     if (latch_manifest_load(manifest_path, &g_manifest, err_buf, sizeof(err_buf)) != 0) {
-        latch_manifest_init_defaults(&g_manifest);
+        fprintf(stderr, "latchd: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
+                manifest_path, err_buf);
+        return EXIT_FAILURE;
     }
 
     if (pipe_mode) {

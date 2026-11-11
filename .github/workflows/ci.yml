@@ -20,6 +20,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Run Architectural Consistency Check
+        run: |
+          python3 tools/consistency_check.py
+
       - name: Validate Protocol Static Asserts & Manifest
         run: |
           cd qnx
@@ -28,6 +32,7 @@ jobs:
       - name: Execute 5-Fault, Seqlock & Manifest Self-Tests
         run: |
           ./qnx/build/host-sim/latchd -m qnx/latch.manifest
+          ./qnx/build/host-sim/latchctl manifest-verify qnx/latch.manifest
 
       - name: Run 200-Tick End-to-End Pipeline Suite
         run: |
@@ -44,11 +49,23 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Clean Fault Identification
+      - name: Verify Semantic Safety Invariants & Latency
         run: |
           # Verify NaN ticks (67-70) have clean 0x0008 (LATCH_FAULT_NAN) without spurious SEQ drop
           grep -E "6[789],.*0x0008" host/suite_tape.csv
           grep -E "70,.*0x0008" host/suite_tape.csv
           # Verify unauthorized caller at tick 110 trips EPERM (0x0900)
           grep -E "110,.*0x0900" host/suite_tape.csv
+          python3 -c '
+          import csv
+          with open("host/suite_tape.csv") as f:
+              rows = list(csv.DictReader(f))
+          assert len(rows) == 200, "Expected 200 rows, got " + str(len(rows))
+          for r in rows:
+              theta = int(r["theta_applied"])
+              assert not (250 <= theta <= 650), "Keep-out breach at tick " + str(r["tick"]) + ": " + str(theta)
+          eperm_rows = [r for r in rows if int(r["fault_bits"], 16) & 0x0800]
+          assert len(eperm_rows) >= 1, "EPERM fault not latched"
+          print("[CI ASSERTION PASS] All 200 ticks satisfied kinematic keep-out and EPERM invariants.")
+          '
 

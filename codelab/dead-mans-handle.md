@@ -50,11 +50,15 @@ When any process calls `devctl()` on `/dev/latch/actuator`, `latchd` checks the 
 
 ```c
 struct _client_info *info = NULL;
-struct _client_able  able = { .ability = (uint32_t)g_ability_actuator_id };
-int status = iofunc_client_info_able(ctp, lattr->attr.mount, &info, 0, &able);
+struct _client_able  able;
+memset(&able, 0, sizeof(able));
+able.ability = (uint32_t)g_ability_actuator_id;
+
+/* QNX SDP 8.0 signature: (ctp, ioflag, &info, flags, &able, nable) */
+int status = iofunc_client_info_able(ctp, msg->connect.ioflag, &info, 0, &able, 1);
 bool authorized = (status == EOK) && (info != NULL) &&
-                  ((info->flags & _NTO_CI_UNABLE) == 0u) && (able.flags != 0u);
-iofunc_client_info_ext_free(&info);
+                  ((info->flags & _NTO_CI_UNABLE) == 0u);
+if (info != NULL) iofunc_client_info_ext_free(&info);
 if (!authorized) return EPERM;
 ```
 

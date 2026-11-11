@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define LATCH_MANIFEST_SCHEMA_VERSION  1u
+#define LATCH_MANIFEST_SCHEMA_VERSION  2u
 #define LATCH_MAX_AXES                4u
 #define LATCH_MAX_KEEPOUTS            8u
 
@@ -30,6 +30,7 @@ typedef struct latch_axis {
     char     unit[16];   /* "mrad", "mm", "mrad_s"      */
     int32_t  min;
     int32_t  max;
+    int32_t  fullscale_counts_span;
 } latch_axis_t;
 
 typedef struct latch_keepout_interval {
@@ -55,6 +56,7 @@ typedef struct latch_manifest_timing {
     uint32_t period_us;
     uint32_t watchdog_ticks;
     uint32_t wcet_budget_us;
+    uint32_t max_backlog_ticks;
 } latch_manifest_timing_t;
 
 typedef struct latch_manifest_recovery {
@@ -91,6 +93,7 @@ typedef struct latch_manifest_actuator {
     int32_t  pwm_max;
     uint32_t retries;
     uint32_t init_delay_us;
+    bool     required;
 } latch_manifest_actuator_t;
 
 typedef struct latch_manifest_tape {
@@ -136,6 +139,9 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
 
 /* Three-valued evidence-grounded manifest admissibility validator */
 latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *err_buf, size_t err_len);
+
+/* Verify sidecar file (<manifest_path>.sha256) matches computed hex digest. Returns 0 on success/absent, <0 on mismatch */
+int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex, char *err_buf, size_t err_len);
 
 /* Compute SHA-256 digest of a manifest file. Returns 0 on success, <0 on failure. */
 int latch_manifest_compute_sha256(const char *path, uint8_t hash_out[32], char hex_out[65]);
