@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "plant": {
+    "name": "servo-horn-1d",
+    "axes": [
+      {
+        "id": 0,
+        "kind": "angular",
+        "unit": "mrad",
+        "min": -1000,
+        "max": 1000
+      }
+    ]
+  },
+  "envelope": {
+    "theta_min_mrad": -1000,
+    "theta_max_mrad": 1000,
+    "keepout": [
+      {
+        "lo_mrad": 250,
+        "hi_mrad": 650,
+        "label": "PERSON"
+      }
+    ],
+    "v_max": 25,
+    "a_max": 10,
+    "v_home": 10,
+    "lookahead_ticks": 10
+  },
+  "timing": {
+    "period_us": 1000,
+    "watchdog_ticks": 2,
+    "wcet_budget_us": 100
+  },
+  "recovery": {
+    "hysteresis_clean_frames": 25,
+    "hold_to_home_ticks": 50
+  },
+  "decision": {
+    "cpu": 0,
+    "priority": 63,
+    "pulse_priority": 63
+  },
+  "ingest": {
+    "cpu": 1
+  },
+  "paths": {
+    "proposal": "/dev/latch/proposal",
+    "actuator": "/dev/latch/actuator",
+    "ability": "latch/actuator",
+    "i2c_bus": "/dev/i2c1"
+  },
+  "actuator": {
+    "type": "pca9685",
+    "addr": 64,
+    "freq_hz": 50,
+    "prescale": 121,
+    "pwm_center": 307,
+    "pwm_min": 205,
+    "pwm_max": 410,
+    "retries": 1,
+    "init_delay_us": 600
+  },
+  "tape": {
+    "capacity": 4096
+  },
+  "protocol": {
+    "magic": "LATH",
+    "version": 1,
+    "crc": "ieee32",
+    "coverage": 16
+  }
+}
+

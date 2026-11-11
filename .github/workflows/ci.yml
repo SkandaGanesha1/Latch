@@ -1,0 +1,54 @@
+name: LATCH Continuous Integration
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  host-sim-pipeline:
+    name: QNX 8.0 Simplex & Host-Sim Pipeline
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Protocol Static Asserts & Manifest
+        run: |
+          cd qnx
+          make host-sim
+
+      - name: Execute 5-Fault, Seqlock & Manifest Self-Tests
+        run: |
+          ./qnx/build/host-sim/latchd
+
+      - name: Run 200-Tick End-to-End Pipeline Suite
+        run: |
+          cd qnx
+          make check
+
+      - name: Verify Evidence Tape Consistency
+        run: |
+          test -f host/suite_tape.csv
+          LINE_COUNT=$(wc -l < host/suite_tape.csv)
+          echo "Tape lines: $LINE_COUNT"
+          if [ "$LINE_COUNT" -ne 201 ]; then
+            echo "Error: Expected 201 lines in suite_tape.csv (1 header + 200 ticks)"
+            exit 1
+          fi
+
+      - name: Verify Clean Fault Identification
+        run: |
+          # Verify NaN ticks (67-70) have clean 0x0008 (LATCH_FAULT_NAN) without spurious SEQ drop
+          grep -E "6[789],.*0x0008" host/suite_tape.csv
+          grep -E "70,.*0x0008" host/suite_tape.csv
+          # Verify unauthorized caller at tick 110 trips EPERM (0x0900)
+          grep -E "110,.*0x0900" host/suite_tape.csv
+

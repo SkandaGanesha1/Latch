@@ -1,0 +1,296 @@
+/*
+ * qnx/latch_protocol.h
+ *
+ * LATCH — Last Authority for Trusted Control Handoff (QNX SDP 8.0)
+ *
+ * 32-byte packed little-endian wire protocol, internal IPC proposal message,
+ * resource-manager devctl() commands, integer kinematic safety envelope
+ * constants, Simplex mode/fault bitmasks, and 4096-entry .bss cycle tape.
+ *
+ * Compiles cleanly with zero warnings under:
+ *   qcc -Vgcc_ntoaarch64le -Wall -Wextra -Werror -Wpedantic -O2 -std=c11
+ *   qcc -Vgcc_ntox86_64    -Wall -Wextra -Werror -Wpedantic -O2 -std=c11
+ *   gcc                    -Wall -Wextra -Werror -Wpedantic -O2 -std=c11
+ */
+
+#ifndef LATCH_PROTOCOL_H_
+#define LATCH_PROTOCOL_H_
+
+#if !defined(_QNX_SOURCE) && !defined(LATCH_HOST_SIM)
+#   error "LATCH must be compiled with qcc -Vgcc_ntoaarch64le -D_QNX_SOURCE (QNX SDP 8.0) or -DLATCH_HOST_SIM"
+#endif
+
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __QNXNTO__
+#include <devctl.h>
+#else
+#include <sys/ioctl.h>
+#ifndef EOK
+#define EOK 0
+#endif
+#ifndef devctl
+#define devctl(fd, cmd, data, size, flags) ioctl((fd), (cmd), (data))
+#endif
+#ifndef _DCMD_MISC
+#define _DCMD_MISC 0x05
+#endif
+#ifndef __DIOT
+#define __DIOT(type, cmd, data)  _IOW((type), (cmd), data)
+#endif
+#ifndef __DIOF
+#define __DIOF(type, cmd, data)  _IOR((type), (cmd), data)
+#endif
+#ifndef __DIOTF
+#define __DIOTF(type, cmd, data) _IOWR((type), (cmd), data)
+#endif
+#ifndef __DION
+#define __DION(type, cmd)        _IO((type), (cmd))
+#endif
+#endif /* __QNXNTO__ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ==========================================================================
+ * 1. Resource Manager Nodes, Custom Ability & Hardware Bus Constants
+ * ========================================================================== */
+
+#define LATCH_DEV_PROPOSAL       "/dev/latch/proposal"
+#define LATCH_DEV_ACTUATOR       "/dev/latch/actuator"
+#define LATCH_ABILITY_ACTUATOR   "latch/actuator"
+
+#define LATCH_I2C_DEFAULT_BUS    "/dev/i2c1"
+#define LATCH_PCA9685_I2C_ADDR   0x40u
+
+/* ==========================================================================
+ * 2. Wire Frame (Guest -> latch-ingest), 32 Bytes, Packed, Little-Endian
+ *
+ * Offset  Field     Type      Rule
+ * ------  --------  --------  ----------------------------------------------
+ * 0       magic     uint32_t  0x4C415448 ('LATH')
+ * 4       version   uint16_t  1
+ * 6       joint     uint8_t   0 only in this build
+ * 7       flags     uint8_t   Guest demo bits; ignored by host for safety
+ * 8       seq       uint32_t  Must be last_accepted + 1 after first frame
+ * 12      u_mrad    int32_t   Proposed angle in milliradians (integer only)
+ * 16      crc32     uint32_t  IEEE 802.3 CRC32 over bytes [0, 16)
+ * 20      reserved  uint8[12] Must be all zero; non-zero is a fault
+ * ========================================================================== */
+
+#define LATCH_WIRE_MAGIC         0x4C415448u  /* "LATH" little-endian u32    */
+#define LATCH_WIRE_VERSION       1u
+#define LATCH_WIRE_JOINT_DEFAULT 0u
+#define LATCH_NAN_MRAD           INT32_MIN    /* -2147483648 NaN sentinel    */
+#define LATCH_CRC32_POLY_REFL    0xEDB88320u  /* IEEE 802.3 reflected poly   */
+#define LATCH_CRC_COVERED_BYTES  16u          /* Bytes [0..16) covered       */
+
+/* Optional guest demo flags (never trusted to relax safety) */
+#define LATCH_WIRE_FLAG_NONE     0x00u
+#define LATCH_WIRE_FLAG_DEMO     0x01u
+#define LATCH_WIRE_FLAG_SILENCE  0x80u        /* Simulation harness idle tick */
+
+typedef struct __attribute__((packed)) latch_wire_frame {
+    uint32_t magic;         /* [0..4)   0x4C415448 ('LATH')                  */
+    uint16_t version;       /* [4..6)   1                                    */
+    uint8_t  joint;         /* [6]      0                                    */
+    uint8_t  flags;         /* [7]      Guest demo flags                     */
+    uint32_t seq;           /* [8..12)  Monotonic sequence counter           */
+    int32_t  u_mrad;        /* [12..16) Proposed joint angle in milliradians */
+    uint32_t crc32;         /* [16..20) IEEE CRC32 over bytes [0..16)        */
+    uint8_t  reserved[12];  /* [20..32) Must be zero                         */
+} latch_wire_frame_t;
+
+_Static_assert(sizeof(latch_wire_frame_t) == 32,
+               "latch_wire_frame_t must be exactly 32 bytes");
+_Static_assert(offsetof(latch_wire_frame_t, version) == 4,
+               "version must be at offset 4");
+_Static_assert(offsetof(latch_wire_frame_t, joint) == 6,
+               "joint must be at offset 6");
+_Static_assert(offsetof(latch_wire_frame_t, flags) == 7,
+               "flags must be at offset 7");
+_Static_assert(offsetof(latch_wire_frame_t, seq) == 8,
+               "seq must be at offset 8");
+_Static_assert(offsetof(latch_wire_frame_t, u_mrad) == 12,
+               "u_mrad must be at offset 12");
+_Static_assert(offsetof(latch_wire_frame_t, crc32) == 16,
+               "crc32 must be at offset 16");
+_Static_assert(offsetof(latch_wire_frame_t, reserved) == 20,
+               "reserved must be at offset 20");
+
+/* ==========================================================================
+ * 3. Safety Envelope & Simplex Timing Constants
+ * ========================================================================== */
+
+#define THETA_MIN_MRAD           (-1000)  /* Mechanical lower stop (-1.0 rad) */
+#define THETA_MAX_MRAD           (1000)   /* Mechanical upper stop (+1.0 rad) */
+#define KEEPOUT_LO_MRAD          (250)    /* Taped keep-out box lower edge    */
+#define KEEPOUT_HI_MRAD          (650)    /* Taped keep-out box upper edge    */
+#define V_MAX_MRAD_TICK          (25)     /* Max velocity step per tick       */
+#define A_MAX_MRAD_TICK2         (10)     /* Max acceleration delta per tick  */
+#define V_HOME_MRAD_TICK         (10)     /* Max step per tick in HA-HOME     */
+#define HORIZON_TICKS            (10)     /* 10-tick forward lookahead        */
+#define WATCHDOG_TICKS           (2)      /* Silence >= 2 ticks -> HOLD       */
+#define HYSTERESIS_CLEAN_FRAMES  (25)     /* 25 clean frames before HP        */
+#define HOLD_TO_HOME_TICKS       (50)     /* >= 50 ticks in HOLD -> HOME      */
+
+#define LATCH_TAPE_CAPACITY      (4096u)  /* Fixed ring in .bss               */
+#define LATCH_TAPE_MASK          (LATCH_TAPE_CAPACITY - 1u)
+
+/* PCA9685 12-bit 50 Hz servo pulse counts (1.0 ms = 205, 1.5 ms = 307, 2.0 ms = 410) */
+#define LATCH_PWM_CENTER_COUNTS  (307)
+#define LATCH_PWM_MIN_COUNTS     (205)
+#define LATCH_PWM_MAX_COUNTS     (410)
+
+/* ==========================================================================
+ * 4. Simplex Modes & Fault Bitmask Definitions
+ * ========================================================================== */
+
+typedef enum latch_mode {
+    LATCH_MODE_HP   = 0,  /* High-Performance untrusted guest follower        */
+    LATCH_MODE_HOLD = 1,  /* High-Assurance HOLD (zero velocity command)      */
+    LATCH_MODE_HOME = 2   /* High-Assurance HOME (retract toward 0 mrad)      */
+} latch_mode_t;
+
+#define LATCH_FAULT_NONE         (0u)
+#define LATCH_FAULT_MAGIC        (1u << 0)   /* Bad magic, version, or joint  */
+#define LATCH_FAULT_CRC          (1u << 1)   /* IEEE 802.3 CRC32 mismatch     */
+#define LATCH_FAULT_SEQ          (1u << 2)   /* Sequence gap or replay        */
+#define LATCH_FAULT_NAN          (1u << 3)   /* u_mrad == INT32_MIN           */
+#define LATCH_FAULT_RESERVED     (1u << 4)   /* Non-zero reserved[12] bytes   */
+#define LATCH_FAULT_KEEPOUT      (1u << 5)   /* Enters/crosses [250, 650] box */
+#define LATCH_FAULT_BOUNDS       (1u << 6)   /* Outside [-1000, +1000] mrad   */
+#define LATCH_FAULT_RATE         (1u << 7)   /* Exceeds V_MAX or A_MAX        */
+#define LATCH_FAULT_WATCHDOG     (1u << 8)   /* No accepted frame for 2 ticks */
+#define LATCH_FAULT_I2C          (1u << 9)   /* PCA9685 I2C transfer error    */
+#define LATCH_FAULT_OPERATOR     (1u << 10)  /* Operator GPIO / devctl HOLD   */
+#define LATCH_FAULT_EPERM        (1u << 11)  /* Unauthorized actuator devctl  */
+
+#define LATCH_FAULT_WIRE_MASK \
+    (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_SEQ | \
+     LATCH_FAULT_NAN   | LATCH_FAULT_RESERVED)
+
+#define LATCH_FAULT_ENVELOPE_MASK \
+    (LATCH_FAULT_KEEPOUT | LATCH_FAULT_BOUNDS | LATCH_FAULT_RATE)
+
+/* ==========================================================================
+ * 5. Evidence Tape Record (4096-entry Ring in .bss)
+ * ========================================================================== */
+
+typedef struct __attribute__((packed)) latch_tape_entry {
+    uint64_t tick;           /* Monotonic tick index                          */
+    uint64_t cycles_in;      /* ClockCycles() at start of tick                */
+    uint64_t cycles_out;     /* ClockCycles() after I2C command completes     */
+    uint32_t seq;            /* Sequence number evaluated on this tick        */
+    int32_t  u_proposed;     /* Guest proposed angle (or discarded sentinel)  */
+    int32_t  theta_applied;  /* Angle actually commanded to PCA9685 (mrad)    */
+    uint16_t mode;           /* Active latch_mode_t (HP=0, HOLD=1, HOME=2)    */
+    uint16_t fault_bits;     /* Active fault bitmask for this tick            */
+} latch_tape_entry_t;
+
+_Static_assert(sizeof(latch_tape_entry_t) == 40,
+               "latch_tape_entry_t must be 40 bytes packed");
+
+/* ==========================================================================
+ * 6. Internal Checked Proposal Struct (latch-ingest -> /dev/latch/proposal)
+ * ========================================================================== */
+
+#define LATCH_IPC_PROPOSAL_MAGIC 0x4C505250u /* "LPRP" */
+
+typedef struct __attribute__((packed)) latch_ipc_proposal {
+    uint32_t ipc_magic;      /* Must be LATCH_IPC_PROPOSAL_MAGIC              */
+    uint32_t seq;            /* Wire sequence number (0 if payload dropped)   */
+    int32_t  u_mrad;         /* Checked proposed angle (0 if payload dropped) */
+    uint16_t wire_flags;     /* Flags from wire header                        */
+    uint16_t pre_fault_bits; /* Wire faults caught by latch-ingest            */
+    uint64_t ingest_cycles;  /* Host ClockCycles() when frame arrived         */
+} latch_ipc_proposal_t;
+
+_Static_assert(sizeof(latch_ipc_proposal_t) == 24,
+               "latch_ipc_proposal_t must be 24 bytes packed");
+
+/* ==========================================================================
+ * 7. Actuator Node (/dev/latch/actuator) devctl() Payloads & Commands
+ * ========================================================================== */
+
+typedef struct latch_force_hold_cmd {
+    uint32_t lock_hold;      /* 1 = force HA-HOLD, 0 = release operator hold  */
+    uint32_t reason_code;    /* Operator audit reason                         */
+} latch_force_hold_cmd_t;
+
+typedef struct latch_status_reply {
+    uint64_t tick;
+    uint64_t last_latency_cycles;
+    uint64_t max_latency_cycles;
+    uint64_t last_rx_cycles;
+    uint32_t last_latency_ns;
+    uint32_t max_latency_ns;
+    uint32_t last_seq;
+    int32_t  theta_mrad;
+    int32_t  omega_mrad_s;
+    int32_t  velocity_mrad_tick;
+    int32_t  last_u_proposed_mrad;
+    uint16_t mode;
+    uint16_t active_faults;
+    uint16_t latched_faults;
+    uint16_t clean_streak;
+    uint32_t hold_ticks_elapsed;
+    uint32_t total_proposals_rx;
+    uint32_t total_wire_faults;
+    uint32_t total_envelope_faults;
+    uint32_t total_eperm_rejects;
+    uint32_t operator_hold_locked;
+    uint8_t  manifest_sha256[32];
+} latch_status_reply_t;
+
+#define LATCH_DUMP_MAX_ENTRIES   128u
+
+typedef struct latch_tape_dump {
+    uint32_t start_index;
+    uint32_t count;
+    uint64_t latest_tick;
+    uint8_t  manifest_sha256[32];
+    latch_tape_entry_t entries[LATCH_DUMP_MAX_ENTRIES];
+} latch_tape_dump_t;
+
+#define DCMD_LATCH_FORCE_HOLD \
+    __DIOT(_DCMD_MISC, 0x40, latch_force_hold_cmd_t)
+#define DCMD_LATCH_GET_STATUS \
+    __DIOF(_DCMD_MISC, 0x41, latch_status_reply_t)
+#define DCMD_LATCH_DUMP_TAPE \
+    __DIOTF(_DCMD_MISC, 0x42, latch_tape_dump_t)
+
+/* ==========================================================================
+ * 8. Self-Contained IEEE 802.3 CRC32 (Reflected Polynomial 0xEDB88320)
+ * ========================================================================== */
+
+static inline uint32_t latch_crc32_ieee(const void *data, size_t len) {
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFFu;
+
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= (uint32_t)bytes[i];
+        for (unsigned int bit = 0; bit < 8u; ++bit) {
+            uint32_t mask = -(crc & 1u);
+            crc = (crc >> 1u) ^ (LATCH_CRC32_POLY_REFL & mask);
+        }
+    }
+    return ~crc;
+}
+
+static inline int latch_wire_reserved_is_zero(const latch_wire_frame_t *frame) {
+    uint8_t acc = 0u;
+    for (size_t i = 0; i < sizeof(frame->reserved); ++i) {
+        acc |= frame->reserved[i];
+    }
+    return (acc == 0u);
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* LATCH_PROTOCOL_H_ */

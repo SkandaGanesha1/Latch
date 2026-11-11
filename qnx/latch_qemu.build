@@ -1,0 +1,83 @@
+################################################################################
+# qnx/latch_qemu.build
+#
+# QNX SDP 8.0 OS Image Buildfile for LATCH on QEMU AArch64 (ARMv8 Virt Machine)
+# Target Platform : QEMU `virt` machine (ARM Cortex-A72, GICv2, VirtIO)
+# Hypervisor      : QNX Hypervisor 8.0 (Build >= 549)
+#
+# QEMU Command:
+#   qemu-system-aarch64 -M virt,gic-version=2 -cpu cortex-a72 -smp 4 -m 2048 \
+#     -kernel latch_qemu.ifs -nographic
+################################################################################
+
+[image=0x40200000]
+[virtual=aarch64le,raw] boot = {
+    startup-qemu-virt -v
+    PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll
+    procnto-smp-instr -v
+}
+
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/libc.so.6 /usr/lib/ldqnx-64.so.2
+
+    # 1. Serial console (PL011 UART at 0x09000000, IRQ 33 on QEMU virt)
+    devc-serpl011 -e -F -b115200 0x09000000,33
+    waitfor /dev/ser1 4
+    reopen /dev/ser1
+
+    display_msg "================================================================"
+    display_msg " LATCH — Last Authority for Trusted Control Handoff (QNX 8.0)"
+    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A72 | GICv2"
+    display_msg "================================================================"
+
+    # 2. Activate QNX 8.0 Security Policy
+    secpollaunch -e /proc/boot/secpol.bin
+
+    # 3. Start latchd on _cpu-0 in mock I2C mode (-n) or bus path
+    on -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest -n &
+    waitfor /dev/latch/proposal 4
+    waitfor /dev/latch/actuator 4
+
+    # 4. Start background evidence logger
+    on -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
+
+    # 5. Launch QNX Hypervisor 8.0 guest VM (vCPUs pinned to _cpu-2 and _cpu-3)
+    on -C 1 /proc/boot/qvm @/proc/boot/latch.qvmconf &
+
+    # 6. Interactive operator shell on _cpu-1
+    [+session] on -C 1 -p 10r /proc/boot/ksh
+}
+
+[type=link] /bin/sh = /proc/boot/ksh
+[type=link] /dev/console = /dev/ser1
+[type=link] /tmp = /dev/shmem
+
+libc.so
+libm.so
+libgcc_s.so.1
+libsecpol.so.1
+libqh.so.1
+
+[perms=0755] /lib/dll/vdev-virtio-console.so = vdev-virtio-console.so
+[perms=0755] /lib/dll/vdev-shmem.so = vdev-shmem.so
+[perms=0755] /lib/dll/vdev-pl011.so = vdev-pl011.so
+
+[perms=0755] secpollaunch
+[perms=0755] devc-serpl011
+[perms=0755] qvm
+[perms=0755] on
+[perms=0755] ability
+[perms=0755] pidin
+[perms=0755] slay
+[perms=0755] ksh
+[perms=0755] waitfor
+
+[uid=0 gid=0 perms=0750] /proc/boot/latchd = latchd
+[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = latch-ingest
+[uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
+[uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog
+[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = latch.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
+[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin
+

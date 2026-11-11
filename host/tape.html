@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LATCH — QNX SDP 8.0 Simplex Evidence Tape &amp; Cycle Histogram Viewer</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* Full offline fallback styling in case CDN is unreachable */
+    *, ::before, ::after { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif; background-color: #090d16; color: #e2e8f0; margin: 0; padding: 0; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "JetBrains Mono", monospace; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .grid { display: grid; }
+    .flex { display: flex; }
+    .hidden { display: none; }
+    table { width: 100%; border-collapse: collapse; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-emerald-500/30">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+
+    <!-- Top Header -->
+    <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-lg">
+      <div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 mono">QNX SDP 8.0 + Hypervisor 8.0</span>
+          <span class="px-2.5 py-0.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono">BCM2711 RPi4B &bull; GICv2 &bull; PCA9685 @ 0x40</span>
+          <span class="px-2.5 py-0.5 text-xs font-medium rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 mono">latch/actuator Ability Locked</span>
+        </div>
+        <h1 class="mt-2 text-xl sm:text-2xl font-bold tracking-tight text-white">
+          LATCH — Last Authority for Trusted Control Handoff
+        </h1>
+        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">
+          4096-entry <span class="mono text-slate-300">.bss</span> Evidence Tape &amp; <span class="mono text-slate-300">ClockCycles()</span> Decision Latency Analyzer
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label for="csvFileInput" class="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+          <span>Load Tape CSV / JSON</span>
+          <input id="csvFileInput" type="file" accept=".csv,.json" class="hidden" />
+        </label>
+        <button id="btnResetDefault" type="button" class="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+          Restore 200-Tick C Suite
+        </button>
+        <button id="btnExportCsv" type="button" class="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
+          Download CSV
+        </button>
+      </div>
+    </header>
+
+    <!-- Status Banner -->
+    <div id="toastBanner" class="hidden rounded-lg px-4 py-2.5 text-xs font-medium bg-emerald-950/90 border border-emerald-700 text-emerald-200"></div>
+
+    <!-- KPI Cards -->
+    <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Total Ticks Recorded</div>
+        <div id="kpiTicks" class="mt-1 text-lg sm:text-xl font-bold text-white mono">200</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">1,000 Hz (_cpu-0 FIFO)</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Keep-Out Box Invariant</div>
+        <div id="kpiKeepoutStatus" class="mt-1 text-lg sm:text-xl font-bold text-emerald-400 mono">0 Breaches</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">Box: [+250, +650] mrad</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Wire &amp; Envelope Vetoes</div>
+        <div id="kpiVetoes" class="mt-1 text-lg sm:text-xl font-bold text-amber-400 mono">19</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">CRC + SEQ + NAN + BOX</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Ability EPERM Rejects</div>
+        <div id="kpiEperm" class="mt-1 text-lg sm:text-xl font-bold text-rose-400 mono">1 (Root Denied)</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">iofunc_client_info_able</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Median / p99 Decision</div>
+        <div id="kpiP99" class="mt-1 text-lg sm:text-xl font-bold text-sky-400 mono">--</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">cycles_out - cycles_in</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Max Observed Decision</div>
+        <div id="kpiMaxLat" class="mt-1 text-lg sm:text-xl font-bold text-emerald-300 mono">--</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 mono">&lt; 0.2% of 1 ms tick</div>
+      </div>
+    </section>
+
+    <!-- Five-Fault Scenario Quick Jump Bar -->
+    <section class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+        <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">5-Fault Verification Bookmarks &amp; Playback</span>
+        <div class="flex items-center gap-2">
+          <button id="btnPlayPause" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
+            Play Scrub
+          </button>
+          <button id="btnStepPrev" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 mono">
+            -1 Tick
+          </button>
+          <button id="btnStepNext" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 mono">
+            +1 Tick
+          </button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <button type="button" data-jump="1" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-emerald-400 mono">Ticks 1–25</div>
+          <div class="text-xs font-medium text-white mt-0.5">Nominal HP Tracking</div>
+        </button>
+        <button type="button" data-jump="26" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-amber-400 mono">Fault 1 &bull; Tick 26</div>
+          <div class="text-xs font-medium text-white mt-0.5">Keep-Out Box (+450)</div>
+        </button>
+        <button type="button" data-jump="33" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-sky-400 mono">Ticks 33–57</div>
+          <div class="text-xs font-medium text-white mt-0.5">25-Frame Hysteresis</div>
+        </button>
+        <button type="button" data-jump="63" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-rose-400 mono">Fault 2 &bull; Tick 63</div>
+          <div class="text-xs font-medium text-white mt-0.5">CRC Bit-Flip &amp; NaN</div>
+        </button>
+        <button type="button" data-jump="81" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-orange-400 mono">Fault 3 &bull; Tick 81</div>
+          <div class="text-xs font-medium text-white mt-0.5">Seq Replay &amp; Watchdog</div>
+        </button>
+        <button type="button" data-jump="110" class="jump-btn text-left p-2.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 transition">
+          <div class="text-[11px] font-semibold text-purple-400 mono">Faults 4–5 &bull; Tick 110+</div>
+          <div class="text-xs font-medium text-white mt-0.5">EPERM &amp; HA-HOME Ramp</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Main Charts Grid -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <!-- Joint Trajectory & Keep-Out Canvas (2 cols) -->
+      <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <h2 class="text-sm font-semibold text-white">Joint Angle Trajectory: Guest Proposal (<span class="mono text-amber-300">u_proposed</span>) vs Applied PCA9685 (<span class="mono text-emerald-300">theta_applied</span>)</h2>
+            <p class="text-xs text-slate-400">Red shaded band marks the taped Keep-Out Box <span class="mono">[+250, +650] mrad</span>. Click or drag on the chart to inspect any tick.</p>
+          </div>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span> Applied Angle</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Proposed u</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500/40 border border-rose-500"></span> Keep-Out</span>
+          </div>
+        </div>
+        <div class="relative h-72 w-full">
+          <canvas id="trajectoryCanvas"></canvas>
+        </div>
+
+        <!-- Scrubber Slider -->
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center gap-3">
+          <label for="tickSlider" class="text-xs font-medium text-slate-400 mono shrink-0">Scrub Tick:</label>
+          <input id="tickSlider" type="range" min="1" max="200" value="26" class="w-full accent-emerald-500 cursor-pointer" />
+          <div id="scrubReadout" class="text-xs mono text-slate-200 bg-slate-800 px-3 py-1 rounded-md shrink-0">
+            Tick #26
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected Tick Inspector + Latency Histogram (1 col) -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between space-y-4">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Selected Tick Frame Inspector</h2>
+          <p class="text-xs text-slate-400 mb-3">Exact 40-byte <span class="mono">latch_tape_entry_t</span> record from <span class="mono">.bss</span></p>
+          <div class="grid grid-cols-2 gap-2 text-xs mono">
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">tick / seq</div>
+              <div id="inspTickSeq" class="text-white font-semibold mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">active mode</div>
+              <div id="inspMode" class="text-emerald-400 font-semibold mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">u_proposed (mrad)</div>
+              <div id="inspProposed" class="text-amber-300 font-semibold mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">theta_applied (mrad)</div>
+              <div id="inspApplied" class="text-emerald-300 font-semibold mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">fault_bits</div>
+              <div id="inspFaults" class="text-rose-400 font-semibold mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5">
+              <div class="text-slate-400 text-[11px]">decision delta</div>
+              <div id="inspLatency" class="text-sky-300 font-semibold mt-0.5">--</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-800">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">Decision Cycles Histogram</h3>
+            <span class="text-[11px] text-slate-400 mono">1 ms period = 1,000,000 ns</span>
+          </div>
+          <div class="relative h-40 w-full">
+            <canvas id="histogramCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filterable Cycle Tape Table -->
+    <section class="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Evidence Tape Log (<span class="mono">latch_tape_entry_t</span>)</h2>
+          <p class="text-xs text-slate-400">Click any row to jump the trajectory cursor to that tick.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="filterSelect" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none">
+            <option value="all">Show All Ticks (200)</option>
+            <option value="faults">Only Fault / Veto Ticks</option>
+            <option value="hp">Mode: HP (0)</option>
+            <option value="hold">Mode: HA-HOLD (1)</option>
+            <option value="home">Mode: HA-HOME (2)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto max-h-72 overflow-y-auto border border-slate-800 rounded-lg">
+        <table class="w-full text-left border-collapse text-xs mono">
+          <thead class="bg-slate-950 text-slate-400 sticky top-0">
+            <tr>
+              <th class="py-2 px-3 border-b border-slate-800">Tick</th>
+              <th class="py-2 px-3 border-b border-slate-800">Seq</th>
+              <th class="py-2 px-3 border-b border-slate-800 text-right">u_proposed</th>
+              <th class="py-2 px-3 border-b border-slate-800 text-right">theta_applied</th>
+              <th class="py-2 px-3 border-b border-slate-800">Mode</th>
+              <th class="py-2 px-3 border-b border-slate-800">Fault Bitmask</th>
+              <th class="py-2 px-3 border-b border-slate-800 text-right">Decision Latency</th>
+            </tr>
+          </thead>
+          <tbody id="tapeTableBody" class="divide-y divide-slate-800/70"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    const DEFAULT_TAPE = [{"tick": 1, "cycles_in": 1051427045436, "cycles_out": 1051427046973, "latency_cycles": 1537, "seq": 1, "u_proposed": -10, "theta_applied": -10, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 2, "cycles_in": 1051427319827, "cycles_out": 1051427320576, "latency_cycles": 749, "seq": 2, "u_proposed": -20, "theta_applied": -20, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 3, "cycles_in": 1051427459735, "cycles_out": 1051427460050, "latency_cycles": 315, "seq": 3, "u_proposed": -30, "theta_applied": -30, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 4, "cycles_in": 1051427601974, "cycles_out": 1051427602324, "latency_cycles": 350, "seq": 4, "u_proposed": -40, "theta_applied": -40, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 5, "cycles_in": 1051427825981, "cycles_out": 1051427826281, "latency_cycles": 300, "seq": 5, "u_proposed": -50, "theta_applied": -50, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 6, "cycles_in": 1051427963688, "cycles_out": 1051427964148, "latency_cycles": 460, "seq": 6, "u_proposed": -60, "theta_applied": -60, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 7, "cycles_in": 1051428107554, "cycles_out": 1051428107880, "latency_cycles": 326, "seq": 7, "u_proposed": -70, "theta_applied": -70, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 8, "cycles_in": 1051428367715, "cycles_out": 1051428368188, "latency_cycles": 473, "seq": 8, "u_proposed": -80, "theta_applied": -80, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 9, "cycles_in": 1051428436396, "cycles_out": 1051428436688, "latency_cycles": 292, "seq": 9, "u_proposed": -90, "theta_applied": -90, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 10, "cycles_in": 1051428694172, "cycles_out": 1051428694549, "latency_cycles": 377, "seq": 10, "u_proposed": -100, "theta_applied": -100, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 11, "cycles_in": 1051428830553, "cycles_out": 1051428830924, "latency_cycles": 371, "seq": 11, "u_proposed": -110, "theta_applied": -110, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 12, "cycles_in": 1051428983298, "cycles_out": 1051428983684, "latency_cycles": 386, "seq": 12, "u_proposed": -120, "theta_applied": -120, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 13, "cycles_in": 1051429269465, "cycles_out": 1051429269894, "latency_cycles": 429, "seq": 13, "u_proposed": -130, "theta_applied": -130, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 14, "cycles_in": 1051429343581, "cycles_out": 1051429343916, "latency_cycles": 335, "seq": 14, "u_proposed": -140, "theta_applied": -140, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 15, "cycles_in": 1051429584325, "cycles_out": 1051429584696, "latency_cycles": 371, "seq": 15, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 16, "cycles_in": 1051429796820, "cycles_out": 1051429797164, "latency_cycles": 344, "seq": 16, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 17, "cycles_in": 1051429927306, "cycles_out": 1051429927664, "latency_cycles": 358, "seq": 17, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 18, "cycles_in": 1051430153088, "cycles_out": 1051430153475, "latency_cycles": 387, "seq": 18, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 19, "cycles_in": 1051430305230, "cycles_out": 1051430305608, "latency_cycles": 378, "seq": 19, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 20, "cycles_in": 1051430557312, "cycles_out": 1051430557656, "latency_cycles": 344, "seq": 20, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 21, "cycles_in": 1051430683972, "cycles_out": 1051430684266, "latency_cycles": 294, "seq": 21, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 22, "cycles_in": 1051430833740, "cycles_out": 1051430834023, "latency_cycles": 283, "seq": 22, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 23, "cycles_in": 1051431070619, "cycles_out": 1051431070942, "latency_cycles": 323, "seq": 23, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 24, "cycles_in": 1051431216967, "cycles_out": 1051431217272, "latency_cycles": 305, "seq": 24, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 25, "cycles_in": 1051431406191, "cycles_out": 1051431406469, "latency_cycles": 278, "seq": 25, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 26, "cycles_in": 1051431585214, "cycles_out": 1051431585568, "latency_cycles": 354, "seq": 26, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 27, "cycles_in": 1051431796072, "cycles_out": 1051431796519, "latency_cycles": 447, "seq": 27, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 28, "cycles_in": 1051431873878, "cycles_out": 1051431874100, "latency_cycles": 222, "seq": 28, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 29, "cycles_in": 1051432155985, "cycles_out": 1051432156270, "latency_cycles": 285, "seq": 29, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 30, "cycles_in": 1051432324459, "cycles_out": 1051432324739, "latency_cycles": 280, "seq": 30, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 31, "cycles_in": 1051432501462, "cycles_out": 1051432501723, "latency_cycles": 261, "seq": 31, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 32, "cycles_in": 1051432693070, "cycles_out": 1051432693372, "latency_cycles": 302, "seq": 32, "u_proposed": 450, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 160, "fault_hex": "0x00A0"}, {"tick": 33, "cycles_in": 1051432993967, "cycles_out": 1051432994496, "latency_cycles": 529, "seq": 33, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 34, "cycles_in": 1051433122846, "cycles_out": 1051433123224, "latency_cycles": 378, "seq": 34, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 35, "cycles_in": 1051433452598, "cycles_out": 1051433453372, "latency_cycles": 774, "seq": 35, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 36, "cycles_in": 1051433551922, "cycles_out": 1051433552191, "latency_cycles": 269, "seq": 36, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 37, "cycles_in": 1051433822392, "cycles_out": 1051433822788, "latency_cycles": 396, "seq": 37, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 38, "cycles_in": 1051433969306, "cycles_out": 1051433969669, "latency_cycles": 363, "seq": 38, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 39, "cycles_in": 1051434218097, "cycles_out": 1051434218435, "latency_cycles": 338, "seq": 39, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 40, "cycles_in": 1051434365593, "cycles_out": 1051434365935, "latency_cycles": 342, "seq": 40, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 41, "cycles_in": 1051434637380, "cycles_out": 1051434637720, "latency_cycles": 340, "seq": 41, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 42, "cycles_in": 1051434848198, "cycles_out": 1051434848487, "latency_cycles": 289, "seq": 42, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 43, "cycles_in": 1051434990849, "cycles_out": 1051434991196, "latency_cycles": 347, "seq": 43, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 44, "cycles_in": 1051435247933, "cycles_out": 1051435248264, "latency_cycles": 331, "seq": 44, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 45, "cycles_in": 1051435394891, "cycles_out": 1051435395282, "latency_cycles": 391, "seq": 45, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 46, "cycles_in": 1051435596782, "cycles_out": 1051435597126, "latency_cycles": 344, "seq": 46, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 47, "cycles_in": 1051435685868, "cycles_out": 1051435686130, "latency_cycles": 262, "seq": 47, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 48, "cycles_in": 1051435751669, "cycles_out": 1051435751909, "latency_cycles": 240, "seq": 48, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 49, "cycles_in": 1051435825172, "cycles_out": 1051435825457, "latency_cycles": 285, "seq": 49, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 50, "cycles_in": 1051435877024, "cycles_out": 1051435877239, "latency_cycles": 215, "seq": 50, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 51, "cycles_in": 1051435998100, "cycles_out": 1051435998431, "latency_cycles": 331, "seq": 51, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 52, "cycles_in": 1051436049730, "cycles_out": 1051436049999, "latency_cycles": 269, "seq": 52, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 53, "cycles_in": 1051436121129, "cycles_out": 1051436121407, "latency_cycles": 278, "seq": 53, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 54, "cycles_in": 1051436302065, "cycles_out": 1051436302316, "latency_cycles": 251, "seq": 54, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 55, "cycles_in": 1051436333712, "cycles_out": 1051436333957, "latency_cycles": 245, "seq": 55, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 56, "cycles_in": 1051436927961, "cycles_out": 1051436928462, "latency_cycles": 501, "seq": 56, "u_proposed": -150, "theta_applied": -150, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 57, "cycles_in": 1051437339254, "cycles_out": 1051437339826, "latency_cycles": 572, "seq": 57, "u_proposed": -150, "theta_applied": -150, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 58, "cycles_in": 1051437536105, "cycles_out": 1051437536447, "latency_cycles": 342, "seq": 58, "u_proposed": -160, "theta_applied": -160, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 59, "cycles_in": 1051437692333, "cycles_out": 1051437692689, "latency_cycles": 356, "seq": 59, "u_proposed": -170, "theta_applied": -170, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 60, "cycles_in": 1051437772142, "cycles_out": 1051437772481, "latency_cycles": 339, "seq": 60, "u_proposed": -180, "theta_applied": -180, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 61, "cycles_in": 1051438418662, "cycles_out": 1051438419052, "latency_cycles": 390, "seq": 61, "u_proposed": -180, "theta_applied": -180, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 62, "cycles_in": 1051438530198, "cycles_out": 1051438530483, "latency_cycles": 285, "seq": 62, "u_proposed": -180, "theta_applied": -180, "mode": 0, "mode_name": "HP", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 63, "cycles_in": 1051438572933, "cycles_out": 1051438573051, "latency_cycles": 118, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 2, "fault_hex": "0x0002"}, {"tick": 64, "cycles_in": 1051438605202, "cycles_out": 1051438605301, "latency_cycles": 99, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 2, "fault_hex": "0x0002"}, {"tick": 65, "cycles_in": 1051438803477, "cycles_out": 1051438803558, "latency_cycles": 81, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 2, "fault_hex": "0x0002"}, {"tick": 66, "cycles_in": 1051438883291, "cycles_out": 1051438883358, "latency_cycles": 67, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 2, "fault_hex": "0x0002"}, {"tick": 67, "cycles_in": 1051439002698, "cycles_out": 1051439002869, "latency_cycles": 171, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 12, "fault_hex": "0x000C"}, {"tick": 68, "cycles_in": 1051439036060, "cycles_out": 1051439036141, "latency_cycles": 81, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 12, "fault_hex": "0x000C"}, {"tick": 69, "cycles_in": 1051439119461, "cycles_out": 1051439119553, "latency_cycles": 92, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 12, "fault_hex": "0x000C"}, {"tick": 70, "cycles_in": 1051439229174, "cycles_out": 1051439229304, "latency_cycles": 130, "seq": 0, "u_proposed": 0, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 12, "fault_hex": "0x000C"}, {"tick": 71, "cycles_in": 1051439273781, "cycles_out": 1051439274182, "latency_cycles": 401, "seq": 71, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 72, "cycles_in": 1051439328872, "cycles_out": 1051439329170, "latency_cycles": 298, "seq": 72, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 73, "cycles_in": 1051440406576, "cycles_out": 1051440406917, "latency_cycles": 341, "seq": 73, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 74, "cycles_in": 1051440423951, "cycles_out": 1051440424205, "latency_cycles": 254, "seq": 74, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 75, "cycles_in": 1051440431817, "cycles_out": 1051440432063, "latency_cycles": 246, "seq": 75, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 76, "cycles_in": 1051440438857, "cycles_out": 1051440439069, "latency_cycles": 212, "seq": 76, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 77, "cycles_in": 1051440445542, "cycles_out": 1051440445750, "latency_cycles": 208, "seq": 77, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 78, "cycles_in": 1051440452227, "cycles_out": 1051440452461, "latency_cycles": 234, "seq": 78, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 79, "cycles_in": 1051440459145, "cycles_out": 1051440459376, "latency_cycles": 231, "seq": 79, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 80, "cycles_in": 1051440466073, "cycles_out": 1051440466306, "latency_cycles": 233, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 0, "fault_hex": "0x0000"}, {"tick": 81, "cycles_in": 1051440472829, "cycles_out": 1051440472940, "latency_cycles": 111, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 4, "fault_hex": "0x0004"}, {"tick": 82, "cycles_in": 1051440479444, "cycles_out": 1051440479572, "latency_cycles": 128, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 4, "fault_hex": "0x0004"}, {"tick": 83, "cycles_in": 1051440486320, "cycles_out": 1051440486414, "latency_cycles": 94, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 4, "fault_hex": "0x0004"}, {"tick": 84, "cycles_in": 1051440493134, "cycles_out": 1051440493227, "latency_cycles": 93, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 4, "fault_hex": "0x0004"}, {"tick": 85, "cycles_in": 1051440499897, "cycles_out": 1051440500031, "latency_cycles": 134, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 86, "cycles_in": 1051440506606, "cycles_out": 1051440506694, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 87, "cycles_in": 1051440513492, "cycles_out": 1051440513586, "latency_cycles": 94, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 88, "cycles_in": 1051440520014, "cycles_out": 1051440520100, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 89, "cycles_in": 1051440526697, "cycles_out": 1051440526785, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 90, "cycles_in": 1051440533357, "cycles_out": 1051440533444, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 91, "cycles_in": 1051440540023, "cycles_out": 1051440540109, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 92, "cycles_in": 1051440546592, "cycles_out": 1051440546678, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 93, "cycles_in": 1051440553203, "cycles_out": 1051440553292, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 94, "cycles_in": 1051440559981, "cycles_out": 1051440560073, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 95, "cycles_in": 1051440566965, "cycles_out": 1051440567050, "latency_cycles": 85, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 96, "cycles_in": 1051440573811, "cycles_out": 1051440573898, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 97, "cycles_in": 1051440580582, "cycles_out": 1051440580669, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 98, "cycles_in": 1051440587172, "cycles_out": 1051440587260, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 99, "cycles_in": 1051440593797, "cycles_out": 1051440593885, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 100, "cycles_in": 1051440600827, "cycles_out": 1051440600915, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 101, "cycles_in": 1051440607524, "cycles_out": 1051440607610, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 102, "cycles_in": 1051440614309, "cycles_out": 1051440614526, "latency_cycles": 217, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 103, "cycles_in": 1051440621247, "cycles_out": 1051440621335, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 104, "cycles_in": 1051440627859, "cycles_out": 1051440627948, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 105, "cycles_in": 1051440634734, "cycles_out": 1051440634821, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 106, "cycles_in": 1051440641176, "cycles_out": 1051440641262, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 107, "cycles_in": 1051440653945, "cycles_out": 1051440654032, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 108, "cycles_in": 1051441233727, "cycles_out": 1051441233823, "latency_cycles": 96, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 109, "cycles_in": 1051441322770, "cycles_out": 1051441322858, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 110, "cycles_in": 1051441341986, "cycles_out": 1051441342065, "latency_cycles": 79, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 2304, "fault_hex": "0x0900"}, {"tick": 111, "cycles_in": 1051441349367, "cycles_out": 1051441349456, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": -180, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 112, "cycles_in": 1051441356040, "cycles_out": 1051441356181, "latency_cycles": 141, "seq": 80, "u_proposed": -180, "theta_applied": -170, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 113, "cycles_in": 1051441362697, "cycles_out": 1051441362830, "latency_cycles": 133, "seq": 80, "u_proposed": -180, "theta_applied": -160, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 114, "cycles_in": 1051441369699, "cycles_out": 1051441369790, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": -150, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 115, "cycles_in": 1051441376383, "cycles_out": 1051441376473, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": -140, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 116, "cycles_in": 1051441383054, "cycles_out": 1051441383145, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": -130, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 117, "cycles_in": 1051441389798, "cycles_out": 1051441389890, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": -120, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 118, "cycles_in": 1051441396748, "cycles_out": 1051441396843, "latency_cycles": 95, "seq": 80, "u_proposed": -180, "theta_applied": -110, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 119, "cycles_in": 1051441404106, "cycles_out": 1051441404197, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": -100, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 120, "cycles_in": 1051441410707, "cycles_out": 1051441410798, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": -90, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 121, "cycles_in": 1051441417338, "cycles_out": 1051441417428, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": -80, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 122, "cycles_in": 1051441423973, "cycles_out": 1051441424062, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": -70, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 123, "cycles_in": 1051441430679, "cycles_out": 1051441430772, "latency_cycles": 93, "seq": 80, "u_proposed": -180, "theta_applied": -60, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 124, "cycles_in": 1051441437516, "cycles_out": 1051441437605, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": -50, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 125, "cycles_in": 1051441444119, "cycles_out": 1051441444212, "latency_cycles": 93, "seq": 80, "u_proposed": -180, "theta_applied": -40, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 126, "cycles_in": 1051441450698, "cycles_out": 1051441450790, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": -30, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 127, "cycles_in": 1051441457538, "cycles_out": 1051441457633, "latency_cycles": 95, "seq": 80, "u_proposed": -180, "theta_applied": -20, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 128, "cycles_in": 1051441464216, "cycles_out": 1051441464304, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": -10, "mode": 2, "mode_name": "HOME", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 129, "cycles_in": 1051441470923, "cycles_out": 1051441471037, "latency_cycles": 114, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 130, "cycles_in": 1051441477597, "cycles_out": 1051441477718, "latency_cycles": 121, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 131, "cycles_in": 1051441484441, "cycles_out": 1051441484526, "latency_cycles": 85, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 132, "cycles_in": 1051441491073, "cycles_out": 1051441491160, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 133, "cycles_in": 1051441497685, "cycles_out": 1051441497774, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 134, "cycles_in": 1051441504091, "cycles_out": 1051441504181, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 135, "cycles_in": 1051441510853, "cycles_out": 1051441510943, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 136, "cycles_in": 1051441517430, "cycles_out": 1051441517517, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 137, "cycles_in": 1051441523923, "cycles_out": 1051441524009, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 138, "cycles_in": 1051441530495, "cycles_out": 1051441530585, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 139, "cycles_in": 1051441537104, "cycles_out": 1051441537193, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 140, "cycles_in": 1051441543794, "cycles_out": 1051441543882, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 141, "cycles_in": 1051441550410, "cycles_out": 1051441550497, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 142, "cycles_in": 1051441557124, "cycles_out": 1051441557214, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 143, "cycles_in": 1051441563949, "cycles_out": 1051441564037, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 144, "cycles_in": 1051441570437, "cycles_out": 1051441570524, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 145, "cycles_in": 1051441577003, "cycles_out": 1051441577094, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 146, "cycles_in": 1051441583611, "cycles_out": 1051441583697, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 147, "cycles_in": 1051441590287, "cycles_out": 1051441590371, "latency_cycles": 84, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 148, "cycles_in": 1051441596961, "cycles_out": 1051441597050, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 149, "cycles_in": 1051441603535, "cycles_out": 1051441603623, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 150, "cycles_in": 1051441610237, "cycles_out": 1051441610324, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 151, "cycles_in": 1051441617065, "cycles_out": 1051441617156, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 152, "cycles_in": 1051441623642, "cycles_out": 1051441623732, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 153, "cycles_in": 1051441630343, "cycles_out": 1051441630430, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 154, "cycles_in": 1051441637038, "cycles_out": 1051441637124, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 155, "cycles_in": 1051441644257, "cycles_out": 1051441644337, "latency_cycles": 80, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 156, "cycles_in": 1051441653341, "cycles_out": 1051441653434, "latency_cycles": 93, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 157, "cycles_in": 1051441810612, "cycles_out": 1051441810682, "latency_cycles": 70, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 158, "cycles_in": 1051441846784, "cycles_out": 1051441846864, "latency_cycles": 80, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 159, "cycles_in": 1051441853985, "cycles_out": 1051441854077, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 160, "cycles_in": 1051441860892, "cycles_out": 1051441860978, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 161, "cycles_in": 1051442401564, "cycles_out": 1051442401670, "latency_cycles": 106, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 162, "cycles_in": 1051442993311, "cycles_out": 1051442993617, "latency_cycles": 306, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 163, "cycles_in": 1051443035816, "cycles_out": 1051443035896, "latency_cycles": 80, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 164, "cycles_in": 1051443043368, "cycles_out": 1051443043457, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 165, "cycles_in": 1051443050463, "cycles_out": 1051443050550, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 166, "cycles_in": 1051443057124, "cycles_out": 1051443057211, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 167, "cycles_in": 1051443064420, "cycles_out": 1051443064510, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 168, "cycles_in": 1051443071355, "cycles_out": 1051443071444, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 169, "cycles_in": 1051443078328, "cycles_out": 1051443078418, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 170, "cycles_in": 1051443085115, "cycles_out": 1051443085203, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 171, "cycles_in": 1051443091667, "cycles_out": 1051443091883, "latency_cycles": 216, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 172, "cycles_in": 1051443098489, "cycles_out": 1051443098575, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 173, "cycles_in": 1051443105312, "cycles_out": 1051443105400, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 174, "cycles_in": 1051443111969, "cycles_out": 1051443112062, "latency_cycles": 93, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 175, "cycles_in": 1051443118919, "cycles_out": 1051443119011, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 176, "cycles_in": 1051443125579, "cycles_out": 1051443125670, "latency_cycles": 91, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 177, "cycles_in": 1051443132609, "cycles_out": 1051443132695, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 178, "cycles_in": 1051443139240, "cycles_out": 1051443139330, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 179, "cycles_in": 1051443411820, "cycles_out": 1051443412200, "latency_cycles": 380, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 180, "cycles_in": 1051443578728, "cycles_out": 1051443579055, "latency_cycles": 327, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 181, "cycles_in": 1051443622937, "cycles_out": 1051443623029, "latency_cycles": 92, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 182, "cycles_in": 1051443631650, "cycles_out": 1051443631712, "latency_cycles": 62, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 183, "cycles_in": 1051443638655, "cycles_out": 1051443638743, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 184, "cycles_in": 1051443645331, "cycles_out": 1051443645419, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 185, "cycles_in": 1051443651846, "cycles_out": 1051443651933, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 186, "cycles_in": 1051443658670, "cycles_out": 1051443658760, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 187, "cycles_in": 1051443665616, "cycles_out": 1051443665702, "latency_cycles": 86, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 188, "cycles_in": 1051443672375, "cycles_out": 1051443672460, "latency_cycles": 85, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 189, "cycles_in": 1051443679174, "cycles_out": 1051443679261, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 190, "cycles_in": 1051443685896, "cycles_out": 1051443685984, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 191, "cycles_in": 1051443698953, "cycles_out": 1051443699038, "latency_cycles": 85, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 192, "cycles_in": 1051443705954, "cycles_out": 1051443706041, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 193, "cycles_in": 1051443712586, "cycles_out": 1051443712676, "latency_cycles": 90, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 194, "cycles_in": 1051443720182, "cycles_out": 1051443720271, "latency_cycles": 89, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 195, "cycles_in": 1051443727108, "cycles_out": 1051443727190, "latency_cycles": 82, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 196, "cycles_in": 1051443733869, "cycles_out": 1051443733957, "latency_cycles": 88, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 197, "cycles_in": 1051443740681, "cycles_out": 1051443740768, "latency_cycles": 87, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 198, "cycles_in": 1051443872348, "cycles_out": 1051443872520, "latency_cycles": 172, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 199, "cycles_in": 1051444483977, "cycles_out": 1051444484184, "latency_cycles": 207, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}, {"tick": 200, "cycles_in": 1051444511351, "cycles_out": 1051444511427, "latency_cycles": 76, "seq": 80, "u_proposed": -180, "theta_applied": 0, "mode": 1, "mode_name": "HOLD", "fault_bits": 256, "fault_hex": "0x0100"}];
+
+    const FAULT_NAMES = [
+      [1 << 0, "MAGIC"],
+      [1 << 1, "CRC"],
+      [1 << 2, "SEQ"],
+      [1 << 3, "NAN"],
+      [1 << 4, "RSVD"],
+      [1 << 5, "KEEPOUT"],
+      [1 << 6, "BOUNDS"],
+      [1 << 7, "RATE"],
+      [1 << 8, "WATCHDOG"],
+      [1 << 9, "I2C"],
+      [1 << 10, "OPERATOR"],
+      [1 << 11, "EPERM"]
+    ];
+
+    let tapeData = DEFAULT_TAPE.slice();
+    let selectedIndex = 25; // Tick 26 (Keep-Out Veto)
+    let playTimer = null;
+
+    function decodeFaultBits(mask) {
+      if (!mask) return "NONE (0x0000)";
+      const names = [];
+      for (const [bit, label] of FAULT_NAMES) {
+        if (mask & bit) names.push(label);
+      }
+      return names.join("|") + " (0x" + mask.toString(16).toUpperCase().padStart(4, "0") + ")";
+    }
+
+    function showToast(msg) {
+      const el = document.getElementById("toastBanner");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+      setTimeout(() => el.classList.add("hidden"), 4000);
+    }
+
+    function computeKpis() {
+      const n = tapeData.length;
+      document.getElementById("kpiTicks").textContent = String(n);
+
+      let keepoutBreaches = 0;
+      let vetoCount = 0;
+      let epermCount = 0;
+      const latencies = [];
+
+      for (const row of tapeData) {
+        if (row.theta_applied >= 250 && row.theta_applied <= 650) {
+          keepoutBreaches++;
+        }
+        if (row.fault_bits & 0x0800) {
+          epermCount++;
+        }
+        if (row.fault_bits & 0x00FF) {
+          vetoCount++;
+        }
+        latencies.push(row.latency_cycles);
+      }
+
+      latencies.sort((a, b) => a - b);
+      const med = latencies.length ? latencies[Math.floor(latencies.length * 0.5)] : 0;
+      const p99 = latencies.length ? latencies[Math.floor(latencies.length * 0.99)] : 0;
+      const maxL = latencies.length ? latencies[latencies.length - 1] : 0;
+
+      document.getElementById("kpiKeepoutStatus").textContent = keepoutBreaches === 0 ? "0 Breaches" : keepoutBreaches + " Breaches";
+      document.getElementById("kpiVetoes").textContent = String(vetoCount) + " Ticks";
+      document.getElementById("kpiEperm").textContent = String(epermCount) + " (Root Denied)";
+      document.getElementById("kpiP99").textContent = med + " / " + p99 + " ns";
+      document.getElementById("kpiMaxLat").textContent = maxL + " ns";
+    }
+
+    function drawTrajectoryChart() {
+      const canvas = document.getElementById("trajectoryCanvas");
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(300, rect.width) * dpr;
+      canvas.height = Math.max(180, rect.height) * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+
+      const w = Math.max(300, rect.width);
+      const h = Math.max(180, rect.height);
+      const pad = { l: 48, r: 16, t: 14, b: 26 };
+      const pw = w - pad.l - pad.r;
+      const ph = h - pad.t - pad.b;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const yMin = -1000;
+      const yMax = 1000;
+      const yToPx = (val) => {
+        const clamped = Math.max(yMin, Math.min(yMax, val));
+        return pad.t + ph * (1 - (clamped - yMin) / (yMax - yMin));
+      };
+      const xToPx = (idx) => {
+        if (tapeData.length <= 1) return pad.l;
+        return pad.l + (idx / (tapeData.length - 1)) * pw;
+      };
+
+      // Mode background bands
+      for (let i = 0; i < tapeData.length; i++) {
+        const x0 = xToPx(i);
+        const x1 = xToPx(Math.min(tapeData.length - 1, i + 1));
+        const m = tapeData[i].mode;
+        if (m === 1) {
+          ctx.fillStyle = "rgba(245, 158, 11, 0.06)";
+          ctx.fillRect(x0, pad.t, Math.max(1, x1 - x0), ph);
+        } else if (m === 2) {
+          ctx.fillStyle = "rgba(56, 189, 248, 0.12)";
+          ctx.fillRect(x0, pad.t, Math.max(1, x1 - x0), ph);
+        }
+      }
+
+      // Shaded Keep-Out Box [+250, +650] mrad
+      const yKeepHi = yToPx(650);
+      const yKeepLo = yToPx(250);
+      ctx.fillStyle = "rgba(244, 63, 94, 0.20)";
+      ctx.fillRect(pad.l, yKeepHi, pw, yKeepLo - yKeepHi);
+      ctx.strokeStyle = "rgba(244, 63, 94, 0.65)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, yKeepHi);
+      ctx.lineTo(pad.l + pw, yKeepHi);
+      ctx.moveTo(pad.l, yKeepLo);
+      ctx.lineTo(pad.l + pw, yKeepLo);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Horizontal grid lines
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "10px JetBrains Mono, monospace";
+      ctx.textAlign = "right";
+      for (const gv of [-1000, -500, 0, 250, 650, 1000]) {
+        const py = yToPx(gv);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, py);
+        ctx.lineTo(pad.l + pw, py);
+        ctx.stroke();
+        ctx.fillText(String(gv), pad.l - 6, py + 3);
+      }
+
+      // Proposed u_mrad dashed curve
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      for (let i = 0; i < tapeData.length; i++) {
+        const rawU = tapeData[i].u_proposed < -10000 ? 1000 : tapeData[i].u_proposed;
+        const px = xToPx(i);
+        const py = yToPx(rawU);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Applied theta_mrad solid curve
+      ctx.strokeStyle = "#34d399";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (let i = 0; i < tapeData.length; i++) {
+        const px = xToPx(i);
+        const py = yToPx(tapeData[i].theta_applied);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      // Selected tick vertical cursor
+      if (selectedIndex >= 0 && selectedIndex < tapeData.length) {
+        const cx = xToPx(selectedIndex);
+        ctx.strokeStyle = "#f8fafc";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, pad.t);
+        ctx.lineTo(cx, pad.t + ph);
+        ctx.stroke();
+
+        const cy = yToPx(tapeData[selectedIndex].theta_applied);
+        ctx.fillStyle = "#34d399";
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawHistogramChart() {
+      const canvas = document.getElementById("histogramCanvas");
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(220, rect.width) * dpr;
+      canvas.height = Math.max(120, rect.height) * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+
+      const w = Math.max(220, rect.width);
+      const h = Math.max(120, rect.height);
+      const pad = { l: 32, r: 10, t: 10, b: 22 };
+      const pw = w - pad.l - pad.r;
+      const ph = h - pad.t - pad.b;
+
+      ctx.clearRect(0, 0, w, h);
+      if (!tapeData.length) return;
+
+      const lats = tapeData.map((d) => d.latency_cycles);
+      const minL = Math.min(...lats);
+      const maxL = Math.max(...lats, minL + 10);
+      const bins = 12;
+      const counts = new Array(bins).fill(0);
+      for (const v of lats) {
+        let b = Math.floor(((v - minL) / (maxL - minL + 1)) * bins);
+        if (b >= bins) b = bins - 1;
+        counts[b]++;
+      }
+      const maxC = Math.max(...counts, 1);
+
+      const bw = pw / bins;
+      for (let i = 0; i < bins; i++) {
+        const bh = (counts[i] / maxC) * ph;
+        ctx.fillStyle = "rgba(56, 189, 248, 0.75)";
+        ctx.fillRect(pad.l + i * bw + 2, pad.t + ph - bh, Math.max(2, bw - 4), bh);
+      }
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "10px JetBrains Mono, monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(minL + " ns", pad.l, h - 5);
+      ctx.textAlign = "right";
+      ctx.fillText(maxL + " ns", pad.l + pw, h - 5);
+    }
+
+    function updateInspector() {
+      if (!tapeData.length) return;
+      const row = tapeData[Math.max(0, Math.min(tapeData.length - 1, selectedIndex))];
+      document.getElementById("tickSlider").max = String(tapeData.length);
+      document.getElementById("tickSlider").value = String(row.tick);
+      document.getElementById("scrubReadout").textContent = "Tick #" + row.tick + " (" + row.mode_name + ")";
+
+      document.getElementById("inspTickSeq").textContent = "#" + row.tick + " / seq " + row.seq;
+      const modeEl = document.getElementById("inspMode");
+      modeEl.textContent = row.mode_name + " (" + row.mode + ")";
+      modeEl.className = "font-semibold mt-0.5 " + (
+        row.mode === 0 ? "text-emerald-400" : row.mode === 1 ? "text-amber-400" : "text-sky-400"
+      );
+
+      document.getElementById("inspProposed").textContent =
+        row.u_proposed <= -2000000000 ? "INT32_MIN (NaN)" : row.u_proposed + " mrad";
+      document.getElementById("inspApplied").textContent = row.theta_applied + " mrad";
+      document.getElementById("inspFaults").textContent = decodeFaultBits(row.fault_bits);
+      document.getElementById("inspLatency").textContent = row.latency_cycles + " ns";
+    }
+
+    function renderTable() {
+      const filter = document.getElementById("filterSelect").value;
+      const tbody = document.getElementById("tapeTableBody");
+      tbody.innerHTML = "";
+
+      tapeData.forEach((row, idx) => {
+        if (filter === "faults" && row.fault_bits === 0) return;
+        if (filter === "hp" && row.mode !== 0) return;
+        if (filter === "hold" && row.mode !== 1) return;
+        if (filter === "home" && row.mode !== 2) return;
+
+        const tr = document.createElement("tr");
+        const isSelected = idx === selectedIndex;
+        tr.className = "cursor-pointer transition " + (
+          isSelected ? "bg-emerald-950/60 text-white" : "hover:bg-slate-800/60 text-slate-300"
+        );
+
+        const badgeClass =
+          row.mode === 0
+            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+            : row.mode === 1
+            ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+            : "bg-sky-500/20 text-sky-300 border-sky-500/30";
+
+        const uStr = row.u_proposed <= -2000000000 ? "INT32_MIN" : String(row.u_proposed);
+        tr.innerHTML =
+          '<td class="py-1.5 px-3 font-semibold">#' + row.tick + '</td>' +
+          '<td class="py-1.5 px-3">' + row.seq + '</td>' +
+          '<td class="py-1.5 px-3 text-right">' + uStr + '</td>' +
+          '<td class="py-1.5 px-3 text-right font-semibold text-emerald-300">' + row.theta_applied + '</td>' +
+          '<td class="py-1.5 px-3"><span class="px-2 py-0.5 rounded border text-[10px] ' + badgeClass + '">' + row.mode_name + '</span></td>' +
+          '<td class="py-1.5 px-3 ' + (row.fault_bits ? 'text-rose-400 font-semibold' : 'text-slate-500') + '">' + decodeFaultBits(row.fault_bits) + '</td>' +
+          '<td class="py-1.5 px-3 text-right text-sky-300">' + row.latency_cycles + ' ns</td>';
+
+        tr.addEventListener("click", () => {
+          selectedIndex = idx;
+          updateInspector();
+          drawTrajectoryChart();
+          renderTable();
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    function setSelectedTick(tickNum) {
+      const idx = tapeData.findIndex((r) => r.tick === tickNum);
+      selectedIndex = idx >= 0 ? idx : Math.max(0, Math.min(tapeData.length - 1, tickNum - 1));
+      updateInspector();
+      drawTrajectoryChart();
+      renderTable();
+    }
+
+    // Event bindings
+    document.getElementById("tickSlider").addEventListener("input", (e) => {
+      setSelectedTick(parseInt(e.target.value, 10));
+    });
+
+    document.getElementById("filterSelect").addEventListener("change", () => {
+      renderTable();
+    });
+
+    document.querySelectorAll(".jump-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const t = parseInt(btn.getAttribute("data-jump"), 10);
+        setSelectedTick(t);
+      });
+    });
+
+    document.getElementById("btnStepPrev").addEventListener("click", () => {
+      selectedIndex = Math.max(0, selectedIndex - 1);
+      updateInspector();
+      drawTrajectoryChart();
+      renderTable();
+    });
+
+    document.getElementById("btnStepNext").addEventListener("click", () => {
+      selectedIndex = Math.min(tapeData.length - 1, selectedIndex + 1);
+      updateInspector();
+      drawTrajectoryChart();
+      renderTable();
+    });
+
+    document.getElementById("btnPlayPause").addEventListener("click", () => {
+      const btn = document.getElementById("btnPlayPause");
+      if (playTimer) {
+        clearInterval(playTimer);
+        playTimer = null;
+        btn.textContent = "Play Scrub";
+      } else {
+        btn.textContent = "Pause Scrub";
+        playTimer = setInterval(() => {
+          selectedIndex = (selectedIndex + 1) % tapeData.length;
+          updateInspector();
+          drawTrajectoryChart();
+        }, 65);
+      }
+    });
+
+    document.getElementById("btnResetDefault").addEventListener("click", () => {
+      tapeData = DEFAULT_TAPE.slice();
+      selectedIndex = 25;
+      computeKpis();
+      updateInspector();
+      drawTrajectoryChart();
+      drawHistogramChart();
+      renderTable();
+      showToast("Restored 200-tick C verification suite tape.");
+    });
+
+    document.getElementById("btnExportCsv").addEventListener("click", () => {
+      const lines = ["tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits"];
+      for (const r of tapeData) {
+        lines.push([
+          r.tick, r.cycles_in, r.cycles_out, r.latency_cycles,
+          r.seq, r.u_proposed, r.theta_applied, r.mode, r.mode_name, r.fault_hex
+        ].join(","));
+      }
+      const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "latch_suite_tape.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById("csvFileInput").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || "").trim();
+        try {
+          if (file.name.endsWith(".json")) {
+            tapeData = JSON.parse(text);
+          } else {
+            const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+            const parsed = [];
+            for (let i = 1; i < lines.length; i++) {
+              const p = lines[i].split(",");
+              if (p.length < 10) continue;
+              parsed.push({
+                tick: parseInt(p[0], 10),
+                cycles_in: parseInt(p[1], 10),
+                cycles_out: parseInt(p[2], 10),
+                latency_cycles: parseInt(p[3], 10),
+                seq: parseInt(p[4], 10),
+                u_proposed: parseInt(p[5], 10),
+                theta_applied: parseInt(p[6], 10),
+                mode: parseInt(p[7], 10),
+                mode_name: p[8].trim(),
+                fault_bits: parseInt(p[9], 16),
+                fault_hex: p[9].trim()
+              });
+            }
+            if (parsed.length > 0) tapeData = parsed;
+          }
+          selectedIndex = 0;
+          computeKpis();
+          updateInspector();
+          drawTrajectoryChart();
+          drawHistogramChart();
+          renderTable();
+          showToast("Loaded " + tapeData.length + " ticks from " + file.name);
+        } catch (err) {
+          showToast("Could not parse file: " + err);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById("trajectoryCanvas").addEventListener("click", (e) => {
+      const canvas = document.getElementById("trajectoryCanvas");
+      const rect = canvas.getBoundingClientRect();
+      const padL = 48;
+      const padR = 16;
+      const pw = Math.max(1, rect.width - padL - padR);
+      const relX = Math.max(0, Math.min(pw, e.clientX - rect.left - padL));
+      selectedIndex = Math.round((relX / pw) * (tapeData.length - 1));
+      updateInspector();
+      drawTrajectoryChart();
+      renderTable();
+    });
+
+    window.addEventListener("resize", () => {
+      drawTrajectoryChart();
+      drawHistogramChart();
+    });
+
+    window.onload = () => {
+      computeKpis();
+      updateInspector();
+      drawTrajectoryChart();
+      drawHistogramChart();
+      renderTable();
+    };
+  </script>
+</body>
+</html>

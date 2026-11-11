@@ -1,0 +1,56 @@
+################################################################################
+# qnx/latch.qvmconf
+#
+# QNX Hypervisor 8.0 Guest Configuration for LATCH (Raspberry Pi 4B BCM2711)
+#
+# Static CPU & Priority Isolation:
+#   - _cpu-0 : Host `latchd` SCHED_FIFO decision thread (pinned via ThreadCtl)
+#   - _cpu-1 : Host `latch-ingest` byte parser (no `latch/actuator` ability)
+#   - _cpu-2 : Guest vCPU 0 (`cpu _cpu-2 sched 8r`)
+#   - _cpu-3 : Guest vCPU 1 (`cpu _cpu-3 sched 8r`)
+#
+# A static vCPU runmask cannot be altered by the guest because the guest lacks
+# the host ability to modify qvm thread affinity.
+################################################################################
+
+system latch-policy-guest
+
+ram 0x80000000,0x20000000
+
+# Pin guest vCPUs to physical cores 2 and 3 at priority 8 round-robin
+cpu _cpu-2 sched 8r
+cpu _cpu-3 sched 8r
+
+# BCM2711 uses an ARM GIC-400 (GICv2). Default `vdev gic` version is 3, so
+# `version 2` MUST be explicitly specified, and `gicr` MUST NOT be set.
+# Requires QNX Hypervisor 8.0 build >= 549 (12 Jun 2025).
+vdev gic
+    version 2
+    gicd 0xff841000
+    gicc 0xff842000
+
+# Bind the guest virtio-console byte stream directly to `/proc/boot/latch-ingest`.
+# `name` creates `/dev/qvm/latch-policy-guest/latch_console` for control only;
+# it is never pointed at `/dev/latch/actuator`.
+vdev virtio-console
+    loc 0x1c0a0000
+    intr gic:42
+    hostdev >"|/proc/boot/latch-ingest"
+    name latch_console
+
+# Optional shared-memory transport (Week 4+ only if byte pipe is too slow):
+# `allow` appends an implicit `deny *`. Never use `deny` alone, because `deny`
+# appends an implicit `allow *` and exposes other host shmem regions.
+# vdev shmem
+#     loc 0x1c0b0000
+#     intr gic:43
+#     create LATCH_RING,0x1000,0660
+#     allow LATCH_RING
+
+vdev pl011
+    loc 0x1c090000
+    intr gic:33
+    hostdev >/dev/shmem/guest_console.log
+
+load 0x80080000 /proc/boot/linux-guest.Image
+cmdline "console=ttyAMA0,115200 root=/dev/ram0 rw"

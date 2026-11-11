@@ -1,0 +1,57 @@
+# ==============================================================================
+# latch/qnx/latch.secpol
+#
+# LATCH — Last Authority for Trusted Control Handoff
+# QNX SDP 8.0 Security Policy Definition (compiled to /proc/boot/secpol.bin)
+#
+# Enforces Principle of Least Privilege:
+#   1. Declares custom microkernel ability "latch/actuator".
+#   2. Restricts /dev/i2c1 hardware bus access strictly to `latchd`.
+#   3. Restricts /dev/latch/proposal write access to `latch-ingest`.
+#   4. Restricts /dev/latch/actuator control to callers holding `latch/actuator`.
+#   5. Strictly isolates QNX Hypervisor 8.0 `qvm` from hardware actuators.
+# ==============================================================================
+
+# 1. Custom Ability Declaration
+ability latch/actuator;
+
+# 2. Process Domains & Types
+type_trans proc_t /proc/boot/latchd latchd_t;
+type_trans proc_t /proc/boot/latch-ingest latch_ingest_t;
+type_trans proc_t /proc/boot/latchctl latchctl_t;
+type_trans proc_t /proc/boot/latchlog latchlog_t;
+type_trans proc_t /proc/boot/qvm qvm_guest_host_t;
+
+# 3. Ability Allowances
+# Only latchd and authorized admin tool may possess latch/actuator
+allow_ability latchd_t latch/actuator;
+allow_ability latchctl_t latch/actuator;
+
+# System and pathspace abilities required by latchd
+allow_ability latchd_t PROCMGR_AID_PATHSPACE;
+allow_ability latchd_t PROCMGR_AID_PRIORITY;
+allow_ability latchd_t PROCMGR_AID_RUNMASK;
+allow_ability latchd_t PROCMGR_AID_ABLE_CREATE;
+
+# Ingest process holds NO latch/actuator ability and NO root abilities
+allow_ability latch_ingest_t PROCMGR_AID_RUNMASK;
+
+# 4. Pathspace Access Control
+# latchd manages the two resource manager nodes and accesses the I2C bus
+allow latchd_t /dev/latch/proposal:all;
+allow latchd_t /dev/latch/actuator:all;
+allow latchd_t /dev/i2c1:all;
+
+# latch-ingest connects only to the proposal input node
+allow latch_ingest_t /dev/latch/proposal:write;
+neverallow latch_ingest_t /dev/latch/actuator:all;
+neverallow latch_ingest_t /dev/i2c1:all;
+
+# Hypervisor qvm process may NOT reach actuators or proposal node directly
+neverallow qvm_guest_host_t /dev/i2c1:all;
+neverallow qvm_guest_host_t /dev/latch/actuator:all;
+neverallow qvm_guest_host_t /dev/latch/proposal:all;
+
+# Logging daemon queries actuator node
+allow latchlog_t /dev/latch/actuator:read,write;
+
