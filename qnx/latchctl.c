@@ -190,8 +190,13 @@ int main(int argc, char *argv[]) {
 
     const char *cmd = argv[optind++];
 
-    int fd = open(dev_path, O_RDWR);
+    int oflag = (strcmp(cmd, "hold") == 0 || strcmp(cmd, "grant-check") == 0) ? O_RDWR : O_RDONLY;
+    int fd = open(dev_path, oflag);
     if (fd < 0) {
+        if (strcmp(cmd, "grant-check") == 0 && (errno == EPERM || errno == EACCES)) {
+            printf("[AUTH] DENIED: Process lacks 'latch/actuator' ability (EPERM). Fail-closed.\n");
+            return 2;
+        }
         fprintf(stderr, "latchctl: Cannot open '%s': %s\n", dev_path, strerror(errno));
         return (errno == EACCES || errno == EPERM) ? 2 : 1;
     }

@@ -165,8 +165,8 @@ def main() -> int:
     parser.add_argument(
         "--period-ms",
         type=float,
-        default=0.0,
-        help="Sleep interval between frames in ms (0 for burst/pipe mode)",
+        default=1.0,
+        help="Sleep interval between frames in ms (default: 1.0 ms for 1 kHz paced execution; 0.0 for burst stress test)",
     )
     parser.add_argument(
         "--manifest",

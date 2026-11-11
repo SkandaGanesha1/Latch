@@ -225,6 +225,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
+#ifdef __QNXNTO__
+    /* Drop and lock all abilities: latch-ingest only parses wire frames and writes to proposal pipe */
+    (void)procmgr_ability(0,
+                          PROCMGR_ADN_ROOT | PROCMGR_ADN_NONROOT |
+                          PROCMGR_AOP_DENY | PROCMGR_AOP_LOCK,
+                          PROCMGR_AID_EOL);
+#endif
+
     latch_wire_frame_t   wire_frame;
     latch_ipc_proposal_t ipc_prop;
     uint32_t total_frames = 0u;

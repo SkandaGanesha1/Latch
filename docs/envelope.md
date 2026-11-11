@@ -26,6 +26,7 @@ Rate, acceleration, and timing constants:
 | --- | --- | --- |
 | `V_MAX_MRAD_TICK` | `25` mrad/tick | Maximum slew step per tick |
 | `A_MAX_MRAD_TICK2` | `10` mrad/tick² | Maximum velocity change per tick |
+| `J_MAX_MRAD_TICK3` | `20` mrad/tick³ | Maximum allowable jerk step per tick |
 | `V_HOME_MRAD_TICK` | `10` mrad/tick | Retraction speed in `HA-HOME` |
 | `HORIZON_TICKS` | `10` ticks | Forward lookahead horizon |
 | `WATCHDOG_TICKS` | `2` ticks | Maximum ticks without an accepted frame before `HOLD` |
@@ -36,8 +37,8 @@ Rate, acceleration, and timing constants:
 
 Before accepting any proposal `u_mrad`, `latchd` verifies:
 
-1. **Wire integrity**: `magic == 0x4C415448`, `version == 1`, `joint == 0`, `reserved[12] == 0`, IEEE 802.3 CRC32 (`0xEDB88320`) over bytes `[0, 16)`, `u_mrad != INT32_MIN`, and `seq == last_seq + 1`.
-2. **Instantaneous step bounds**: `|u_mrad - theta_mrad| <= V_MAX_MRAD_TICK` and `|(u_mrad - theta_mrad) - velocity_mrad_tick| <= A_MAX_MRAD_TICK2`.
+1. **Wire integrity**: `magic == 0x4C415448`, `version == 1`, `joint == 0`, `reserved[12] == 0`, IEEE 802.3 CRC32 (`0xEDB88320`) over bytes `[0, 16)`, `u_mrad != INT32_MIN`, and monotonic sequence advancement `seq > last_seq` (with `last_seq == 0` accepting any non-zero initial sequence), supporting frame coalescing under latest-wins delivery.
+2. **Instantaneous step bounds**: `|u_mrad - theta_mrad| <= V_MAX_MRAD_TICK`, `|(u_mrad - theta_mrad) - velocity_mrad_tick| <= A_MAX_MRAD_TICK2`, and third-order jerk bound `|a_step - accel_mrad_tick2| <= J_MAX_MRAD_TICK3`.
 3. **10-tick constant-`u` rollout**:
    ```c
    theta_next = sim_theta + clamp(u_mrad - sim_theta, -V_MAX_MRAD_TICK, +V_MAX_MRAD_TICK);

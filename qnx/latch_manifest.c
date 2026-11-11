@@ -52,7 +52,7 @@ static const uint32_t K256[64] = {
     0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u,
     0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
     0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
-    0x90befffeu, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
+    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
 };
 
 static void latch_sha256_transform(uint32_t state[8], const uint8_t data[64]) {
@@ -171,6 +171,40 @@ int latch_manifest_compute_sha256(const char *path, uint8_t hash_out[32], char h
     return 0;
 }
 
+static void latch_sha256_buffer(const void *data, size_t len, uint8_t hash_out[32], char hex_out[65]) {
+    latch_sha256_ctx_t ctx;
+    latch_sha256_init(&ctx);
+    if (data != NULL && len > 0) {
+        latch_sha256_update(&ctx, (const uint8_t *)data, len);
+    }
+    latch_sha256_final(&ctx, hash_out);
+    if (hex_out != NULL) {
+        for (int i = 0; i < 32; ++i) {
+            snprintf(&hex_out[i * 2], 3, "%02x", hash_out[i]);
+        }
+        hex_out[64] = '\0';
+    }
+}
+
+int latch_manifest_selftest_sha256(void) {
+    uint8_t hash[32];
+    char hex[65];
+
+    /* Test Vector 1: Empty string -> e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 */
+    latch_sha256_buffer("", 0, hash, hex);
+    if (strcmp(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") != 0) {
+        return -1;
+    }
+
+    /* Test Vector 2: "abc" -> ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad */
+    latch_sha256_buffer("abc", 3, hash, hex);
+    if (strcmp(hex, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") != 0) {
+        return -2;
+    }
+
+    return 0;
+}
+
 /* ==========================================================================
  * 2. Conservative Defaults Initialization
  * ========================================================================== */
@@ -197,6 +231,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
 
     m->envelope.v_max = 25;
     m->envelope.a_max = 10;
+    m->envelope.j_max = 20;
     m->envelope.v_home = 10;
     m->envelope.lookahead_ticks = 10;
 
@@ -212,6 +247,8 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     m->decision.pulse_priority = 63;
 
     m->ingest.cpu = 1;
+    strncpy(m->ingest.delivery, "queued", sizeof(m->ingest.delivery) - 1);
+    m->ingest.queue_depth = 16;
 
     strncpy(m->paths.proposal, "/dev/latch/proposal", sizeof(m->paths.proposal) - 1);
     strncpy(m->paths.actuator, "/dev/latch/actuator", sizeof(m->paths.actuator) - 1);
@@ -392,6 +429,7 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     if ((p = json_find_key(buf, "theta_max_mrad")) != NULL) json_match_int32(&p, &out_m->envelope.theta_max_mrad);
     if ((p = json_find_key(buf, "v_max")) != NULL)          json_match_int32(&p, &out_m->envelope.v_max);
     if ((p = json_find_key(buf, "a_max")) != NULL)          json_match_int32(&p, &out_m->envelope.a_max);
+    if ((p = json_find_key(buf, "j_max")) != NULL)          json_match_int32(&p, &out_m->envelope.j_max);
     if ((p = json_find_key(buf, "v_home")) != NULL)         json_match_int32(&p, &out_m->envelope.v_home);
     if ((p = json_find_key(buf, "lookahead_ticks")) != NULL) json_match_uint32(&p, &out_m->envelope.lookahead_ticks);
 
@@ -444,6 +482,10 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     if ((p = json_find_key(buf, "ingest")) != NULL) {
         const char *cpu_ptr = json_find_key(p, "cpu");
         if (cpu_ptr) json_match_uint32(&cpu_ptr, &out_m->ingest.cpu);
+        const char *deliv_ptr = json_find_key(p, "delivery");
+        if (deliv_ptr) json_match_str(&deliv_ptr, out_m->ingest.delivery, sizeof(out_m->ingest.delivery));
+        const char *qd_ptr = json_find_key(p, "queue_depth");
+        if (qd_ptr) json_match_uint32(&qd_ptr, &out_m->ingest.queue_depth);
     }
 
     /* Parse paths */
@@ -465,9 +507,24 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
                               out_m->envelope.theta_min_mrad, out_m->envelope.theta_max_mrad);
         return -EINVAL;
     }
-    if (out_m->envelope.v_max <= 0 || out_m->envelope.a_max <= 0 || out_m->envelope.v_home <= 0) {
-        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive (v_max=%d, a_max=%d, v_home=%d)",
-                              out_m->envelope.v_max, out_m->envelope.a_max, out_m->envelope.v_home);
+    if (out_m->envelope.v_max <= 0 || out_m->envelope.a_max <= 0 ||
+        out_m->envelope.j_max <= 0 || out_m->envelope.v_home <= 0) {
+        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive (v_max=%d, a_max=%d, j_max=%d, v_home=%d)",
+                              out_m->envelope.v_max, out_m->envelope.a_max, out_m->envelope.j_max, out_m->envelope.v_home);
+        return -EINVAL;
+    }
+    if (strcmp(out_m->ingest.delivery, "queued") != 0 &&
+        strcmp(out_m->ingest.delivery, "latest") != 0) {
+        if (err_buf) snprintf(err_buf, err_len, "Unknown ingest delivery mode '%s' (must be 'queued' or 'latest')",
+                              out_m->ingest.delivery);
+        return -EINVAL;
+    }
+    if (out_m->ingest.queue_depth < 1 || out_m->ingest.queue_depth > 64) {
+        if (err_buf) snprintf(err_buf, err_len, "Queue depth %u outside [1, 64]", out_m->ingest.queue_depth);
+        return -EINVAL;
+    }
+    if (latch_manifest_in_keepout(out_m, 0)) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Home position (0 mrad) sits inside keep-out interval!");
         return -EINVAL;
     }
     if (out_m->timing.period_us < 250 || out_m->timing.period_us > 100000) {

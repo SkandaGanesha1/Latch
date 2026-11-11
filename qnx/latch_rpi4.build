@@ -15,7 +15,7 @@
 
 [image=0x00200000]
 [virtual=aarch64le,raw] boot = {
-    startup-bcm2711-rpi4 -v -Q enable
+    startup-bcm2711-rpi4 -v -Q enable,el1-host -r 0,4096,1
     PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
     LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll
     procnto-smp-instr -v

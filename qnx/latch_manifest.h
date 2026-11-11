@@ -45,6 +45,7 @@ typedef struct latch_manifest_envelope {
     latch_keepout_interval_t keepout[LATCH_MAX_KEEPOUTS];
     int32_t                  v_max;
     int32_t                  a_max;
+    int32_t                  j_max;
     int32_t                  v_home;
     uint32_t                 lookahead_ticks;
 } latch_manifest_envelope_t;
@@ -68,6 +69,8 @@ typedef struct latch_manifest_decision {
 
 typedef struct latch_manifest_ingest {
     uint32_t cpu;
+    char     delivery[16];   /* "queued" or "latest" */
+    uint32_t queue_depth;    /* bounded ring buffer capacity */
 } latch_manifest_ingest_t;
 
 typedef struct latch_manifest_paths {
@@ -126,6 +129,9 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
 
 /* Compute SHA-256 digest of a manifest file. Returns 0 on success, <0 on failure. */
 int latch_manifest_compute_sha256(const char *path, uint8_t hash_out[32], char hex_out[65]);
+
+/* Self-test SHA-256 implementation against NIST FIPS 180-2 vectors. Returns 0 on pass. */
+int latch_manifest_selftest_sha256(void);
 
 /* Check if a candidate angle violates any configured keep-out interval */
 bool latch_manifest_in_keepout(const latch_manifest_t *m, int32_t theta_mrad);
