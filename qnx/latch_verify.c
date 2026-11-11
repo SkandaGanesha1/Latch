@@ -92,16 +92,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        uint32_t base_seq = st_init.last_seq;
-        if (base_seq == 0u) {
-            base_seq = 100u;
-        }
-        uint32_t seq = base_seq;
-
-        /* Phase 0: Hysteresis Recovery (30 clean frames at 0 mrad to restore HP from initial watchdog HOLD) */
-        for (uint32_t i = 0; i < 30; ++i) {
-            send_frame(prop_fd, ++seq, 0, LATCH_FAULT_NONE);
-        }
+        uint32_t seq = (st_init.last_seq > 0u) ? st_init.last_seq : 0u;
 
         /* 1. Nominal tracking in HP mode: step smoothly from 0 to -100 mrad */
         for (uint32_t i = 1; i <= 10; ++i) {

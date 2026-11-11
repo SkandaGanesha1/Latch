@@ -14,6 +14,12 @@
  *     (never forwards a half-parsed or corrupted `u` to `latchd`).
  */
 
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -39,6 +45,8 @@
 
 #include "latch_protocol.h"
 #include "latch_manifest.h"
+
+#define LATCH_INGEST_PREFILL_FRAMES 32u
 
 static volatile sig_atomic_t g_ingest_running = 1;
 
@@ -235,8 +243,9 @@ int main(int argc, char *argv[]) {
 
     latch_wire_frame_t   wire_frame;
     latch_ipc_proposal_t ipc_prop;
-    uint32_t total_frames = 0u;
-    uint32_t wire_faults  = 0u;
+    uint32_t total_frames   = 0u;
+    uint32_t wire_faults    = 0u;
+    uint32_t silence_ticks  = 0u;
 
     while (g_ingest_running) {
         int r = latch_read_exact(in_fd, &wire_frame, sizeof(wire_frame));
@@ -248,6 +257,9 @@ int main(int argc, char *argv[]) {
         total_frames++;
         if (ipc_prop.pre_fault_bits != 0u) {
             wire_faults++;
+        }
+        if ((wire_frame.flags & LATCH_WIRE_FLAG_SILENCE) != 0u) {
+            silence_ticks++;
         }
 
         if (verbose) {
@@ -267,11 +279,25 @@ int main(int argc, char *argv[]) {
             }
             break;
         }
+
+        /* 32-frame burst prefill followed by 1 ms pacing when writing to device node */
+        if (out_fd != STDOUT_FILENO && total_frames > LATCH_INGEST_PREFILL_FRAMES) {
+            uint32_t pace_us = (manifest.timing.period_us > 0) ? manifest.timing.period_us : 1000u;
+            usleep(pace_us);
+        }
     }
 
+    /* Wait for latchd to drain queued proposals before closing channel */
+    if (out_fd != STDOUT_FILENO) {
+        usleep(15000); /* 15 ms drain wait */
+    }
+
+    uint32_t nominal_forwarded = (total_frames >= wire_faults + silence_ticks)
+                                     ? (total_frames - wire_faults - silence_ticks)
+                                     : 0u;
     if (verbose || out_fd != STDOUT_FILENO) {
-        fprintf(stderr, "[latch-ingest] Completed: %u frames processed (%u nominal forwarded, %u wire faults sanitized) -> %s\n",
-                total_frames, total_frames - wire_faults, wire_faults, proposal_path);
+        fprintf(stderr, "[latch-ingest] Completed: %u frames processed (%u nominal forwarded, %u silence ticks, %u wire faults sanitized) -> %s\n",
+                total_frames, nominal_forwarded, silence_ticks, wire_faults, proposal_path);
     }
 
     if (out_fd != STDOUT_FILENO) {

@@ -224,6 +224,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
 
     m->envelope.theta_min_mrad = -1000;
     m->envelope.theta_max_mrad = 1000;
+    m->envelope.home_mrad = 0;
     m->envelope.num_keepouts = 1;
     m->envelope.keepout[0].lo_mrad = 250;
     m->envelope.keepout[0].hi_mrad = 650;
@@ -427,6 +428,7 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     /* Parse envelope constants */
     if ((p = json_find_key(buf, "theta_min_mrad")) != NULL) json_match_int32(&p, &out_m->envelope.theta_min_mrad);
     if ((p = json_find_key(buf, "theta_max_mrad")) != NULL) json_match_int32(&p, &out_m->envelope.theta_max_mrad);
+    if ((p = json_find_key(buf, "home_mrad")) != NULL)      json_match_int32(&p, &out_m->envelope.home_mrad);
     if ((p = json_find_key(buf, "v_max")) != NULL)          json_match_int32(&p, &out_m->envelope.v_max);
     if ((p = json_find_key(buf, "a_max")) != NULL)          json_match_int32(&p, &out_m->envelope.a_max);
     if ((p = json_find_key(buf, "j_max")) != NULL)          json_match_int32(&p, &out_m->envelope.j_max);
@@ -501,47 +503,70 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
 
     free(buf);
 
-    /* Fail-closed semantic safety validation */
-    if (out_m->envelope.theta_min_mrad >= out_m->envelope.theta_max_mrad) {
-        if (err_buf) snprintf(err_buf, err_len, "Invalid envelope stops: min %d >= max %d",
-                              out_m->envelope.theta_min_mrad, out_m->envelope.theta_max_mrad);
-        return -EINVAL;
-    }
-    if (out_m->envelope.v_max <= 0 || out_m->envelope.a_max <= 0 ||
-        out_m->envelope.j_max <= 0 || out_m->envelope.v_home <= 0) {
-        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive (v_max=%d, a_max=%d, j_max=%d, v_home=%d)",
-                              out_m->envelope.v_max, out_m->envelope.a_max, out_m->envelope.j_max, out_m->envelope.v_home);
-        return -EINVAL;
-    }
-    if (strcmp(out_m->ingest.delivery, "queued") != 0 &&
-        strcmp(out_m->ingest.delivery, "latest") != 0) {
-        if (err_buf) snprintf(err_buf, err_len, "Unknown ingest delivery mode '%s' (must be 'queued' or 'latest')",
-                              out_m->ingest.delivery);
-        return -EINVAL;
-    }
-    if (out_m->ingest.queue_depth < 1 || out_m->ingest.queue_depth > 64) {
-        if (err_buf) snprintf(err_buf, err_len, "Queue depth %u outside [1, 64]", out_m->ingest.queue_depth);
-        return -EINVAL;
-    }
-    if (latch_manifest_in_keepout(out_m, 0)) {
-        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Home position (0 mrad) sits inside keep-out interval!");
-        return -EINVAL;
-    }
-    if (out_m->timing.period_us < 250 || out_m->timing.period_us > 100000) {
-        if (err_buf) snprintf(err_buf, err_len, "Period %u us outside [250, 100000]", out_m->timing.period_us);
-        return -EINVAL;
-    }
-    if (out_m->timing.watchdog_ticks < 1) {
-        if (err_buf) snprintf(err_buf, err_len, "Watchdog ticks must be >= 1");
-        return -EINVAL;
-    }
-    if (out_m->actuator.pwm_min >= out_m->actuator.pwm_center ||
-        out_m->actuator.pwm_center >= out_m->actuator.pwm_max) {
-        if (err_buf) snprintf(err_buf, err_len, "Invalid PWM calibration: min %d, center %d, max %d",
-                              out_m->actuator.pwm_min, out_m->actuator.pwm_center, out_m->actuator.pwm_max);
+    latch_admissibility_t admit = latch_manifest_validate(out_m, err_buf, err_len);
+    if (admit != LATCH_ADMIT_SATISFIED) {
         return -EINVAL;
     }
 
     return 0;
+}
+
+latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *err_buf, size_t err_len) {
+    if (m == NULL) {
+        if (err_buf) snprintf(err_buf, err_len, "Manifest pointer is NULL");
+        return LATCH_ADMIT_UNRESOLVED;
+    }
+
+    /* 1. Completeness of Prerequisites (Ak(m) in {0,1}) */
+    if (m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION) {
+        if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u != %u)",
+                              m->schema_version, LATCH_MANIFEST_SCHEMA_VERSION);
+        return LATCH_ADMIT_UNRESOLVED;
+    }
+    if (m->timing.period_us == 0u || m->timing.watchdog_ticks == 0u) {
+        if (err_buf) snprintf(err_buf, err_len, "Missing or zero timing parameters (period=%u, watchdog=%u)",
+                              m->timing.period_us, m->timing.watchdog_ticks);
+        return LATCH_ADMIT_UNRESOLVED;
+    }
+    if (m->timing.period_us < 250 || m->timing.period_us > 100000) {
+        if (err_buf) snprintf(err_buf, err_len, "Period %u us outside [250, 100000]", m->timing.period_us);
+        return LATCH_ADMIT_UNRESOLVED;
+    }
+
+    /* 2. Safety Invariant Satisfaction (phi_k(m) >= 0) */
+    if (m->envelope.theta_min_mrad >= m->envelope.theta_max_mrad) {
+        if (err_buf) snprintf(err_buf, err_len, "Invalid envelope stops: min %d >= max %d",
+                              m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->envelope.v_max <= 0 || m->envelope.a_max <= 0 ||
+        m->envelope.j_max <= 0 || m->envelope.v_home <= 0) {
+        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive (v_max=%d, a_max=%d, j_max=%d, v_home=%d)",
+                              m->envelope.v_max, m->envelope.a_max, m->envelope.j_max, m->envelope.v_home);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (strcmp(m->ingest.delivery, "queued") != 0 &&
+        strcmp(m->ingest.delivery, "latest") != 0) {
+        if (err_buf) snprintf(err_buf, err_len, "Unknown ingest delivery mode '%s' (must be 'queued' or 'latest')",
+                              m->ingest.delivery);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->ingest.queue_depth < 1 || m->ingest.queue_depth > 256) {
+        if (err_buf) snprintf(err_buf, err_len, "Queue depth %u outside [1, 256]", m->ingest.queue_depth);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (latch_manifest_in_keepout(m, m->envelope.home_mrad)) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Home position (%d mrad) sits inside keep-out interval!",
+                              m->envelope.home_mrad);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->actuator.pwm_min >= m->actuator.pwm_center ||
+        m->actuator.pwm_center >= m->actuator.pwm_max) {
+        if (err_buf) snprintf(err_buf, err_len, "Invalid PWM calibration: min %d, center %d, max %d",
+                              m->actuator.pwm_min, m->actuator.pwm_center, m->actuator.pwm_max);
+        return LATCH_ADMIT_VIOLATED;
+    }
+
+    return LATCH_ADMIT_SATISFIED;
 }
 

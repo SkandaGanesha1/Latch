@@ -41,6 +41,7 @@ typedef struct latch_keepout_interval {
 typedef struct latch_manifest_envelope {
     int32_t                  theta_min_mrad;
     int32_t                  theta_max_mrad;
+    int32_t                  home_mrad;
     uint32_t                 num_keepouts;
     latch_keepout_interval_t keepout[LATCH_MAX_KEEPOUTS];
     int32_t                  v_max;
@@ -121,11 +122,20 @@ typedef struct latch_manifest {
     char                      sha256_hex[65];
 } latch_manifest_t;
 
+typedef enum latch_admissibility {
+    LATCH_ADMIT_UNRESOLVED = 0,  /* Missing required JSON keys, I/O failure, schema != 1, zero timing */
+    LATCH_ADMIT_SATISFIED  = 1,  /* All prerequisites and topological/kinematic invariants hold */
+    LATCH_ADMIT_VIOLATED   = 2   /* Topological/kinematic invariant violated */
+} latch_admissibility_t;
+
 /* Initialize manifest with conservative defaults matching the reference plant */
 void latch_manifest_init_defaults(latch_manifest_t *m);
 
 /* Load and validate latch.manifest JSON from file. Returns 0 on success, <0 on failure. */
 int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf, size_t err_len);
+
+/* Three-valued evidence-grounded manifest admissibility validator */
+latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *err_buf, size_t err_len);
 
 /* Compute SHA-256 digest of a manifest file. Returns 0 on success, <0 on failure. */
 int latch_manifest_compute_sha256(const char *path, uint8_t hash_out[32], char hex_out[65]);

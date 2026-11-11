@@ -197,11 +197,14 @@ def main() -> int:
         frames = []
         seq = 1
         theta = 0
+        vel = 0
         for i in range(args.count):
             if args.mode == "nominal":
                 target = int(-200 + 150 * math.sin(i * 0.1))
-                step = max(-15, min(15, target - theta))
-                theta += step
+                desired_vel = max(-25, min(25, target - theta))
+                dv = max(-10, min(10, desired_vel - vel))
+                vel += dv
+                theta += vel
                 frames.append(pack_wire_frame(seq=seq, u_mrad=theta))
                 seq += 1
             elif args.mode == "keepout":
@@ -211,10 +214,12 @@ def main() -> int:
                 frames.append(pack_wire_frame(seq=seq, u_mrad=-100, corrupt_bit=True))
                 seq += 1
             elif args.mode == "replay":
-                if i < 5:
-                    frames.append(pack_wire_frame(seq=seq, u_mrad=-100))
-                    if i < 4:
-                        seq += 1
+                if i < 4:
+                    theta -= 10
+                    frames.append(pack_wire_frame(seq=seq, u_mrad=theta))
+                    seq += 1
+                elif i == 4:
+                    frames.append(pack_wire_frame(seq=seq - 1, u_mrad=theta))
                 else:
                     frames.append(
                         pack_wire_frame(seq=seq, u_mrad=0, flags=LATCH_WIRE_FLAG_SILENCE)

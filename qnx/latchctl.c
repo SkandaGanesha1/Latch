@@ -35,6 +35,32 @@ static const char *mode_name(uint16_t m) {
     }
 }
 
+static void format_fault_bits(uint16_t bits, char *buf, size_t buflen) {
+    if (bits == 0u) {
+        snprintf(buf, buflen, "0x0000 (NONE)");
+        return;
+    }
+    char names[128] = "";
+    if (bits & LATCH_FAULT_MAGIC)    strcat(names, "MAGIC|");
+    if (bits & LATCH_FAULT_CRC)      strcat(names, "CRC|");
+    if (bits & LATCH_FAULT_SEQ)      strcat(names, "SEQ|");
+    if (bits & LATCH_FAULT_NAN)      strcat(names, "NAN|");
+    if (bits & LATCH_FAULT_RESERVED) strcat(names, "RESERVED|");
+    if (bits & LATCH_FAULT_KEEPOUT)  strcat(names, "KEEPOUT|");
+    if (bits & LATCH_FAULT_BOUNDS)   strcat(names, "BOUNDS|");
+    if (bits & LATCH_FAULT_RATE)     strcat(names, "RATE|");
+    if (bits & LATCH_FAULT_WATCHDOG) strcat(names, "WATCHDOG|");
+    if (bits & LATCH_FAULT_I2C)      strcat(names, "I2C|");
+    if (bits & LATCH_FAULT_OPERATOR) strcat(names, "OPERATOR|");
+    if (bits & LATCH_FAULT_EPERM)    strcat(names, "EPERM|");
+
+    size_t len = strlen(names);
+    if (len > 0 && names[len - 1] == '|') {
+        names[len - 1] = '\0';
+    }
+    snprintf(buf, buflen, "0x%04X (%s)", bits, names);
+}
+
 static void print_usage(const char *prog) {
     fprintf(stderr,
             "Usage: %s [-d /dev/latch/actuator] <command> [args...]\n\n"
@@ -56,6 +82,11 @@ static int do_status(int fd) {
         return (rc == EPERM) ? 2 : 1;
     }
 
+    char active_str[160];
+    char latched_str[160];
+    format_fault_bits(rep.active_faults, active_str, sizeof(active_str));
+    format_fault_bits(rep.latched_faults, latched_str, sizeof(latched_str));
+
     printf("=== LATCH Simplex Supervisor Status ===\n");
     printf("Tick Counter         : %" PRIu64 " ticks\n", rep.tick);
     printf("Current Mode         : %s\n", mode_name(rep.mode));
@@ -72,8 +103,8 @@ static int do_status(int fd) {
     printf("Envelope Vetoes      : %u\n", rep.total_envelope_faults);
     printf("EPERM Rejections     : %u\n", rep.total_eperm_rejects);
     printf("Operator Hold Locked : %s\n", rep.operator_hold_locked ? "YES" : "NO");
-    printf("Active Fault Bits    : 0x%04X\n", rep.active_faults);
-    printf("Latched Fault Bits   : 0x%04X\n", rep.latched_faults);
+    printf("Active Fault Bits    : %s\n", active_str);
+    printf("Latched Fault Bits   : %s\n", latched_str);
     printf("Clean Streak         : %u frames\n", rep.clean_streak);
 
     char sha_hex[65];
@@ -87,7 +118,14 @@ static int do_status(int fd) {
 }
 
 static int do_grant_check(int fd) {
-    latch_force_hold_cmd_t cmd = { .lock_hold = 0u, .reason_code = 0u };
+    latch_status_reply_t rep;
+    memset(&rep, 0, sizeof(rep));
+    uint32_t current_lock = 0u;
+    if (devctl(fd, DCMD_LATCH_GET_STATUS, &rep, sizeof(rep), NULL) == EOK) {
+        current_lock = rep.operator_hold_locked ? 1u : 0u;
+    }
+
+    latch_force_hold_cmd_t cmd = { .lock_hold = current_lock, .reason_code = 0u };
 
     int rc = devctl(fd, DCMD_LATCH_FORCE_HOLD, &cmd, sizeof(cmd), NULL);
     if (rc == EOK) {

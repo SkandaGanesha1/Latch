@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "plant": {
+    "name": "syringe-pump-bolus",
+    "axes": [
+      {
+        "id": 0,
+        "kind": "linear",
+        "unit": "mm",
+        "min": 0,
+        "max": 5000
+      }
+    ]
+  },
+  "envelope": {
+    "theta_min_mrad": 0,
+    "theta_max_mrad": 5000,
+    "home_mrad": 0,
+    "keepout": [
+      {
+        "lo_mrad": 4200,
+        "hi_mrad": 5000,
+        "label": "ENDSTOP_BUFFER"
+      }
+    ],
+    "v_max": 20,
+    "a_max": 10,
+    "j_max": 15,
+    "v_home": 10,
+    "lookahead_ticks": 10
+  },
+  "timing": {
+    "period_us": 1000,
+    "watchdog_ticks": 2,
+    "wcet_budget_us": 100
+  },
+  "recovery": {
+    "hysteresis_clean_frames": 25,
+    "hold_to_home_ticks": 50
+  },
+  "decision": {
+    "cpu": 0,
+    "priority": 63,
+    "pulse_priority": 63
+  },
+  "ingest": {
+    "cpu": 1,
+    "delivery": "queued",
+    "queue_depth": 32
+  },
+  "paths": {
+    "proposal": "/dev/latch/proposal",
+    "actuator": "/dev/latch/actuator",
+    "ability": "latch/actuator",
+    "i2c_bus": "/dev/i2c1"
+  },
+  "actuator": {
+    "type": "pca9685",
+    "addr": 64,
+    "freq_hz": 50,
+    "prescale": 121,
+    "pwm_center": 307,
+    "pwm_min": 205,
+    "pwm_max": 410,
+    "retries": 1,
+    "init_delay_us": 600
+  },
+  "tape": {
+    "capacity": 4096
+  },
+  "protocol": {
+    "magic": "LATH",
+    "version": 1,
+    "crc": "ieee32",
+    "coverage": 16
+  }
+}

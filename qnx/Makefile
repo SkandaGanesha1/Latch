@@ -75,8 +75,8 @@ host-sim:
 	@$(MAKE) --no-print-directory TARGET=host-sim all
 
 check: host-sim
-	./$(BUILD_DIR)/host-sim/latchd
-	python3 ../guest/liar.py suite --raw-stdout | ./$(BUILD_DIR)/host-sim/latch-ingest -o - | ./$(BUILD_DIR)/host-sim/latchd --pipe-in --csv ../host/suite_tape.csv
+	./$(BUILD_DIR)/host-sim/latchd -m latch.manifest
+	python3 ../guest/liar.py suite --raw-stdout | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv
 
 qemu:
 	./run_qemu.sh

@@ -15,6 +15,7 @@
   "envelope": {
     "theta_min_mrad": -1000,
     "theta_max_mrad": 1000,
+    "home_mrad": 0,
     "keepout": [
       {
         "lo_mrad": 250,
@@ -45,7 +46,7 @@
   "ingest": {
     "cpu": 1,
     "delivery": "queued",
-    "queue_depth": 16
+    "queue_depth": 64
   },
   "paths": {
     "proposal": "/dev/latch/proposal",
