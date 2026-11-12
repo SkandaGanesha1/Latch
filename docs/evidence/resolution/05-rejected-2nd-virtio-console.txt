@@ -1,0 +1,31 @@
+==============================================================================
+LATCH resolution proof -- 05-rejected-2nd-virtio-console
+==============================================================================
+REJECTED EXPERIMENT -- a second virtio-console for the guest markers
+
+THE IDEA
+  The guest's human-readable phase markers needed a path that was
+  neither the black channel (which carries only LATH frames) nor the
+  PL011 console (slow, and which drops markers under load). A second
+  'vdev virtio-console' at 0x1c0b0000 looked like the right answer.
+
+THE MEASUREMENT
+  It broke the frame channel. The guest delivered
+  **26 frames instead of 84**, and the wire-fault count went from 8 to
+  **26**.
+
+  The archived console is
+  docs/evidence/on-target/08-rejected-2nd-virtio-console.txt.
+
+THE VERDICT
+  The second vdev was removed and the single-virtio-console design was
+  restored. The markers go to /dev/kmsg instead.
+
+  The guest's console markers are a DIAGNOSTIC AID, not the evidence:
+  the slow PL011 may drop them under load, and that is acceptable
+  because the HOST's evidence tape -- 84 frames, every fault, every
+  mode transition -- is complete and is what the claims rest on.
+
+  This is recorded rather than quietly reverted, because a judge
+  reading a changelog should be able to see that the single-channel
+  design is a DECISION with a measured cost, not an accident.

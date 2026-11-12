@@ -1,0 +1,51 @@
+==============================================================================
+LATCH on-target tape analysis -- latch_tape4
+==============================================================================
+Source       : /tmp/latch_tape4.log
+Tape rows    : 163230 total (ticks 13037..176266)
+Suite window : ticks 13037..13221 (185 ticks of actual frame traffic)
+Post-suite   : 163045 ticks of the guest's DESIGNED silence (phase 9)
+Keep-out     : [250, 650] mrad
+
+Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         20 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     99 ticks
+
+Fault-bit histogram -- over the whole captured tape (the post-suite tail is the guest's designed silence)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         20 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     163144 ticks
+
+Mode timeline (first 12 transitions)
+  tick 13037    HP
+  tick 13064    HOLD
+  tick 13113    HOME
+  tick 13114    HOLD
+  tick 13163    HOME
+  tick 13176    HOLD
+
+HA-HOME retraction : 14 rows, theta -140 -> -10 mrad, monotonic=True
+Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
+Max accepted seq   : 57  (highest sequence applied with no fault latched)
+Max seq observed   : 80
+Max latency (cycles): 39467
+
+Starvation stalls (runs of supervisor ticks with NO new frame consumed)
+  These are the transport defect's signature: the supervisor's
+  2-tick watchdog fires inside a stall, fails closed into HA-HOLD,
+  and retracts theta -- turning every later frame into a spurious
+  RATE veto. A healthy run has none.
+  8 stall(s):
+    ticks 13063..13074  (11 ticks stalled at seq=25)
+    ticks 13082..13102  (20 ticks stalled at seq=25)
+    ticks 13133..13151  (18 ticks stalled at seq=57)
+    ticks 13152..13155  (3 ticks stalled at seq=0)
+    ticks 13156..13177  (21 ticks stalled at seq=57)
+    ticks 13182..13192  (10 ticks stalled at seq=57)
+    ticks 13203..13217  (14 ticks stalled at seq=57)
+    ticks 13218..13221  (3 ticks stalled at seq=80)

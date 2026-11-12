@@ -1,0 +1,19 @@
+==============================================================================
+LATCH on-target quotable numbers
+==============================================================================
+Source: 20261112-205054-console.txt
+
+These are the ONLY numbers the submission may quote for the QEMU
+AArch64 `virt` target. Every one of them is reproducible from the
+archived console next to this file.
+
+  Proposals received:    84
+  Wire faults caught:    12
+  Envelope vetoes:       7
+  Ring drops:            0
+  Last proposed angle:   -180 mrad (seq=80)
+  Latched fault bits:    0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG)
+  Decision latency:      last = 87 cyc (1392 ns) | max = 30615 cyc (489840 ns)
+  Proposal backlog:      peak 29 frames | 0 over limit
+  Manifest SHA-256:      1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+  VERIFY_RC:             1

@@ -1,0 +1,6 @@
+log,tape_rows,suite_rows,envelope_vetoes,wire_faults,max_accepted_seq,home_rows,home_monotonic,keepout_breaches,starvation_stalls,max_stall_ticks
+latch_tape,157241,473,51,8,25,14,True,0,9,63
+latch_tape2,150556,216,27,8,57,14,True,0,8,27
+latch_tape4,163230,185,27,8,57,14,True,0,8,21
+latch_tape5,168257,195,27,8,57,14,True,0,9,23
+latch_tape6,172077,84,7,12,80,17,True,0,1,3

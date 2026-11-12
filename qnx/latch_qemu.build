@@ -43,13 +43,31 @@
     waitfor /dev/latch/actuator 4
 
     # 5. Start background evidence logger on _cpu-1
-    on -T latchlog_t -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
+    on -T latchlog_t -C 1 /proc/boot/latchlog -m /proc/boot/latch.manifest -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
 
-    # 6. Launch QNX Hypervisor 8.0 guest VM pinned off CPU 0/1
-    on -T qvm_host_t -C 2 /proc/boot/qvm @/proc/boot/latch_qemu_virt.qvmconf &
+    # 6. Launch QNX Hypervisor 8.0 guest VM.
+    #
+    #    CPU affinity: deliberately NOT constrained here.
+    #    `on -C <n>` resolves to the predefined single-CPU cluster _cpu-<n>, and
+    #    `on -R <mask>` resolves the mask to a predefined cluster too -- there is
+    #    NO predefined cluster covering CPUs 2+3 together, so both
+    #    `-C 2 -C 3` (mask 0xc) and `-R 0xc` fail with
+    #    "Invalid cluster runmask specified for (/proc/boot/qvm)".
+    #    Leaving the runmask unset lets qvm inherit the full CPU set, which is
+    #    what the vCPU threads NEED in order to reach their pinned cores.
+    #
+    #    The actual isolation is enforced one level down, by the qvmconf:
+    #        cpu _cpu-2 sched 8r
+    #        cpu _cpu-3 sched 8r
+    #    Those static vCPU pins are the documented hypervisor security property
+    #    (the guest cannot change them -- it lacks the ability). latchd pins
+    #    itself to _cpu-0 with ThreadCtl at SCHED_FIFO 63, and latch-ingest /
+    #    latchlog / ksh stay on _cpu-1, so the guest cannot reach the decision
+    #    core. The guest vCPUs run at priority 8, far below latchd's 63.
+    on -T qvm_host_t /proc/boot/qvm @/proc/boot/latch_qemu_virt.qvmconf &
 
     # 7. Interactive operator shell on _cpu-1
-    [+session] on -C 1 -p 10r /proc/boot/ksh
+    [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
 }
 
 [type=link] /bin/sh = /proc/boot/ksh

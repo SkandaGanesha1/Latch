@@ -1,0 +1,17 @@
+# ############ EVIDENCE: pidin -p latchd threads ############
+
+# pidin -p latchd threads
+
+     pid tid name                         thread name          STATE          Blocked                     
+   12293   1 proc/boot/latchd             1                    RECEIVE        1                           
+   12293   2 proc/boot/latchd             2                    RECEIVE        2                           
+# ############ EVIDENCE: pidin -p qvm threads (static vCPU pins) ############
+
+# pidin -p qvm threads
+
+     pid tid name                         thread name          STATE          Blocked                     
+   16391   1 proc/boot/qvm                1                    RECEIVE        1                           
+   16391   2 proc/boot/qvm                cy-guest-qemu-virt/0 SEM            0                           
+   16391   3 proc/boot/qvm                cy-guest-qemu-virt/1 SEM            0                           
+   16391   4 proc/boot/qvm                4                    RECEIVE        2                           
+   16391   5 proc/boot/qvm                5                    SIGWAITINFO                                

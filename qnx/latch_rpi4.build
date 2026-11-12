@@ -4,11 +4,15 @@
 # QNX SDP 8.0 OS Image Buildfile for LATCH (Last Authority for Trusted Control Handoff)
 # Target Board : Raspberry Pi 4 Model B (Broadcom BCM2711, ARM Cortex-A72, GICv2)
 # Target BSP   : com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4 (QNX SDP 8.0)
-# Hypervisor   : QNX Hypervisor 8.0 (AArch64 EL2 host + GICv2 guest support)
+# Hypervisor   : QNX Hypervisor 8.0 (AArch64 EL1 host -- A72 is ARMv8.0, NO VHE)
 #
 # Notes:
-#   - Startup passes `-Q enable` to activate the EL2 hypervisor host.
+#   - Startup passes `-Q enable,el1-host`. Cortex-A72 is ARMv8.0 and has NO VHE,
+#     so `enable` (which prefers EL2-host) would fail. `enable,el1-host` is the
+#     documented switch for this core. Real Pi 4 hypervisor boots print
+#     "Enabling EL1 host hypervisor support" -- that is CORRECT, not a bug.
 #   - Adaptive Partitioning (APS) is NOT supported in QNX OS 8.0 and is omitted.
+#     Static vCPU pinning (`cpu _cpu-2 sched 8r`) replaces it.
 #   - The Pi 4 BSP does not ship a PWM driver; actuation uses `i2c-bcm2711`
 #     talking to an external PCA9685 at I2C address 0x40.
 ################################################################################
@@ -24,7 +28,7 @@
 [+script] startup-script = {
     procmgr_symlink ../../proc/boot/libc.so.6 /usr/lib/ldqnx-64.so.2
 
-    # 1. Serial console (PL011 UART0)
+    # 1. Serial console (PL011 UART0 at 0xfe201000, GIC SPI 121 + 32 = IRQ 153)
     devc-serpl011 -e -F -b115200 0xfe201000,153
     waitfor /dev/ser1 4
     reopen /dev/ser1
@@ -32,6 +36,7 @@
     display_msg "================================================================"
     display_msg " LATCH — Last Authority for Trusted Control Handoff (QNX 8.0)"
     display_msg " Target: Raspberry Pi 4B BCM2711 | GICv2 | PCA9685 I2C @ 0x40"
+    display_msg " Hypervisor: EL1 host (A72 has no VHE) | GICv2 guest"
     display_msg "================================================================"
 
     # 2. Push compiled QNX 8.0 Security Policy into procnto
@@ -41,21 +46,46 @@
     on -T i2c_t /proc/boot/i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1
     waitfor /dev/i2c1 4
 
-    # 4. Start latchd on _cpu-0 (creates ability "latch/actuator", attaches
+    # 4. Start system logger and pipe resource manager.
+    #    BOTH must be up BEFORE qvm: `logger ... stderr` inside the guest conf needs
+    #    slogger2, and `hostdev >"|..."` needs the pipe resource manager to spawn
+    #    the host-side command.
+    on -T slogger2_t -C 1 /proc/boot/slogger2 &
+    waitfor /dev/slog2 4
+
+    on -T pipe_t -C 1 /proc/boot/pipe &
+    waitfor /dev/pipe 4
+
+    # 5. Start latchd on _cpu-0 (creates ability "latch/actuator", attaches
     #    /dev/latch/proposal and /dev/latch/actuator, owns /dev/i2c1)
+    #    NOTE: no -n here -- on the Pi the real PCA9685 IS actuated.
     on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest &
     waitfor /dev/latch/proposal 4
     waitfor /dev/latch/actuator 4
 
-    # 5. Start background continuous evidence logger
-    on -T latchlog_t -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
+    # 6. Start background continuous evidence logger
+    on -T latchlog_t -C 1 /proc/boot/latchlog -m /proc/boot/latch.manifest -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
 
-    # 6. Launch QNX Hypervisor 8.0 guest VM (vCPUs pinned to _cpu-2 and _cpu-3
-    #    at sched 8r; virtio-console piped into /proc/boot/latch-ingest)
-    on -T qvm_host_t -C 1 /proc/boot/qvm @/proc/boot/latch.qvmconf &
+    # 7. Launch QNX Hypervisor 8.0 guest VM.
+    #
+    #    CPU affinity: deliberately NOT constrained here.
+    #    `on -C <n>` resolves to the predefined single-CPU cluster _cpu-<n>, and
+    #    `on -R <mask>` resolves the mask to a predefined cluster too -- there is
+    #    NO predefined cluster covering CPUs 2+3 together, so both
+    #    `-C 2 -C 3` (mask 0xc) and `-R 0xc` fail with
+    #    "Invalid cluster runmask specified for (/proc/boot/qvm)".
+    #    Leaving the runmask unset lets qvm inherit the full CPU set, which is
+    #    what the vCPU threads NEED in order to reach their pinned cores.
+    #
+    #    The actual isolation is enforced one level down, by the qvmconf:
+    #        cpu _cpu-2 sched 8r
+    #        cpu _cpu-3 sched 8r
+    #    The previous `-C 1` pinned the whole qvm process to CPU 1 (the shell and
+    #    latchlog core) and locked out CPUs 2 and 3 entirely.
+    on -T qvm_host_t /proc/boot/qvm @/proc/boot/latch.qvmconf &
 
-    # 7. Operator shell on _cpu-1
-    [+session] on -C 1 -p 10r /proc/boot/ksh
+    # 8. Operator shell on _cpu-1
+    [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
 }
 
 [type=link] /bin/sh = /proc/boot/ksh
@@ -67,17 +97,21 @@ libm.so
 libgcc_s.so.1
 libsecpol.so.1
 libqh.so.1
-libqvm.so.1
+libslog2.so.1
+libslog2parse.so.1
+libfdt.so.1
 
-[perms=0755] /lib/dll/qvm/vdev-gic.so = vdev-gic.so
 [perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
 [perms=0755] /lib/dll/qvm/vdev-shmem.so = vdev-shmem.so
 [perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
 
 [perms=0755] secpolpush
+[perms=0755] slogger2
+[perms=0755] slog2info
+[perms=0755] pipe
 [perms=0755] devc-serpl011
 [perms=0755] i2c-bcm2711
-[perms=0755] qvm
+[perms=0755] /proc/boot/qvm = qvm
 [perms=0755] on
 [perms=0755] ability
 [perms=0755] pidin
@@ -95,3 +129,4 @@ libqvm.so.1
 [uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
 [uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin
 [perms=0644] /proc/boot/linux-guest.Image = $(GUEST_IMAGE)
+[perms=0644] /proc/boot/linux-guest.initrd = $(GUEST_INITRD)

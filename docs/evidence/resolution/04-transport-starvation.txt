@@ -1,0 +1,67 @@
+==============================================================================
+LATCH resolution proof -- 04-transport-starvation
+==============================================================================
+DEFECT 4 -- the transport starved the supervisor
+
+SYMPTOM
+  51 envelope vetoes where 7 are correct; the last accepted sequence
+  number was 25 instead of 80; theta was spuriously retracted by
+  HA-HOME.
+
+MECHANISM (four compounding causes, all in the data path)
+  1. The virtio-console vdev's guest->host forwarding is PULSE-DRIVEN
+     and the pulse priority defaults low. Under QEMU TCG -- where the
+     host QNX, the guest Linux and latchd (SCHED_FIFO 63) all contend
+     for the same x86 cores -- the forward was starved, producing 16-
+     and then 28-tick gaps in the frame delivery.
+  2. latch-ingest slept for half a decision period between writes.
+     That is a sleep in the MIDDLE of the path, so it let the
+     supervisor's 2-tick watchdog fire while the guest's next batch
+     was still in flight.
+  3. The guest wrote each phase as one 800-byte burst, which outran
+     the vdev: the guest's virtqueue filled, the Linux virtio-console
+     driver spun waiting for the vdev to acknowledge, and the next
+     phase's frames arrived 12-21 supervisor ticks late.
+  4. The guest's phase markers were written to /dev/console, i.e. the
+     PL011. QNX's own hypervisor documentation says the PL011 "is
+     slow and has slow output"; each marker stalled the guest for
+     about 24 ms.
+
+  The chain: a starved forward -> a tick with no proposal -> the
+  watchdog fires -> the supervisor fails closed into HA-HOLD -> it
+  retracts theta by HA-HOME -> theta no longer matches the value the
+  next proposal carries -> that proposal is vetoed as a RATE fault.
+  The safety logic was working correctly; the TRANSPORT was starving
+  it.
+
+FIX (all four)
+  1. qnx/latch_qemu_virt.qvmconf: 'sched 60' on the vdev -- above the
+     default 10, below latchd's decision priority 63, so the data path
+     cannot preempt the 1 kHz decision loop. The spawned latch-ingest
+     gets '-p 30f' so the pipe reader drains promptly.
+  2. qnx/latch_ingest.c: the artificial pacing is gone. The bridge
+     hands each frame to the supervisor as fast as the transport
+     delivers it. The supervisor's ring, bounded by the manifest's
+     'ingest.queue_depth', is the only buffer in the path.
+  3. guest/latch_guest_init.c: the guest produces FASTER than the
+     host consumes -- 4 frames (128 bytes) every 200 us, about 20
+     frames/ms against the supervisor's 1 frame/ms -- so the ring
+     always holds a backlog and the watchdog never fires spuriously.
+     Small writes keep the vdev's queue short so it forwards
+     continuously. The guest's whole suite (84 frames) fits the
+     manifest's queue_depth (256); tools/consistency_check.py asserts
+     that cross-file invariant.
+  4. guest/latch_guest_init.c: the phase markers go to /dev/kmsg, the
+     kernel's log ring buffer, which returns immediately.
+
+PROOF
+  The progression, measured on the target:
+     51 vetoes / seq 25   ->  48 / 35  ->  27 / 57  ->  7 / 80
+
+  The starvation stalls on the tapes fall from 21-63 ticks to one
+  3-tick stall. The archived tapes are in docs/evidence/tape/ and the
+  table is in docs/evidence/derived/tape-signatures.csv.
+
+  The final on-target numbers are: 84 frames, 12 wire faults, 7
+  envelope vetoes, 0 ring drops, last accepted seq 80, latched bits
+  0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG).

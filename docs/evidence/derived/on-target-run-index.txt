@@ -1,0 +1,29 @@
+==============================================================================
+LATCH on-target run index -- the bring-up in one table
+==============================================================================
+Each run differs from the one before it by exactly one fix, so the
+counters form a monotone story. Every number below is parsed out of
+the archived console next to it.
+
+  file                                        frames   wire    env  drops    seq  VERIFY_RC
+  --------------------------------------------------------------------------------------------
+  01-guest-boot-console.txt                        -      -      -      -      -  -
+  02-run1-51-envelope-vetoes.txt                  84      8     51      0     25  0
+  03-run2-48-envelope-vetoes.txt                  84      8     48      0     35  0
+  04-run3-no-guest-pacing.txt                     84      8     48      0     35  0
+  05-run4-27-envelope-vetoes.txt                  84      8     27      0     57  0
+  06-run6-suite-correct-verify-race.txt           84     12      7      0     80  1
+  07-run7-verify-all-pass.txt                     84     12      7      0     80  0
+  08-rejected-2nd-virtio-console.txt              26     26      0      0      0  0
+  09-canonical-session.txt                        84     12      7      0     80  0
+
+  What each run changed:
+    01-guest-boot-console.txt                  The Linux 6.12 guest booting to /init. The guest console on the serial port, before the LATCH path was driven.
+    02-run1-51-envelope-vetoes.txt             Run 1. The guest's 40 ms phase pauses starve the supervisor: its 2-tick watchdog fires, it fails closed, retracts theta, and every later frame becomes a spurious RATE veto.
+    03-run2-48-envelope-vetoes.txt             Run 2. The guest's pauses reduced to 1 ms: 48 vetoes -- barely better.
+    04-run3-no-guest-pacing.txt                Run 3. The guest pauses removed entirely. IDENTICAL to run 2 (48 vetoes) -- which is what proved the guest was NOT the variable and the transport was.
+    05-run4-27-envelope-vetoes.txt             Run 4. The virtio-console vdev's forwarding pulse given a real priority (sched 40) and the bridge's artificial sleep removed: 51 -> 27 vetoes.
+    06-run6-suite-correct-verify-race.txt      Run 6. The guest suite is exactly right (84 frames, 12 wire faults, 7 envelope vetoes, last seq 80). latch_verify's step 1 still failed: it sent its ramp unpaced, so the supervisor's watchdog tripped while the tool was still polling.
+    07-run7-verify-all-pass.txt                Run 7. latch_verify paces its proposals at one per supervisor tick. All five invariants PASS and VERIFY_RC=0.
+    08-rejected-2nd-virtio-console.txt         REJECTED EXPERIMENT. A second virtio-console for the guest's phase markers. It corrupted the frame channel: 26 of 84 frames delivered, wire faults tripled. Reverted; recorded here so the failure is not repeated.
+    09-canonical-session.txt                   THE CANONICAL SESSION. One continuous boot of the QEMU AArch64 `virt` image with every fix in place: the EL2-VHE banner, the static vCPU pin proof, the supervisor counters, the five verification steps and VERIFY_RC=0.

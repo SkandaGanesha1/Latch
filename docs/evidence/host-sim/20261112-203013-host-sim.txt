@@ -1,0 +1,69 @@
+==============================================================================
+host-sim: self-tests
+==============================================================================
+$ ./build/host-sim/latchd -m latch.manifest
+
+exit status: 0
+
+[LATCH_HOST_SIM] Running 5-Fault, Seqlock & Manifest Self-Tests...
+[LATCH_HOST_SIM] PASS: All 9 safety, EOF, parser & Seqlock tests verified (PWM center=307 counts).
+
+
+==============================================================================
+host-sim: manifest-verify
+==============================================================================
+$ ./build/host-sim/latchctl manifest-verify latch.manifest && ./build/host-sim/latchctl manifest-verify contracts/syringe_pump_bolus.manifest
+
+exit status: 0
+
+[MANIFEST] VERIFIED: Manifest 'latch.manifest' SHA-256=1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823 (admissibility SATISFIED)
+[MANIFEST] VERIFIED: Manifest 'contracts/syringe_pump_bolus.manifest' SHA-256=a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e (admissibility SATISFIED)
+
+
+==============================================================================
+host-sim: pipe-sim
+==============================================================================
+$ python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./build/host-sim/latch-ingest -m latch.manifest -o - | ./build/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv
+
+exit status: 0
+
+[LATCH_PIPE_SIM] Completed 200 ticks | rx=200 | wire_faults=12 | env_faults=7 | eperm_rejects=1 | max_latency=1422 ns
+
+
+==============================================================================
+host-sim: embed-default-tape
+==============================================================================
+$ python3 ../tools/embed_default_tape.py
+
+exit status: 0
+
+[TAPE] embedded 200 rows from host/suite_tape.csv into host/tape.html
+
+
+==============================================================================
+host-sim: demo-syringe
+==============================================================================
+$ ./build/host-sim/latchd -m contracts/syringe_pump_bolus.manifest
+
+exit status: 0
+
+[LATCH_HOST_SIM] Running 5-Fault, Seqlock & Manifest Self-Tests...
+[LATCH_HOST_SIM] PASS: All 9 safety, EOF, parser & Seqlock tests verified (PWM center=307 counts).
+
+
+==============================================================================
+LATCH host-sim exact signature
+==============================================================================
+This is the ONLY place the numbers in the README, the video script and
+the Devpost page may be taken from. The on-target signature lives in
+docs/evidence/on-target/ and must agree with this table.
+
+  wire faults (CRC|SEQ|NAN)   : 12
+  envelope vetoes (KEEP|BND|RATE): 7
+  last accepted seq           : 80
+  HA-HOME retraction rows     : 17
+  keep-out breaches          : 0
+
+  EXPECTED: wire=12  envelope=7  last_seq=80  home>=10  breaches=0
+
+  RESULT: PASS -- signature matches

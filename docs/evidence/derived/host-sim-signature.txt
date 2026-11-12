@@ -1,0 +1,16 @@
+==============================================================================
+LATCH host-sim exact signature
+==============================================================================
+This is the ONLY place the numbers in the README, the video script and
+the Devpost page may be taken from. The on-target signature lives in
+docs/evidence/on-target/ and must agree with this table.
+
+  wire faults (CRC|SEQ|NAN)   : 12
+  envelope vetoes (KEEP|BND|RATE): 7
+  last accepted seq           : 80
+  HA-HOME retraction rows     : 17
+  keep-out breaches          : 0
+
+  EXPECTED: wire=12  envelope=7  last_seq=80  home>=10  breaches=0
+
+  RESULT: PASS -- signature matches

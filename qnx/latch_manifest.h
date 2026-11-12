@@ -99,6 +99,7 @@ typedef struct latch_manifest_actuator {
 
 typedef struct latch_manifest_tape {
     uint32_t capacity;
+    char     log_path[128];  /* Where the evidence logger persists the CSV */
 } latch_manifest_tape_t;
 
 typedef struct latch_manifest_protocol {

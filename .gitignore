@@ -39,3 +39,6 @@ Thumbs.db
 # QNX Agent Target Config (local SSH connection details)
 TARGET.md
 
+
+# Agent-tooling side-plot: internal only, never published
+.agents/

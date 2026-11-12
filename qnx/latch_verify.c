@@ -104,9 +104,26 @@ int main(int argc, char *argv[]) {
     const char *act_path  = (manifest.paths.actuator[0] != '\0') ? manifest.paths.actuator : LATCH_DEV_ACTUATOR;
     const char *prop_path = (manifest.paths.proposal[0] != '\0') ? manifest.paths.proposal : LATCH_DEV_PROPOSAL;
     uint32_t period_us    = manifest.timing.period_us;
-    uint32_t send_pace_us = (strcmp(manifest.ingest.delivery, "queued") == 0)
-                                ? 0u
-                                : ((period_us >= 400u) ? (period_us / 2u) : 200u);
+
+    /*
+     * PACE THE PROPOSALS AT ONE PER SUPERVISOR TICK.
+     *
+     * This tool writes straight into the supervisor's queue, so it owns the
+     * pacing: one frame per `period_us`, which is exactly the rate the
+     * supervisor consumes at. That keeps a frame always queued, so the
+     * supervisor's `watchdog_ticks` window never elapses while this tool is
+     * still measuring.
+     *
+     * A previous revision sent the whole ramp unpaced (0 us). The supervisor
+     * then drained the burst one frame per tick and, two ticks after the
+     * last frame, tripped the watchdog -- while this tool was still polling
+     * for the applied angle. On QEMU TCG, where the poll loop overruns the
+     * 1 ms tick, the result was a false FAIL of step 1: the angle had
+     * reached the target but the mode had already failed closed to HOLD.
+     *
+     * The safety story is the ORDER of the frames, and pacing preserves it.
+     */
+    uint32_t send_pace_us = period_us;
 
     bool all_passed = true;
 
@@ -293,10 +310,12 @@ int main(int argc, char *argv[]) {
             all_passed = false;
         }
 
-        /* 5c. Write-open verification */
-        int wfd = open(LATCH_DEV_ACTUATOR, O_WRONLY);
+        /* 5c. Write-open verification (path comes from the manifest, like every
+         *     other path in this project -- no hardcoded device names). */
+        int wfd = open(act_path, O_WRONLY);
         if (wfd < 0 && errno == EPERM) {
-            printf("[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)\n");
+            printf("[5c/5] PASS: open('%s', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)\n",
+                   act_path);
         } else {
             if (wfd >= 0) close(wfd);
             printf("[5c/5] FAIL: open with O_WRONLY returned %d (errno=%d)\n", wfd, errno);

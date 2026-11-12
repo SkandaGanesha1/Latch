@@ -1,0 +1,994 @@
+==============================================================================
+LATCH on-target run -- 04-run3-no-guest-pacing.txt
+==============================================================================
+Source log : latch_accept3.log
+
+What this run proves:
+Run 3. The guest pauses removed entirely. IDENTICAL to run 2 (48 vetoes) -- which is what proved the guest was NOT the variable and the transport was.
+
+This file is the RAW QNX host console of one continuous boot.
+latchd runs with -n (mock I2C): there is NO PCA9685 on this
+target and the horn does not move.
+
+Supervisor counters, parsed from this console:
+  Proposals received : 84
+  Wire faults caught : 8
+  Envelope vetoes    : 48
+  Ring drops         : 0
+  Last proposed      : -180 mrad (seq=35)
+  Latched fault bits : 0x01AA (CRC|NAN|KEEPOUT|RATE|WATCHDOG)
+  Decision latency   : last = 280 cyc (4480 ns) | max = 217976 cyc (3487616 ns)
+  Proposal backlog   : -
+  Manifest SHA-256   : 135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06
+  Verification       : VERIFY_RC=0  (ALL 5 INVARIANTS PASS)
+
+no clock-frequency property in FDT!
+Enabling EL2 host hypervisor support (VHE)
+MMU: 16-bit ASID 40-bit PA TCR_EL1=00000012b5183519
+FOUND GICv2
+GICv2: 288 interrupts
+GICv2: routing SPIs to gic cpu 0
+cpu0: MPIDR=0000000080000000
+cpu0: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu0: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu0: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu0: L1 Icache 64K linesz=64 set/way=256/4
+cpu0: L1 Dcache 64K linesz=64 set/way=256/4
+cpu0: L2 Unified 512K linesz=64 set/way=1024/8
+cpu0: GICv2 cpu interface 0
+Loading IFS...done
+cpu1: MPIDR=0000000080000001
+cpu1: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu1: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu1: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu1: L1 Icache 64K linesz=64 set/way=256/4
+cpu1: L1 Dcache 64K linesz=64 set/way=256/4
+cpu1: L2 Unified 512K linesz=64 set/way=1024/8
+cpu1: GICv2 cpu interface 1
+cpu2: MPIDR=0000000080000002
+cpu2: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu2: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu2: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu2: L1 Icache 64K linesz=64 set/way=256/4
+cpu2: L1 Dcache 64K linesz=64 set/way=256/4
+cpu2: L2 Unified 512K linesz=64 set/way=1024/8
+cpu2: GICv2 cpu interface 2
+cpu3: MPIDR=0000000080000003
+cpu3: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu3: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu3: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu3: L1 Icache 64K linesz=64 set/way=256/4
+cpu3: L1 Dcache 64K linesz=64 set/way=256/4
+cpu3: L2 Unified 512K linesz=64 set/way=1024/8
+cpu3: GICv2 cpu interface 3
+
+System page at phys:0000000040014000 user:ffffff8040207000 kern:ffffff8040204000
+Starting next program at vffffff8060072c80
+syspage::hypinfo::flags=0x00000001
+================================================================
+ LATCH — Last Authority for Trusted Control Handoff (QNX 8.0)
+ Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2
+================================================================
+latchd: Loaded manifest '/proc/boot/latch.manifest' (plant='servo-horn-1d', SHA-256=135aadebc2b395d2...)
+latchd: Operating in NO-I2C mock mode (-n)
+latchlog: Streaming evidence tape from '/dev/latch/actuator' to '/dev/shmem/latch_tape.csv' (interval=100 ms)...
+# 
+
+# =================== ACCEPTANCE: pidin latchd threads ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# pidin -p latchd threads
+
+     pid tid name                         thread name          STATE          Blocked                     
+   12293   1 proc/boot/latchd             1                    RECEIVE        1                           
+   12293   2 proc/boot/latchd             2                    RUNNING        2                           
+# =================== ACCEPTANCE: pidin qvm threads ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# pidin -p qvm threads
+
+     pid tid name                         thread name          STATE          Blocked                     
+   16391   1 proc/boot/qvm                1                    RECEIVE        1                           
+   16391   2 proc/boot/qvm                cy-guest-qemu-virt/0 SEM            0                           
+   16391   3 proc/boot/qvm                cy-guest-qemu-virt/1 SEM            0                           
+   16391   4 proc/boot/qvm                4                    RECEIVE        2                           
+   16391   5 proc/boot/qvm                5                    SIGWAITINFO                                
+# =================== ACCEPTANCE: latchctl status ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# latchctl status
+
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 154854 ticks
+Current Mode         : HOLD (High Assurance 1)
+Actuator Angle       : 0 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : -180 mrad (seq=35)
+Decision Latency     : last = 280 cyc (4480 ns) | max = 217976 cyc (3487616 ns)
+Proposals Received   : 84
+Wire Faults Caught   : 8
+Envelope Vetoes      : 48
+Ring Drops / WCET    : 0 drops | 22 overruns
+EPERM Rejections     : 0
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0100 (WATCHDOG)
+Latched Fault Bits   : 0x01AA (CRC|NAN|KEEPOUT|RATE|WATCHDOG)
+Clean Streak         : 0 frames
+Manifest SHA-256     : 135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06
+# =================== ACCEPTANCE: latch_verify ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=$?
+
+=== LATCH Native QNX 8.0 Microkernel Verification ===
+[1/5] PASS: Nominal HP tracking verified (/dev/latch/proposal -> theta = -100 mrad)
+[2/5] PASS: Keep-out violation (450 mrad) vetoed -> HA-HOLD locked at theta = -100 mrad (latched = 0x01AA)
+[3/5] PASS: Wire CRC bit-flip fault injected -> HA-HOLD maintained (latched = 0x01AA)
+[4/5] PASS: Sequence replay + silence -> Watchdog tripped -> HA-HOME monotonic retraction to 0 mrad
+[5a/5] PASS: Dedicated probe devctl(PROBE_ABILITY) WITHOUT 'latch/actuator' ability -> EPERM (Fail-closed)
+[5b/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> 1 (Operation not permitted)
+[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)
+
+=== LATCH Verified Telemetry & Microkernel Evidence Tape ===
+Tick Counter       : 159980 ticks (1 kHz CLOCK_MONOTONIC pulse)
+Current Mode       : HOLD (theta = 0 mrad)
+Proposals Received : 97 | Wire Faults: 10 | Envelope Vetoes: 49 | Ring Drops: 0 | WCET Overruns: 22 | EPERM Rejects: 3
+Decision Latency   : last = 294 cyc (4704 ns) | max = 217976 cyc (3487616 ns) @ 62500000 Hz
+Manifest SHA-256   : 135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06
+
+Last 12 Evidence Tape Records (.bss Ring):
+  TICK     SEQ      U_PROP     THETA_OUT  MODE   FAULTS   CYCLES    
+  #159974  10       -100       0          HOLD   0x0100   288
+  #159975  10       -100       0          HOLD   0x0100   193
+  #159976  10       -100       0          HOLD   0x0100   155
+  #159977  10       -100       0          HOLD   0x0900   2961
+  #159978  10       -100       0          HOLD   0x0900   146
+  #159979  10       -100       0          HOLD   0x0100   156
+  #159980  10       -100       0          HOLD   0x0900   294
+  #159981  10       -100       0          HOLD   0x0100   137
+  #159982  10       -100       0          HOLD   0x0100   127
+  #159983  10       -100       0          HOLD   0x0100   129
+  #159984  10       -100       0          HOLD   0x0100   154
+  #159985  10       -100       0          HOLD   0x0100   127
+
+[LATCH VERIFY] ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).
+VERIFY_RC=0
+# =================== ACCEPTANCE: guest console ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# latchctl console
+
+=== LATCH guest console: /dev/shmem/guest_console.log ===
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x414fd0b1]
+
+[    0.000000] Linux version 6.12.0 (skanda@fedora) (aarch64-linux-gnu-gcc (GCC) 16.2.1 20260819 (Red Hat Cross 16.2.1-1), GNU ld version 2.47.20260726) #1 SMP PREEMPT Thu Nov 12 12:11:03 IST 2026
+
+[    0.000000] KASLR disabled due to lack of seed
+
+[    0.000000] Machine model: QVM-v8A
+
+[    0.000000] earlycon: pl11 at MMIO 0x000000001c090000 (options '')
+
+[    0.000000] printk: legacy bootconsole [pl11] enabled
+
+[    0.000000] printk: debug: skip boot console de-registration.
+
+[    0.000000] efi: UEFI not found.
+
+[    0.000000] [Firmware Bug]: Kernel image misaligned at boot, please fix your bootloader!
+
+[    0.000000] NUMA: Faking a node at [mem 0x0000000080000000-0x000000009fffffff]
+
+[    0.000000] NODE_DATA(0) allocated [mem 0x9ff05680-0x9ff07cbf]
+
+[    0.000000] Zone ranges:
+
+[    0.000000]   DMA      [mem 0x0000000080000000-0x000000009fffffff]
+
+[    0.000000]   DMA32    empty
+
+[    0.000000]   Normal   empty
+
+[    0.000000] Movable zone start for each node
+
+[    0.000000] Early memory node ranges
+
+[    0.000000]   node   0: [mem 0x0000000080000000-0x000000009fffffff]
+
+[    0.000000] Initmem setup node 0 [mem 0x0000000080000000-0x000000009fffffff]
+
+[    0.000000] cma: Reserved 32 MiB at 0x000000009d600000 on node -1
+
+[    0.000000] psci: probing for conduit method from DT.
+
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+
+[    0.000000] psci: MIGRATE_INFO_TYPE returned unknown type (-2080374778)
+
+[    0.000000] psci: SMC Calling Convention v1.1
+
+[    0.000000] percpu: Embedded 25 pages/cpu s61656 r8192 d32552 u102400
+
+[    0.000000] pcpu-alloc: s61656 r8192 d32552 u102400 alloc=25*4096
+
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 
+
+[    0.000000] Detected PIPT I-cache on CPU0
+
+[    0.000000] CPU features: detected: Spectre-v4
+
+[    0.000000] CPU features: detected: Spectre-BHB
+
+[    0.000000] CPU features: detected: SSBS not fully self-synchronizing
+
+[    0.000000] alternatives: applying boot alternatives
+
+[    0.000000] Kernel command line: earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8
+
+[    0.000000] Dentry cache hash table entries: 65536 (order: 7, 524288 bytes, linear)
+
+[    0.000000] Inode-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+
+[    0.000000] Fallback order for Node 0: 0 
+
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 131072
+
+[    0.000000] Policy zone: DMA
+
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+
+[    0.000000] software IO TLB: SWIOTLB bounce buffer size adjusted to 0MB
+
+[    0.000000] software IO TLB: area num 2.
+
+[    0.000000] software IO TLB: mapped [mem 0x000000009d48d000-0x000000009d50d000] (0MB)
+
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=2, Nodes=1
+
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+
+[    0.000000] rcu: 	RCU event tracing is enabled.
+
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=2.
+
+[    0.000000] 	Trampoline variant of Tasks RCU enabled.
+
+[    0.000000] 	Tracing variant of Tasks RCU enabled.
+
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=2
+
+[    0.000000] RCU Tasks: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+[    0.000000] RCU Tasks Trace: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+
+[    0.000000] Root IRQ handler: gic_handle_irq
+
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+
+[    0.000000] arch_timer: cp15 timer(s) running at 62.50MHz (virt).
+
+[    0.000000] clocksource: arch_sys_counter: mask: 0x1ffffffffffffff max_cycles: 0x1cd42e208c, max_idle_ns: 881590405314 ns
+
+[    0.000068] sched_clock: 57 bits at 63MHz, resolution 16ns, wraps every 4398046511096ns
+
+[    0.049268] arm-pv: using stolen time PV
+
+[    0.085297] Console: colour dummy device 80x25
+
+[    0.115560] Calibrating delay loop (skipped), value calculated using timer frequency.. 125.00 BogoMIPS (lpj=250000)
+
+[    0.175501] pid_max: default: 32768 minimum: 301
+
+[    0.203518] LSM: initializing lsm=capability
+
+[    0.232615] Mount-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+[    0.272089] Mountpoint-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+[    0.357870] cacheinfo: Unable to detect cache hierarchy for CPU 0
+
+[    0.427603] rcu: Hierarchical SRCU implementation.
+
+[    0.453311] rcu: 	Max phase no-delay instances is 1000.
+
+[    0.486816] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+
+[    0.553167] EFI services will not be available.
+
+[    0.586123] smp: Bringing up secondary CPUs ...
+
+[    0.636156] Detected PIPT I-cache on CPU1
+
+[    0.640750] CPU1: Booted secondary processor 0x0000000001 [0x414fd0b1]
+
+[    0.651129] smp: Brought up 1 node, 2 CPUs
+
+[    0.746104] SMP: Total of 2 processors activated.
+
+[    0.772398] CPU: All CPU(s) started at EL1
+
+[    0.798544] CPU features: detected: 32-bit EL0 Support
+
+[    0.827090] CPU features: detected: Data cache clean to the PoU not required for I/D coherence
+
+[    0.877191] CPU features: detected: Common not Private translations
+
+[    0.913292] CPU features: detected: CRC32 instructions
+
+[    0.943077] CPU features: detected: RCpc load-acquire (LDAPR)
+
+[    0.975512] CPU features: detected: LSE atomic instructions
+
+[    1.009068] CPU features: detected: Privileged Access Never
+
+[    1.041178] CPU features: detected: RAS Extension Support
+
+[    1.071588] CPU features: detected: Speculative Store Bypassing Safe (SSBS)
+
+[    1.125070] alternatives: applying system-wide alternatives
+
+[    1.181271] CPU features: detected: Hardware dirty bit management on CPU0-1
+
+[    1.244253] Memory: 439544K/524288K available (17600K kernel code, 4900K rwdata, 11872K rodata, 2880K init, 742K bss, 49940K reserved, 32768K cma-reserved)
+
+[    1.358651] devtmpfs: initialized
+
+[    1.411773] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+
+[    1.492585] futex hash table entries: 512 (order: 3, 32768 bytes, linear)
+
+[    1.542118] 23200 pages in range for non-PLT usage
+
+[    1.542216] 514720 pages in range for PLT usage
+
+[    1.575754] pinctrl core: initialized pinctrl subsystem
+
+[    1.646737] DMI not present or invalid.
+
+[    1.732335] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+
+[    1.788228] DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations
+
+[    1.830109] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+
+[    1.877143] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+
+[    1.923539] audit: initializing netlink subsys (disabled)
+
+[    1.963337] audit: type=2000 audit(0.588:1): state=initialized audit_enabled=0 res=1
+
+[    1.971219] thermal_sys: Registered thermal governor 'step_wise'
+
+[    2.012515] thermal_sys: Registered thermal governor 'power_allocator'
+
+[    2.053619] cpuidle: using governor menu
+
+[    2.121096] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+
+[    2.162405] ASID allocator initialised with 65536 entries
+
+[    2.203880] Serial: AMBA PL011 UART driver
+
+[    2.273600] 1c090000.uart: ttyAMA0 at MMIO 0x1c090000 (irq = 13, base_baud = 0) is a PL011 rev3
+
+[    2.330574] printk: legacy console [ttyAMA0] enabled
+
+[    2.330574] printk: legacy console [ttyAMA0] enabled
+
+[    2.422701] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+[    2.422701] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+[    2.501292] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+[    2.501292] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+[    2.572055] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+[    2.572055] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+[    2.647523] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+[    2.647523] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+[    2.717448] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+[    2.717448] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+[    2.822266] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+[    2.822266] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+[    2.889612] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+[    2.889612] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+[    2.961594] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+[    2.961594] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+[    3.049892] ACPI: Interpreter disabled.
+
+[    3.049892] ACPI: Interpreter disabled.
+
+[    3.107738] iommu: Default domain type: Translated
+
+[    3.107738] iommu: Default domain type: Translated
+
+[    3.167364] iommu: DMA domain TLB invalidation policy: strict mode
+
+[    3.167364] iommu: DMA domain TLB invalidation policy: strict mode
+
+[    3.244505] SCSI subsystem initialized
+
+[    3.244505] SCSI subsystem initialized
+
+[    3.296643] libata version 3.00 loaded.
+
+[    3.296643] libata version 3.00 loaded.
+
+[    3.343210] usbcore: registered new interface driver usbfs
+
+[    3.343210] usbcore: registered new interface driver usbfs
+
+[    3.422065] usbcore: registered new interface driver hub
+
+[    3.422065] usbcore: registered new interface driver hub
+
+[    3.526677] usbcore: registered new device driver usb
+
+[    3.526677] usbcore: registered new device driver usb
+
+[    3.586520] pps_core: LinuxPPS API ver. 1 registered
+
+[    3.586520] pps_core: LinuxPPS API ver. 1 registered
+
+[    3.643124] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+[    3.643124] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+[    3.743142] PTP clock support registered
+
+[    3.743142] PTP clock support registered
+
+[    3.796248] EDAC MC: Ver: 3.0.0
+
+[    3.796248] EDAC MC: Ver: 3.0.0
+
+[    3.844378] scmi_core: SCMI protocol bus registered
+
+[    3.844378] scmi_core: SCMI protocol bus registered
+
+[    3.911073] FPGA manager framework
+
+[    3.911073] FPGA manager framework
+
+[    3.951888] Advanced Linux Sound Architecture Driver Initialized.
+
+[    3.951888] Advanced Linux Sound Architecture Driver Initialized.
+
+[    4.036141] vgaarb: loaded
+
+[    4.036141] vgaarb: loaded
+
+[    4.076696] clocksource: Switched to clocksource arch_sys_counter
+
+[    4.076696] clocksource: Switched to clocksource arch_sys_counter
+
+[    4.152905] VFS: Disk quotas dquot_6.6.0
+
+[    4.152905] VFS: Disk quotas dquot_6.6.0
+
+[    4.197458] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+[    4.197458] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+[    4.277016] pnp: PnP ACPI: disabled
+
+[    4.277016] pnp: PnP ACPI: disabled
+
+[    4.530039] NET: Registered PF_INET protocol family
+
+[    4.530039] NET: Registered PF_INET protocol family
+
+[    4.585535] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+[    4.585535] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+[    4.672302] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+[    4.672302] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+[    4.761393] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+[    4.761393] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+[    4.846299] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+[    4.846299] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+[    4.977388] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+[    4.977388] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+[    5.084086] TCP: Hash tables configured (established 4096 bind 4096)
+
+[    5.084086] TCP: Hash tables configured (established 4096 bind 4096)
+
+[    5.157920] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+[    5.157920] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+[    5.239298] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+[    5.239298] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+[    5.320282] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+[    5.320282] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+[    5.402806] RPC: Registered named UNIX socket transport module.
+
+[    5.402806] RPC: Registered named UNIX socket transport module.
+
+[    5.525187] RPC: Registered udp transport module.
+
+[    5.525187] RPC: Registered udp transport module.
+
+[    5.589122] RPC: Registered tcp transport module.
+
+[    5.589122] RPC: Registered tcp transport module.
+
+[    5.647280] RPC: Registered tcp-with-tls transport module.
+
+[    5.647280] RPC: Registered tcp-with-tls transport module.
+
+[    5.705326] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+[    5.705326] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+[    5.774731] PCI: CLS 0 bytes, default 64
+
+[    5.774731] PCI: CLS 0 bytes, default 64
+
+[    5.823532] kvm [1]: HYP mode not available
+
+[    5.827741] Unpacking initramfs...
+
+[    5.858112] Initialise system trusted keyrings
+
+[    5.823532] kvm [1]: HYP mode not available
+
+[    5.827741] Unpacking initramfs...
+
+[    5.858112] Initialise system trusted keyrings
+
+[    5.973971] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+[    5.973971] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+[    6.046536] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+[    6.046536] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+[    6.115422] NFS: Registering the id_resolver key type
+
+[    6.115422] NFS: Registering the id_resolver key type
+
+[    6.170589] Key type id_resolver registered
+
+[    6.170589] Key type id_resolver registered
+
+[    6.214681] Key type id_legacy registered
+
+[    6.214681] Key type id_legacy registered
+
+[    6.258463] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+[    6.258463] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+[    6.326882] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+[    6.326882] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+[    6.424839] 9p: Installing v9fs 9p2000 file system support
+
+[    6.424839] 9p: Installing v9fs 9p2000 file system support
+
+[    6.542866] Key type asymmetric registered
+
+[    6.542866] Key type asymmetric registered
+
+[    6.586506] Asymmetric key parser 'x509' registered
+
+[    6.586506] Asymmetric key parser 'x509' registered
+
+[    6.643699] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+[    6.643699] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+[    6.719563] io scheduler mq-deadline registered
+
+[    6.719563] io scheduler mq-deadline registered
+
+[    6.768139] io scheduler kyber registered
+
+[    6.768139] io scheduler kyber registered
+
+[    6.813686] io scheduler bfq registered
+
+[    6.813686] io scheduler bfq registered
+
+[    6.887740] ledtrig-cpu: registered to indicate activity on CPUs
+
+[    6.887740] ledtrig-cpu: registered to indicate activity on CPUs
+
+[    7.095332] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+[    7.095332] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+[    7.186197] msm_serial: driver initialized
+
+[    7.186197] msm_serial: driver initialized
+
+[    7.247785] SuperH (H)SCI(F) driver initialized
+
+[    7.247785] SuperH (H)SCI(F) driver initialized
+
+[    7.301501] STM32 USART driver initialized
+
+[    7.301501] STM32 USART driver initialized
+
+[    7.418841] loop: module loaded
+
+[    7.418841] loop: module loaded
+
+[    7.465677] megasas: 07.727.03.00-rc1
+
+[    7.465677] megasas: 07.727.03.00-rc1
+
+[    7.526651] tun: Universal TUN/TAP device driver, 1.6
+
+[    7.526651] tun: Universal TUN/TAP device driver, 1.6
+
+[    7.583616] thunder_xcv, ver 1.0
+
+[    7.583616] thunder_xcv, ver 1.0
+
+[    7.621046] thunder_bgx, ver 1.0
+
+[    7.621046] thunder_bgx, ver 1.0
+
+[    7.658678] nicpf, ver 1.0
+
+[    7.658678] nicpf, ver 1.0
+
+[    7.695041] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+[    7.695041] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+[    7.777753] hns3: Copyright (c) 2017 Huawei Corporation.
+
+[    7.777753] hns3: Copyright (c) 2017 Huawei Corporation.
+
+[    7.847739] hclge is initializing
+
+[    7.847739] hclge is initializing
+
+[    7.902809] e1000: Intel(R) PRO/1000 Network Driver
+
+[    7.902809] e1000: Intel(R) PRO/1000 Network Driver
+
+[    7.958079] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+[    7.958079] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+[    8.019047] e1000e: Intel(R) PRO/1000 Network Driver
+
+[    8.019047] e1000e: Intel(R) PRO/1000 Network Driver
+
+[    8.070389] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+[    8.070389] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+[    8.131836] igb: Intel(R) Gigabit Ethernet Network Driver
+
+[    8.131836] igb: Intel(R) Gigabit Ethernet Network Driver
+
+[    8.198138] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+[    8.198138] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+[    8.263546] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+[    8.263546] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+[    8.329291] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+[    8.329291] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+[    8.393283] sky2: driver version 1.30
+
+[    8.393283] sky2: driver version 1.30
+
+[    8.441809] VFIO - User Level meta-driver version: 0.3
+
+[    8.441809] VFIO - User Level meta-driver version: 0.3
+
+[    8.510956] usbcore: registered new interface driver usb-storage
+
+[    8.510956] usbcore: registered new interface driver usb-storage
+
+[    8.586395] i2c_dev: i2c /dev entries driver
+
+[    8.586395] i2c_dev: i2c /dev entries driver
+
+[    8.661636] sdhci: Secure Digital Host Controller Interface driver
+
+[    8.661636] sdhci: Secure Digital Host Controller Interface driver
+
+[    8.724218] sdhci: Copyright(c) Pierre Ossman
+
+[    8.724218] sdhci: Copyright(c) Pierre Ossman
+
+[    8.771304] Synopsys Designware Multimedia Card Interface Driver
+
+[    8.771304] Synopsys Designware Multimedia Card Interface Driver
+
+[    8.835009] sdhci-pltfm: SDHCI platform and OF driver helper
+
+[    8.835009] sdhci-pltfm: SDHCI platform and OF driver helper
+
+[    8.903984] usbcore: registered new interface driver usbhid
+
+[    8.903984] usbcore: registered new interface driver usbhid
+
+[    8.963626] usbhid: USB HID core driver
+
+[    8.963626] usbhid: USB HID core driver
+
+[    9.022451] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+[    9.022451] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+[    9.146255] NET: Registered PF_PACKET protocol family
+
+[    9.146255] NET: Registered PF_PACKET protocol family
+
+[    9.203355] 9pnet: Installing 9P2000 support
+
+[    9.203355] 9pnet: Installing 9P2000 support
+
+[    9.249205] Key type dns_resolver registered
+
+[    9.249205] Key type dns_resolver registered
+
+[    9.333902] registered taskstats version 1
+
+[    9.333902] registered taskstats version 1
+
+[    9.387780] Loading compiled-in X.509 certificates
+
+[    9.387780] Loading compiled-in X.509 certificates
+
+[    9.464108] Demotion targets for Node 0: null
+
+[    9.464108] Demotion targets for Node 0: null
+
+[    9.522363] clk: Disabling unused clocks
+
+[    9.522363] clk: Disabling unused clocks
+
+[    9.566248] PM: genpd: Disabling unused power domains
+
+[    9.566248] PM: genpd: Disabling unused power domains
+
+[    9.618321] ALSA device list:
+
+[    9.618321] ALSA device list:
+
+[    9.650115]   No soundcards found.
+
+[    9.650115]   No soundcards found.
+
+[    9.786590] Freeing unused kernel memory: 2880K
+
+[    9.786590] Freeing unused kernel memory: 2880K
+
+[    9.839213] Run /init as init process
+
+[    9.839213] Run /init as init process
+
+[    9.895578]   with arguments:
+
+[    9.895578]   with arguments:
+
+[    9.929753]     /init
+
+[    9.929753]     /init
+
+[    9.955288]   with environment:
+
+[    9.955288]   with environment:
+
+[    9.989571]     HOME=/
+
+[    9.989571]     HOME=/
+
+[   10.015124]     TERM=linux
+
+[   10.015124]     TERM=linux
+
+
+
+=== LATCH Linux 6.12 Guest Userspace (/init) Alive ===
+
+[guest] PID 1 = this binary. The in-guest policy IS /init.
+
+[guest] /dev/hvc0 opened! Configuring raw mode & streaming 200-tick LATH suite...
+
+[guest] phase 1/9: legal ramp (-10 mrad steps) -> host HP
+
+[guest] phase 2/9: keep-out violation (+450 mrad, inside PERSON box) -> host VETO
+
+[guest] phase 3/9: clean recovery (-150 mrad) -> host back to HP
+
+[guest] phase 4/9: step to hold angle (-180 mrad)
+
+[guest] phase 5/9: CRC bit-flip -> host wire fault
+
+[guest] phase 6/9: NaN sentinel (INT32_MIN) -> host NaN fault
+
+[guest] phase 7/9: valid frames
+
+[guest] phase 8/9: sequence replay -> host SEQ fault
+
+[guest] phase 9/9: REAL SILENCE -- sending NO bytes -> host WATCHDOG -> HA-HOME
+
+[guest] 200-tick LATH suite complete. Guest is now silent. Entering idle sleep.
+
+# =================== ACCEPTANCE: tape ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# latchctl dump
+
+# LATCH Evidence Tape Dump | Records: 128 | Latest Tick: 189780
+tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,fault_bits
+189653,12040152842,12040152978,136,10,-100,0,1,0x0100
+189654,12040214553,12040214680,127,10,-100,0,1,0x0100
+189655,12040278855,12040278991,136,10,-100,0,1,0x0100
+189656,12040341390,12040341519,129,10,-100,0,1,0x0100
+189657,12040403515,12040403643,128,10,-100,0,1,0x0100
+189658,12040465721,12040465851,130,10,-100,0,1,0x0100
+189659,12040528350,12040528477,127,10,-100,0,1,0x0100
+189660,12040590791,12040590917,126,10,-100,0,1,0x0100
+189661,12040653553,12040653683,130,10,-100,0,1,0x0100
+189662,12040719393,12040719563,170,10,-100,0,1,0x0100
+189663,12040779558,12040779684,126,10,-100,0,1,0x0100
+189664,12040841722,12040841851,129,10,-100,0,1,0x0100
+189665,12040904705,12040904862,157,10,-100,0,1,0x0100
+189666,12040965374,12040965504,130,10,-100,0,1,0x0100
+189667,12041028371,12041028518,147,10,-100,0,1,0x0100
+189668,12041090554,12041090740,186,10,-100,0,1,0x0100
+189669,12041153916,12041154031,115,10,-100,0,1,0x0100
+189670,12041214761,12041214874,113,10,-100,0,1,0x0100
+189671,12041278415,12041278542,127,10,-100,0,1,0x0100
+189672,12041342310,12041342437,127,10,-100,0,1,0x0100
+189673,12041403765,12041403891,126,10,-100,0,1,0x0100
+189674,12041466683,12041466836,153,10,-100,0,1,0x0100
+189675,12041527649,12041527775,126,10,-100,0,1,0x0100
+189676,12041593953,12041594090,137,10,-100,0,1,0x0100
+189677,12041653611,12041653750,139,10,-100,0,1,0x0100
+189678,12041716205,12041716327,122,10,-100,0,1,0x0100
+189679,12041778619,12041778745,126,10,-100,0,1,0x0100
+189680,12041841199,12041841327,128,10,-100,0,1,0x0100
+189681,12041910231,12041910530,299,10,-100,0,1,0x0100
+189682,12041967642,12041967853,211,10,-100,0,1,0x0100
+189683,12042030319,12042033050,2731,10,-100,0,1,0x0100
+189684,12042095655,12042096003,348,10,-100,0,1,0x0100
+189685,12042153280,12042153434,154,10,-100,0,1,0x0100
+189686,12042215785,12042215916,131,10,-100,0,1,0x0100
+189687,12042278842,12042278971,129,10,-100,0,1,0x0100
+189688,12042342147,12042342282,135,10,-100,0,1,0x0100
+189689,12042403602,12042403726,124,10,-100,0,1,0x0100
+189690,12042464833,12042464971,138,10,-100,0,1,0x0100
+189691,12042529055,12042529191,136,10,-100,0,1,0x0100
+189692,12042590605,12042590731,126,10,-100,0,1,0x0100
+189693,12042653457,12042653579,122,10,-100,0,1,0x0100
+189694,12042715660,12042715786,126,10,-100,0,1,0x0100
+189695,12042777417,12042777548,131,10,-100,0,1,0x0100
+189696,12042840842,12042840970,128,10,-100,0,1,0x0100
+189697,12042905666,12042909158,3492,10,-100,0,1,0x0100
+189698,12042969522,12042971651,2129,10,-100,0,1,0x0100
+189699,12043030373,12043030552,179,10,-100,0,1,0x0100
+189700,12043092923,12043093124,201,10,-100,0,1,0x0100
+189701,12043154153,12043154321,168,10,-100,0,1,0x0100
+189702,12043214993,12043215120,127,10,-100,0,1,0x0100
+189703,12043277774,12043277902,128,10,-100,0,1,0x0100
+189704,12043344036,12043344169,133,10,-100,0,1,0x0100
+189705,12043402435,12043402546,111,10,-100,0,1,0x0100
+189706,12043466044,12043466171,127,10,-100,0,1,0x0100
+189707,12043527647,12043527775,128,10,-100,0,1,0x0100
+189708,12043590166,12043590294,128,10,-100,0,1,0x0100
+189709,12043654944,12043655074,130,10,-100,0,1,0x0100
+189710,12043716495,12043716659,164,10,-100,0,1,0x0100
+189711,12043777088,12043777174,86,10,-100,0,1,0x0100
+189712,12043841495,12043841636,141,10,-100,0,1,0x0100
+189713,12043904876,12043905012,136,10,-100,0,1,0x0100
+189714,12043967099,12043971344,4245,10,-100,0,1,0x0100
+189715,12044030683,12044030891,208,10,-100,0,1,0x0100
+189716,12044106953,12044107151,198,10,-100,0,1,0x0100
+189717,12044161794,12044162247,453,10,-100,0,1,0x0100
+189718,12044222690,12044222882,192,10,-100,0,1,0x0100
+189719,12044279706,12044279886,180,10,-100,0,1,0x0100
+189720,12044349428,12044349573,145,10,-100,0,1,0x0100
+189721,12044405587,12044405713,126,10,-100,0,1,0x0100
+189722,12044465977,12044466102,125,10,-100,0,1,0x0100
+189723,12044530791,12044530915,124,10,-100,0,1,0x0100
+189724,12044593334,12044593462,128,10,-100,0,1,0x0100
+189725,12044656451,12044656580,129,10,-100,0,1,0x0100
+189726,12044723803,12044724163,360,10,-100,0,1,0x0100
+189727,12044783459,12044784266,807,10,-100,0,1,0x0100
+189728,12044840817,12044841008,191,10,-100,0,1,0x0100
+189729,12044908403,12044908535,132,10,-100,0,1,0x0100
+189730,12044972410,12044972536,126,10,-100,0,1,0x0100
+189731,12045070051,12045070659,608,10,-100,0,1,0x0100
+189732,12045095051,12045095177,126,10,-100,0,1,0x0100
+189733,12045152334,12045152470,136,10,-100,0,1,0x0100
+189734,12045221687,12045221873,186,10,-100,0,1,0x0100
+189735,12045283455,12045283587,132,10,-100,0,1,0x0100
+189736,12045348628,12045349150,522,10,-100,0,1,0x0100
+189737,12045402496,12045402628,132,10,-100,0,1,0x0100
+189738,12045465888,12045466017,129,10,-100,0,1,0x0100
+189739,12045527293,12045527404,111,10,-100,0,1,0x0100
+189740,12045592444,12045595304,2860,10,-100,0,1,0x0100
+189741,12045653616,12045653754,138,10,-100,0,1,0x0100
+189742,12045721167,12045721293,126,10,-100,0,1,0x0100
+189743,12045778877,12045778999,122,10,-100,0,1,0x0100
+189744,12045844269,12045844406,137,10,-100,0,1,0x0100
+189745,12045911127,12045911281,154,10,-100,0,1,0x0100
+189746,12045972441,12045972681,240,10,-100,0,1,0x0100
+189747,12046027164,12046027306,142,10,-100,0,1,0x0100
+189748,12046092862,12046092974,112,10,-100,0,1,0x0100
+189749,12046159435,12046159549,114,10,-100,0,1,0x0100
+189750,12046218261,12046218390,129,10,-100,0,1,0x0100
+189751,12046277661,12046277790,129,10,-100,0,1,0x0100
+189752,12046351326,12046351686,360,10,-100,0,1,0x0100
+189753,12046415834,12046416034,200,10,-100,0,1,0x0100
+189754,12046465783,12046465932,149,10,-100,0,1,0x0100
+189755,12046533120,12046533236,116,10,-100,0,1,0x0100
+189756,12046592176,12046592305,129,10,-100,0,1,0x0100
+189757,12046659367,12046659506,139,10,-100,0,1,0x0100
+189758,12046716053,12046716178,125,10,-100,0,1,0x0100
+189759,12046779032,12046779158,126,10,-100,0,1,0x0100
+189760,12046840304,12046840501,197,10,-100,0,1,0x0100
+189761,12046904095,12046906661,2566,10,-100,0,1,0x0100
+189762,12046964010,12046964124,114,10,-100,0,1,0x0100
+189763,12047028203,12047030136,1933,10,-100,0,1,0x0100
+189764,12047092583,12047092732,149,10,-100,0,1,0x0100
+189765,12047167518,12047167873,355,10,-100,0,1,0x0100
+189766,12047216632,12047216947,315,10,-100,0,1,0x0100
+189767,12047286048,12047286178,130,10,-100,0,1,0x0100
+189768,12047342034,12047342169,135,10,-100,0,1,0x0100
+189769,12047405348,12047405493,145,10,-100,0,1,0x0100
+189770,12047471104,12047471244,140,10,-100,0,1,0x0100
+189771,12047524818,12047524942,124,10,-100,0,1,0x0100
+189772,12047591763,12047591892,129,10,-100,0,1,0x0100
+189773,12047657726,12047658060,334,10,-100,0,1,0x0100
+189774,12047720031,12047720158,127,10,-100,0,1,0x0100
+189775,12047778576,12047778704,128,10,-100,0,1,0x0100
+189776,12047843730,12047844192,462,10,-100,0,1,0x0100
+189777,12047904190,12047904329,139,10,-100,0,1,0x0100
+189778,12047972727,12047972859,132,10,-100,0,1,0x0100
+189779,12048031818,12048031947,129,10,-100,0,1,0x0100
+189780,12048093871,12048094408,537,10,-100,0,1,0x0100
+# =================== END ACCEPTANCE ===================
+
+/proc/boot/ksh: ===================: cannot execute - No such file or directory
+# qemu-system-aarch64: terminating on signal 15 from pid 37866 (timeout)

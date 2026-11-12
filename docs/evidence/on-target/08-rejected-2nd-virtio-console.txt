@@ -1,0 +1,133 @@
+==============================================================================
+LATCH on-target run -- 08-rejected-2nd-virtio-console.txt
+==============================================================================
+Source log : latch_mark.log
+
+What this run proves:
+REJECTED EXPERIMENT. A second virtio-console for the guest's phase markers. It corrupted the frame channel: 26 of 84 frames delivered, wire faults tripled. Reverted; recorded here so the failure is not repeated.
+
+This file is the RAW QNX host console of one continuous boot.
+latchd runs with -n (mock I2C): there is NO PCA9685 on this
+target and the horn does not move.
+
+Supervisor counters, parsed from this console:
+  Proposals received : 26
+  Wire faults caught : 26
+  Envelope vetoes    : 0
+  Ring drops         : 0
+  Last proposed      : 0 mrad (seq=0)
+  Latched fault bits : 0x0113 (MAGIC|CRC|RESERVED|WATCHDOG)
+  Decision latency   : last = 69 cyc (1104 ns) | max = 10368 cyc (165888 ns)
+  Proposal backlog   : peak 2 frames | 0 over limit
+  Manifest SHA-256   : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+  Verification       : VERIFY_RC=0
+
+no clock-frequency property in FDT!
+Enabling EL2 host hypervisor support (VHE)
+MMU: 16-bit ASID 40-bit PA TCR_EL1=00000012b5183519
+FOUND GICv2
+GICv2: 288 interrupts
+GICv2: routing SPIs to gic cpu 0
+cpu0: MPIDR=0000000080000000
+cpu0: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu0: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu0: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu0: L1 Icache 64K linesz=64 set/way=256/4
+cpu0: L1 Dcache 64K linesz=64 set/way=256/4
+cpu0: L2 Unified 512K linesz=64 set/way=1024/8
+cpu0: GICv2 cpu interface 0
+Loading IFS...done
+cpu1: MPIDR=0000000080000001
+cpu1: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu1: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu1: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu1: L1 Icache 64K linesz=64 set/way=256/4
+cpu1: L1 Dcache 64K linesz=64 set/way=256/4
+cpu1: L2 Unified 512K linesz=64 set/way=1024/8
+cpu1: GICv2 cpu interface 1
+cpu2: MPIDR=0000000080000002
+cpu2: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu2: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu2: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu2: L1 Icache 64K linesz=64 set/way=256/4
+cpu2: L1 Dcache 64K linesz=64 set/way=256/4
+cpu2: L2 Unified 512K linesz=64 set/way=1024/8
+cpu2: GICv2 cpu interface 2
+cpu3: MPIDR=0000000080000003
+cpu3: MIDR=414fd0b1 Cortex-A76 r4p1
+cpu3: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+cpu3: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+cpu3: L1 Icache 64K linesz=64 set/way=256/4
+cpu3: L1 Dcache 64K linesz=64 set/way=256/4
+cpu3: L2 Unified 512K linesz=64 set/way=1024/8
+cpu3: GICv2 cpu interface 3
+
+System page at phys:0000000040014000 user:ffffff8040207000 kern:ffffff8040204000
+Starting next program at vffffff8060072c80
+syspage::hypinfo::flags=0x00000001
+================================================================
+ LATCH — Last Authority for Trusted Control Handoff (QNX 8.0)
+ Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2
+================================================================
+latchd: Loaded manifest '/proc/boot/latch.manifest' (plant='servo-horn-1d', SHA-256=1a8e10234f8aabbd...)
+latchd: Operating in NO-I2C mock mode (-n)
+latchlog: Streaming evidence tape from '/dev/latch/actuator' to '/dev/shmem/latch_tape.csv' (interval=100 ms)...
+# latchctl status
+
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 139568 ticks
+Current Mode         : HOLD (High Assurance 1)
+Actuator Angle       : 0 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : 0 mrad (seq=0)
+Decision Latency     : last = 69 cyc (1104 ns) | max = 10368 cyc (165888 ns)
+Proposals Received   : 26
+Wire Faults Caught   : 26
+Envelope Vetoes      : 0
+Ring Drops / WCET    : 0 drops | 2 overruns
+Proposal Backlog     : peak 2 frames | 0 over limit
+EPERM Rejections     : 0
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0100 (WATCHDOG)
+Latched Fault Bits   : 0x0113 (MAGIC|CRC|RESERVED|WATCHDOG)
+Clean Streak         : 0 frames
+Manifest SHA-256     : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+# latchctl console /dev/shmem/guest_markers.log
+
+=== LATCH guest console: /dev/shmem/guest_markers.log ===
+HTAL�d�Q�X����# latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=0
+
+=== LATCH Native QNX 8.0 Microkernel Verification ===
+[1/5] FAIL: Nominal HP tracking not observed (theta = -90 mrad, target = -100, mode = HOLD)
+[2/5] FAIL: Keep-out violation not properly vetoed (theta = -10 mrad, mode = HOME, faults = 0x01B3)
+[3/5] PASS: Wire CRC bit-flip fault injected -> HA-HOLD maintained (latched = 0x01B3)
+[4/5] PASS: Sequence replay + silence -> Watchdog tripped -> HA-HOME monotonic retraction to 0 mrad
+[5a/5] PASS: Dedicated probe devctl(PROBE_ABILITY) WITHOUT 'latch/actuator' ability -> EPERM (Fail-closed)
+[5b/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> 1 (Operation not permitted)
+[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)
+
+=== LATCH Verified Telemetry & Microkernel Evidence Tape ===
+Tick Counter       : 152747 ticks (1 kHz CLOCK_MONOTONIC pulse)
+Current Mode       : HOLD (theta = 0 mrad)
+Proposals Received : 39 | Wire Faults: 28 | Envelope Vetoes: 1 | Ring Drops: 0 | WCET Overruns: 6 | EPERM Rejects: 3
+Decision Latency   : last = 128 cyc (2048 ns) | max = 19306 cyc (308896 ns) @ 62500000 Hz
+Manifest SHA-256   : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+
+Last 12 Evidence Tape Records (.bss Ring):
+  TICK     SEQ      U_PROP     THETA_OUT  MODE   FAULTS   CYCLES    
+  #152740  10       -100       0          HOLD   0x0100   101
+  #152741  10       -100       0          HOLD   0x0100   51
+  #152742  10       -100       0          HOLD   0x0100   90
+  #152743  10       -100       0          HOLD   0x0100   247
+  #152744  10       -100       0          HOLD   0x0100   90
+  #152745  10       -100       0          HOLD   0x0900   2848
+  #152746  10       -100       0          HOLD   0x0900   134
+  #152747  10       -100       0          HOLD   0x0900   128
+  #152748  10       -100       0          HOLD   0x0100   223
+  #152749  10       -100       0          HOLD   0x0100   62
+  #152750  10       -100       0          HOLD   0x0100   211
+  #152751  10       -100       0          HOLD   0x0100   276
+
+[LATCH VERIFY] VERIFICATION FAILED: One or more invariants violated.
+VERIFY_RC=0
+# qemu-system-aarch64: terminating on signal 15 from pid 67784 (timeout)

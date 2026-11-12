@@ -11,10 +11,14 @@
 #      - IDE virtual disk (disk-qemu.vmdk / disk-qemu)
 #      - Userland networking with SSH port forward (localhost:2222 -> QNX:22)
 #      - Serial console on stdio
-#   2. AArch64 Target: ARMv8 Virt Machine (matching Raspberry Pi 4B specs)
-#      - 4x Cortex-A72 cores, GICv2 interrupt controller
-#      - PL011 Serial console connected to stdio
-#      - VirtIO console for black-channel frame transport
+#   2. AArch64 Target: ARMv8 `virt` Machine (QNX Hypervisor 8.0 + Linux guest)
+#      - 4x Cortex-A76 cores (A76 is ARMv8.2 and HAS VHE; the Raspberry Pi 4
+#        uses Cortex-A72, which is ARMv8.0 and has NO VHE -- do not mix them)
+#      - GICv2 interrupt controller (the Pi 4's BCM2711 GIC-400 is also GICv2)
+#      - PL011 Serial console on stdio
+#      - The Linux guest reaches the host over `vdev virtio-console`, NOT over
+#        a network: this IFS has no `sshd` and no NIC driver, so the SSH tip
+#        below does NOT apply to the aarch64 path.
 # ==============================================================================
 
 set -euo pipefail
@@ -247,6 +251,11 @@ elif [[ "$ARCH" == "aarch64" ]]; then
         -cpu cortex-a76
         -smp "$CPUS"
         -m "$MEM_MB"
+        # Multi-threaded TCG: an x86_64 host emulating AArch64 has NO KVM path
+        # (KVM requires host arch == guest arch). Single-threaded TCG makes the
+        # Linux 6.12 guest boot take tens of minutes; multi-threaded TCG uses
+        # all host cores and cuts it to a few minutes.
+        -accel tcg,thread=multi
         -nographic
         -serial mon:stdio
     )
@@ -282,8 +291,15 @@ echo "Virtual Disk  : ${DISK_FILE:-[None]}"
 echo "----------------------------------------------------------------"
 echo "Tips:"
 echo "  - To exit QEMU: Press 'Ctrl-A X' or 'Ctrl-C'"
-echo "  - Once booted, SSH into QNX: ssh -p ${SSH_PORT} root@localhost"
-echo "  - Default users: root (passwordless/configured), qnxuser"
+if [[ "$ARCH" == "aarch64" ]]; then
+    echo "  - This aarch64 IFS has NO sshd and NO NIC: use the QNX serial console."
+    echo "  - Operator shell is on the serial console; the guest kernel console is"
+    echo "    mirrored with:  latchctl console -f"
+    echo "  - Validate the pipeline with:  latch_verify -m /proc/boot/latch.manifest"
+else
+    echo "  - Once booted, SSH into QNX: ssh -p ${SSH_PORT} root@localhost"
+    echo "  - Default users: root (passwordless/configured), qnxuser"
+fi
 echo "================================================================"
 echo "Launching QEMU..."
 echo ""

@@ -1,0 +1,43 @@
+==============================================================================
+LATCH on-target tape analysis -- latch_tape6
+==============================================================================
+Source       : /tmp/latch_tape6.log
+Tape rows    : 172077 total (ticks 9896..181972)
+Suite window : ticks 9896..9979 (84 ticks of actual frame traffic)
+Post-suite   : 171993 ticks of the guest's DESIGNED silence (phase 9)
+Keep-out     : [250, 650] mrad
+
+Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
+  0x0002  CRC                          4 ticks
+  0x0004  SEQ                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+
+Fault-bit histogram -- over the whole captured tape (the post-suite tail is the guest's designed silence)
+  0x0002  CRC                          4 ticks
+  0x0004  SEQ                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     171993 ticks
+
+Mode timeline (first 12 transitions)
+  tick 9896     HP
+  tick 9921     HOLD
+  tick 9952     HP
+  tick 9958     HOLD
+  tick 10007    HOME
+  tick 10024    HOLD
+
+HA-HOME retraction : 17 rows, theta -170 -> -10 mrad, monotonic=True
+Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
+Max accepted seq   : 80  (highest sequence applied with no fault latched)
+Max seq observed   : 80
+Max latency (cycles): 61065
+
+Starvation stalls (runs of supervisor ticks with NO new frame consumed)
+  These are the transport defect's signature: the supervisor's
+  2-tick watchdog fires inside a stall, fails closed into HA-HOLD,
+  and retracts theta -- turning every later frame into a spurious
+  RATE veto. A healthy run has none.
+  1 stall(s):
+    ticks 9959..9962  (3 ticks stalled at seq=0)

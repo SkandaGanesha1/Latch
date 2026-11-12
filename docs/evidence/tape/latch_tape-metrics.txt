@@ -1,0 +1,52 @@
+==============================================================================
+LATCH on-target tape analysis -- latch_tape
+==============================================================================
+Source       : /tmp/latch_tape.log
+Tape rows    : 157241 total (ticks 16478..173718)
+Suite window : ticks 16478..16950 (473 ticks of actual frame traffic)
+Post-suite   : 156768 ticks of the guest's DESIGNED silence (phase 9)
+Keep-out     : [250, 650] mrad
+
+Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         44 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     388 ticks
+
+Fault-bit histogram -- over the whole captured tape (the post-suite tail is the guest's designed silence)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         44 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     157156 ticks
+
+Mode timeline (first 12 transitions)
+  tick 16478    HP
+  tick 16504    HOLD
+  tick 16553    HOME
+  tick 16554    HOLD
+  tick 16603    HOME
+  tick 16616    HOLD
+
+HA-HOME retraction : 14 rows, theta -140 -> -10 mrad, monotonic=True
+Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
+Max accepted seq   : 25  (highest sequence applied with no fault latched)
+Max seq observed   : 80
+Max latency (cycles): 47532
+
+Starvation stalls (runs of supervisor ticks with NO new frame consumed)
+  These are the transport defect's signature: the supervisor's
+  2-tick watchdog fires inside a stall, fails closed into HA-HOLD,
+  and retracts theta -- turning every later frame into a spurious
+  RATE veto. A healthy run has none.
+  9 stall(s):
+    ticks 16503..16554  (51 ticks stalled at seq=25)
+    ticks 16562..16625  (63 ticks stalled at seq=25)
+    ticks 16654..16687  (33 ticks stalled at seq=25)
+    ticks 16694..16751  (57 ticks stalled at seq=25)
+    ticks 16754..16756  (2 ticks stalled at seq=0)
+    ticks 16757..16818  (61 ticks stalled at seq=25)
+    ticks 16824..16880  (56 ticks stalled at seq=25)
+    ticks 16892..16945  (53 ticks stalled at seq=25)
+    ticks 16948..16950  (2 ticks stalled at seq=80)

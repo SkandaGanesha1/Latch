@@ -15,11 +15,29 @@
 
 system latch-policy-guest-rpi4
 
+# Route qvm/guest diagnostics to the host system logger (slogger2 must be up).
+logger error,fatal,internal,warn,info stderr
+
 ram 0x80000000,0x20000000
 
-# Pin guest vCPUs to physical cores 2 and 3 at priority 8 round-robin
-cpu _cpu-2 sched 8r
-cpu _cpu-3 sched 8r
+# Pin guest vCPUs to physical cores 2 and 3 at priority 8 round-robin.
+#
+# QNX Hypervisor 8.0 `cpu` takes an INDENTED OPTIONS BLOCK whose only two
+# options are `cluster` and `sched`. The Hypervisor 7.1 one-line form
+# `cpu _cpu-2 sched 8r` is REJECTED by the 8.0 qvm with
+# "Unknown option '_cpu-2'", and a bare `cpu` / `sched 8r` block leaves the
+# vCPU FLOATING on every core -- including the one latchd runs on.
+# One `cpu` block per vCPU, each bound to its own single-CPU cluster.
+#
+# The qvm PROCESS must be started with an UNCONSTRAINED runmask (see
+# latch_rpi4.build): `on -C <n>` and `on -R <mask>` resolve to a predefined
+# single-CPU cluster, and no predefined cluster covers CPUs 2+3 together.
+cpu
+    cluster _cpu-2
+    sched 8r
+cpu
+    cluster _cpu-3
+    sched 8r
 
 # BCM2711 uses an ARM GIC-400 (GICv2). Default `vdev gic` version is 3, so
 # `version 2` MUST be explicitly specified, and `gicr` MUST NOT be set.
@@ -30,12 +48,19 @@ vdev gic
     gicc 0xff842000
 
 # Bind the guest virtio-console byte stream directly to `/proc/boot/latch-ingest`.
-# `name` creates `/dev/qvm/latch-policy-guest/latch_console` for control only;
-# it is never pointed at `/dev/latch/actuator`.
+# `name` creates `/dev/qvm/latch-policy-guest-rpi4/latch_console` for control
+# only; it is never pointed at `/dev/latch/actuator`.
+#
+# `sched 60`: the vdev's guest->host forwarding is pulse-driven ("sched
+# priority: ... pulses indicating that input is available on the host device").
+# At the default priority the forward starves under host load, the supervisor's
+# watchdog fires, and the safety story is corrupted by spurious vetoes.
+# `-p 30f` makes the pipe reader drain promptly.
 vdev virtio-console
     loc 0x1c0a0000
     intr gic:42
-    hostdev >"|on -T latch_ingest_t /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
+    sched 60
+    hostdev >"|on -T latch_ingest_t -C 1 -p 30f /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
     name latch_console
 
 # Optional shared-memory transport (Week 4+ only if byte pipe is too slow):
@@ -53,4 +78,5 @@ vdev pl011
     hostdev >/dev/shmem/guest_console.log
 
 load 0x80080000 /proc/boot/linux-guest.Image
-cmdline "console=ttyAMA0,115200 root=/dev/ram0 rw"
+initrd load /proc/boot/linux-guest.initrd
+cmdline "earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8"

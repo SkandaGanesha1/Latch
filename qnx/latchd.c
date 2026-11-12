@@ -129,6 +129,8 @@ typedef struct latch_simplex_state {
     uint32_t       total_wire_faults;
     uint32_t       total_envelope_faults;
     uint32_t       wcet_overruns;
+    uint32_t       max_backlog_seen;  /* Peak proposal-queue depth observed */
+    uint32_t       backlog_overruns;  /* Ticks the queue exceeded timing.max_backlog_ticks */
     _Atomic uint32_t total_ring_drops;
     _Atomic uint32_t total_eperm_rejects;
     _Atomic uint32_t eperm_pending;
@@ -251,9 +253,22 @@ static bool latch_consume_proposal(latch_publish_buffer_t *buf,
                     return true;
                 }
             }
-            *out_prop = slot->proposal;
-            atomic_store_explicit(&buf->read_tail, t + 1u, memory_order_release);
-            return true;
+            /*
+             * FAIL CLOSED on a torn slot.
+             *
+             * A previous revision accepted the slot anyway after the
+             * generation check failed, which contradicts the documented
+             * "100% untorn reads" guarantee: the payload could have been
+             * copied mid-write. The correct posture for a safety-critical
+             * supervisor is to refuse the frame and retry next tick, not to
+             * act on a possibly-torn one.
+             *
+             * This is unreachable in practice: the publisher seals the slot
+             * (even generation) before advancing `write_head`, and the
+             * consumer only ever looks at slots below `write_head`. It is
+             * kept as a hard guarantee rather than a probability.
+             */
+            return false;
         }
         return false;
     }
@@ -793,6 +808,33 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->wcet_overruns++;
     }
 
+    /*
+     * BACKLOG HEALTH (the manifest's `timing.max_backlog_ticks`).
+     *
+     * The guest policy deliberately produces FASTER than the supervisor
+     * consumes, so a standing backlog is the NORMAL state, not a fault: it is
+     * what keeps the supervisor's watchdog from ever firing spuriously. What
+     * matters is that the backlog stays inside the bound the manifest
+     * declares, because the bound is what the ring was sized for.
+     *
+     * A backlog above `max_backlog_ticks` means the transport is falling
+     * further behind than the design allows -- a health signal about the
+     * pipeline, not a safety violation (the supervisor still processes every
+     * frame in order). It is counted and surfaced in `latchctl status` so an
+     * operator can see it.
+     */
+    {
+        uint32_t depth = atomic_load_explicit(&g_pub_buf.write_head, memory_order_acquire) -
+                         atomic_load_explicit(&g_pub_buf.read_tail, memory_order_acquire);
+        if (depth > st->max_backlog_seen) {
+            st->max_backlog_seen = depth;
+        }
+        if (g_manifest.timing.max_backlog_ticks > 0u &&
+            depth > g_manifest.timing.max_backlog_ticks) {
+            st->backlog_overruns++;
+        }
+    }
+
     atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
 
     /* 8. Append to Evidence Tape */
@@ -852,6 +894,8 @@ static void latch_fill_status(latch_status_reply_t *out) {
         out->total_ring_drops      = atomic_load_explicit(
             &g_simplex.total_ring_drops, memory_order_relaxed);
         out->wcet_overruns         = g_simplex.wcet_overruns;
+        out->max_backlog_seen      = g_simplex.max_backlog_seen;
+        out->backlog_overruns      = g_simplex.backlog_overruns;
         memcpy(out->manifest_sha256, g_manifest.sha256, sizeof(out->manifest_sha256));
 
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);

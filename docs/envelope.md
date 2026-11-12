@@ -57,4 +57,4 @@ HOME -- new explicit violation ---------------------------------> HOLD
 ```
 
 - **`HA-HOLD` (`latch_ha_hold`)**: Commands zero velocity (`next_theta = theta_mrad`), freezing the servo horn in place within one tick.
-- **`HA-HOME` (`latch_ha_home`)**: Steps `theta_mrad` toward `0` mrad by at most `V_HOME_MRAD_TICK` (`10` mrad/tick) along the legal side of the keep-out box (`theta_mrad < KEEPOUT_LO_MRAD`), latching back into `HOLD` once `theta_mrad == 0`.
+- **`HA-HOME` (`latch_ha_home`)**: Steps `theta_mrad` toward the manifest's `envelope.home_mrad` by at most `envelope.v_home` mrad per tick along the legal side of the keep-out box (a retraction that would cross a keep-out interval is refused), latching back into `HOLD` once `theta_mrad` reaches the home pose.

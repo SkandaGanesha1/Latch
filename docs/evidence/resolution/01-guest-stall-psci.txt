@@ -1,0 +1,35 @@
+==============================================================================
+LATCH resolution proof -- 01-guest-stall-psci
+==============================================================================
+DEFECT 1 -- PSCI never reached the guest FDT
+
+SYMPTOM
+  The Linux 6.12 guest hung for tens of minutes immediately after the
+  QNX boot banner printed the CPU topology. The last thing on the
+  console was the cache-info lines; the guest never reached
+  'Run /init as init process'.
+
+MECHANISM
+  qvm auto-detects host PSCI support by reading the HOST device tree.
+  QNX's startup cannot read QEMU's DTB on this platform -- the boot
+  log says 'no clock-frequency property in FDT!'. With no PSCI node
+  in the guest FDT, Linux's secondary-CPU bring-up never completes.
+
+FIX
+  qnx/latch_qemu_virt.qvmconf:
+      set psci-supported on
+      set pointer-authentication off
+      set linux-fdt-free on
+
+  'set psci-supported on' is the exact override the qvm manual
+  documents, and it is the one that matters: without it the guest FDT
+  has no PSCI node at all.
+
+PROOF
+  Before : the guest hung for >30 minutes; it never reached /init.
+  After  : the guest boots to '/init' in 8.1 s and the kernel reports
+           'psci: PSCIv1.1 detected in firmware'.
+
+  The boot itself is archived in
+  docs/evidence/on-target/01-guest-boot-console.txt, and the guest
+  console is mirrored in the canonical session.

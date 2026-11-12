@@ -1,0 +1,26 @@
+==============================================================================
+LATCH resolution proof -- 03-qvm-runmask
+==============================================================================
+DEFECT 3 -- the qvm process runmask
+
+SYMPTOM
+  'on: Invalid cluster runmask specified' for both '-R 0xc' and
+  '-C 2 -C 3'. The hypervisor refused to start.
+
+MECHANISM
+  'on -C <n>' and 'on -R <mask>' both resolve to a PREDEFINED
+  SINGLE-CPU CLUSTER. No predefined cluster covers CPUs 2+3 together,
+  so there is no runmask that expresses the intended pinning.
+
+FIX
+  Start the qvm process with an UNCONSTRAINED runmask. The isolation
+  comes from the qvmconf's static vCPU pins (defect 2), not from the
+  process affinity.
+
+  qnx/latch_qemu.build and qnx/latch_rpi4.build: the qvm launch no
+  longer passes -C or -R.
+
+PROOF
+  The hypervisor boots, and 'pidin -p qvm threads' shows the two
+  pinned vCPU threads. See
+  docs/evidence/on-target/09-canonical-session.txt.

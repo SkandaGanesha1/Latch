@@ -75,21 +75,84 @@ Because `flags == 0` leaves root out of the default set, even a `root` shell on 
 
 ## 4. Run the Five Faults (25:00 – 38:00)
 
-From the guest VM (writing to `/dev/hvc0`) or on your workstation via pipe, run each of the five faults in `guest/liar.py`:
+### On the QEMU AArch64 virt target (the real thing)
+
+The in-guest policy is `guest/latch_guest_init.c` — a freestanding static
+AArch64 binary packed as `linux-guest.initrd` and loaded by
+`initrd load /proc/boot/linux-guest.initrd`. It runs as **PID 1** in the
+guest and walks through nine fault phases on its own, with a visible pause
+between them. You do not type anything inside the guest.
+
+Watch it from the **QNX host console** (the serial terminal), not from the
+guest:
+
+```sh
+# 1. Follow the guest kernel console and the policy phases
+latchctl console -f
+
+# 2. Watch the supervisor's verdict counters
+latchctl status
+
+# 3. Assert all five invariants (exits 0 only on success)
+latch_verify -m /proc/boot/latch.manifest ; echo VERIFY_RC=$?
+```
+
+| # | Phase in the guest | What Happens on the host |
+| --- | --- | --- |
+| 1 | phase 2: `+450` mrad, inside the `[250, 650]` box | `latchd` vetoes within one tick (`LATCH_FAULT_KEEPOUT`) and holds position. |
+| 2 | phase 5: one bit flipped after the CRC is computed | `latch-ingest` drops `u_mrad` and sets `LATCH_FAULT_CRC`; `latchd` stays in `HOLD`. |
+| 3 | phase 8: a frame re-using the previous `seq` | `LATCH_FAULT_SEQ`; fails closed. |
+| 4 | phase 9: **the guest stops writing bytes** | A real gap trips the watchdog (`LATCH_FAULT_WATCHDOG`, `0x0100`) after 2 ticks. The host's 1 kHz tick on `_cpu-0` never blinks; after 50 ticks in `HOLD`, `HA-HOME` retracts the horn to `0` mrad. |
+| 5 | (host side) `latchctl grant-check` | The operator shell is typed `operator_shell_t`, which does **not** hold `latch/actuator`. `iofunc_client_info_able()` returns `EPERM` (`LATCH_FAULT_EPERM`). |
+
+> **Say it accurately.** PID 1 in the guest *is* the policy, so there is no
+> second process to `kill -9` inside the guest. The honest statement is
+> *"the guest stopped sending; the host's 1 kHz loop did not stop."* Do not
+> claim you killed a separate guest policy process.
+
+### On your workstation (host simulation, no QNX needed)
+
+`guest/liar.py` is the **workstation** injector. It feeds `latch-ingest`
+through a POSIX pipe and is what `make check` uses:
 
 | # | Command | What Happens |
 | --- | --- | --- |
-| 1 | `python3 guest/liar.py keepout --device /dev/hvc0` | Proposes `+450` mrad inside the `[250, 650]` box. `latchd` vetoes within 1 tick (`LATCH_FAULT_KEEPOUT`) and holds position. |
-| 2 | `python3 guest/liar.py corrupt --device /dev/hvc0` | Flips 1 bit after CRC calculation. `latch-ingest` drops `u_mrad` and sets `LATCH_FAULT_CRC`; `latchd` enters `HOLD`. |
-| 3 | `python3 guest/liar.py replay --device /dev/hvc0` | Repeats `seq` (`LATCH_FAULT_SEQ`), then stops sending (`LATCH_FAULT_WATCHDOG` after 2 ticks). |
-| 4 | `kill -9 $(pgrep -f liar.py)` | Guest policy dies. Host tick counter on `_cpu-0` never blinks; after 50 ticks in `HOLD`, `HA-HOME` retracts the horn to `0` mrad. |
-| 5 | Root shell `devctl` on `/dev/latch/actuator` | `iofunc_client_info_able()` returns `EPERM` (`LATCH_FAULT_EPERM`). |
+| 1 | `python3 guest/liar.py keepout` | Proposes `+450` mrad inside the `[250, 650]` box. `latchd` vetoes within 1 tick (`LATCH_FAULT_KEEPOUT`) and holds position. |
+| 2 | `python3 guest/liar.py corrupt` | Flips 1 bit after CRC calculation. `latch-ingest` drops `u_mrad` and sets `LATCH_FAULT_CRC`; `latchd` enters `HOLD`. |
+| 3 | `python3 guest/liar.py replay` | Repeats `seq` (`LATCH_FAULT_SEQ`), then stops sending (`LATCH_FAULT_WATCHDOG` after 2 ticks). |
+| 4 | *(the process exits)* | The host tick counter never blinks; after 50 ticks in `HOLD`, `HA-HOME` retracts the horn to `0` mrad. |
+| 5 | `./build/host-sim/latchctl grant-check` | `iofunc_client_info_able()` returns `EPERM` (`LATCH_FAULT_EPERM`). |
 
 ---
 
 ## 5. Inspect the Evidence Tape (38:00 – 45:00)
 
-Open `host/tape.html` in any browser and load `host/suite_tape.csv` (or inspect the pre-loaded 200-tick run). Verify:
+A committed on-target transcript is at
+`docs/evidence/README.md` — the index of the evidence archive. It maps every
+claim to the file that proves it, and it lists what is **not** proven. The
+canonical artefact is `docs/evidence/on-target/09-canonical-session.txt`: the raw
+QNX host console of one continuous QEMU AArch64 `virt` boot, ending in
+`VERIFY_RC=0`. Read it once before you start; it is what you are reproducing.
+
+Two more files are worth a minute each:
+
+- `docs/evidence/derived/on-target-run-index.txt` — the whole bring-up in one
+  table. Each run changed exactly one thing, and the envelope-veto count falls
+  `51 → 48 → 27 → 7` as a result. This is the honest version of "it works":
+  here is how we found out.
+- `docs/evidence/resolution/SUMMARY.md` — the four defects, each with its
+  mechanism and its proof.
+
+On the target itself:
+
+```sh
+latchctl status              # supervisor counters
+latchctl dump                # the last 128 tape rows
+latchctl console             # the guest kernel console (the IFS has no `cat`)
+```
+
+Open `host/tape.html` in any browser and load `host/suite_tape.csv` (or inspect the
+pre-loaded 200-tick run). Verify:
 - The applied angle `theta_applied` never enters the shaded `[250, 650]` mrad keep-out zone.
 - `HP` mode is only restored after 25 consecutive clean frames (`ticks 33..57`).
 - After the guest is killed at tick 85, `latchd` transitions from `HOLD` to `HOME` after 50 ticks and steps monotonically back to `0` mrad (which `latch_verify` explicitly asserts via `DCMD_LATCH_DUMP_TAPE`).

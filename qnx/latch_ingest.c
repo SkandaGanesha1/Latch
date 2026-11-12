@@ -46,7 +46,14 @@
 #include "latch_protocol.h"
 #include "latch_manifest.h"
 
-#define LATCH_INGEST_PREFILL_FRAMES 32u
+/*
+ * There is deliberately no prefill constant here any more. A previous
+ * revision used a compile-time 32-frame burst prefill followed by a sleep
+ * between deliveries; both are gone. The supervisor's ring, bounded by the
+ * manifest's `ingest.queue_depth`, is the only buffer in the path, and the
+ * guest is required to keep that burst within `ingest.queue_depth` (the
+ * invariant is asserted across files by tools/consistency_check.py).
+ */
 
 static volatile sig_atomic_t g_ingest_running = 1;
 
@@ -336,11 +343,30 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        /* 32-frame burst prefill followed by 0.5 * period_us pacing when writing to device node */
-        if (!is_stdout && total_frames > LATCH_INGEST_PREFILL_FRAMES) {
-            uint32_t pace_us = (manifest.timing.period_us > 0) ? (manifest.timing.period_us / 2u) : 500u;
-            usleep(pace_us);
-        }
+        /*
+         * NO ARTIFICIAL PACING HERE -- the supervisor's queue IS the buffer.
+         *
+         * This process validates the wire frame and hands it to the supervisor
+         * as fast as the transport delivers it. The supervisor drains exactly
+         * one proposal per 1 ms tick from a ring bounded by
+         * `ingest.queue_depth`, so the ring -- not a sleep in the ingest -- is
+         * what decouples the producer's burst from the consumer's tick.
+         *
+         * Why there must be no sleep here: the supervisor's watchdog is
+         * `watchdog_ticks` (2 by default, i.e. 2 ms). Any stretch where the
+         * supervisor finds no proposal makes it fail closed into HA-HOLD and
+         * then retract to HA-HOME, which moves `theta` away from the value the
+         * next proposal carries and turns every later frame into a spurious
+         * RATE veto. Measured on QEMU AArch64 virt, a half-period sleep here
+         * produced 16- and 28-tick stalls in the guest->host delivery (the
+         * virtio-console vdev's forwarding pulse is priority-driven; see the
+         * `sched 40` on that vdev) and 48 envelope vetoes where 7 are
+         * correct. The safety story is the ORDER of the frames, and order is
+         * preserved by the ring.
+         *
+         * The guest likewise does not pace itself: it emits one continuous
+         * byte stream and lets the host's ring absorb the burst.
+         */
     }
 
     /* Wait for latchd to drain queued proposals before closing channel */

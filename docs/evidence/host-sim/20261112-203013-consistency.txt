@@ -1,0 +1,24 @@
+==============================================================================
+LATCH cross-file consistency gate
+==============================================================================
+$ python3 tools/consistency_check.py
+
+exit status: 0
+
+=== LATCH Architectural Consistency & Invariant Verification ===
+[CONSISTENCY PASS] Default Plant (latch.manifest) sidecar SHA-256 match verified: 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+[CONSISTENCY PASS] Medical Syringe Plant sidecar SHA-256 match verified: a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
+[CONSISTENCY PASS] guest suite (84 frames, flush granularity 4) fits the manifest ingest.queue_depth (256) and timing.max_backlog_ticks (256) <= ring capacity (256)
+[CONSISTENCY PASS] Manifest schema version 2 valid
+[CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
+[CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
+[CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
+[CONSISTENCY PASS] qnx/latch_qemu.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
+[CONSISTENCY PASS] qnx/latch_rpi4.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] RPi4 buildfile el1-host, BCM2711 I2C IRQ 149, secpolpush, qvm unconstrained runmask, pipe/slogger2, guest image/initrd verified
+[CONSISTENCY PASS] Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified
+[CONSISTENCY PASS] Hypervisor qvmconf split, static vCPU pins, initrd/rdinit/console cmdline & Makefile verified
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced
+
+[SUCCESS] All architectural consistency checks PASSED with 0 errors.

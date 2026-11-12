@@ -1,0 +1,37 @@
+# ############ EVIDENCE: latch_verify ############
+
+# latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=$?
+
+=== LATCH Native QNX 8.0 Microkernel Verification ===
+[1/5] FAIL: Nominal HP tracking not observed (theta = 0 mrad, target = -100, mode = HOLD)
+[2/5] PASS: Keep-out violation (450 mrad) vetoed -> HA-HOLD locked at theta = 0 mrad (latched = 0x01AE)
+[3/5] PASS: Wire CRC bit-flip fault injected -> HA-HOLD maintained (latched = 0x01AE)
+[4/5] PASS: Sequence replay + silence -> Watchdog tripped -> HA-HOME monotonic retraction to 0 mrad
+[5a/5] PASS: Dedicated probe devctl(PROBE_ABILITY) WITHOUT 'latch/actuator' ability -> EPERM (Fail-closed)
+[5b/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> 1 (Operation not permitted)
+[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)
+
+=== LATCH Verified Telemetry & Microkernel Evidence Tape ===
+Tick Counter       : 182828 ticks (1 kHz CLOCK_MONOTONIC pulse)
+Current Mode       : HOLD (theta = 0 mrad)
+Proposals Received : 97 | Wire Faults: 13 | Envelope Vetoes: 15 | Ring Drops: 0 | WCET Overruns: 3 | EPERM Rejects: 3
+Decision Latency   : last = 93 cyc (1488 ns) | max = 30615 cyc (489840 ns) @ 62500000 Hz
+Manifest SHA-256   : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+
+Last 12 Evidence Tape Records (.bss Ring):
+  TICK     SEQ      U_PROP     THETA_OUT  MODE   FAULTS   CYCLES    
+  #182820  4        -100       0          HOLD   0x0100   68
+  #182821  4        -100       0          HOLD   0x0100   57
+  #182822  4        -100       0          HOLD   0x0100   77
+  #182823  4        -100       0          HOLD   0x0100   215
+  #182824  4        -100       0          HOLD   0x0100   83
+  #182825  4        -100       0          HOLD   0x0900   2288
+  #182826  4        -100       0          HOLD   0x0100   105
+  #182827  4        -100       0          HOLD   0x0900   101
+  #182828  4        -100       0          HOLD   0x0900   93
+  #182829  4        -100       0          HOLD   0x0100   558
+  #182830  4        -100       0          HOLD   0x0100   54
+  #182831  4        -100       0          HOLD   0x0100   60
+
+[LATCH VERIFY] VERIFICATION FAILED: One or more invariants violated.
+VERIFY_RC=1

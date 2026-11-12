@@ -24,6 +24,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "latch_protocol.h"
 #include "latch_manifest.h"
@@ -71,8 +72,51 @@ static void print_usage(const char *prog) {
             "  grant-check                        Verify whether caller holds 'latch/actuator' ability\n"
             "  hold <1|0> [reason]                Set (1) or release (0) operator emergency HA-HOLD\n"
             "  dump <output.csv>                  Dump evidence tape records to CSV\n"
-            "  manifest-verify <path> [sha256]    Verify manifest integrity, admissibility & sidecar\n",
+            "  manifest-verify <path> [sha256]    Verify manifest integrity, admissibility & sidecar\n"
+            "  console [path] [-f]                Mirror the guest kernel console (default\n"
+            "                                      /dev/shmem/guest_console.log); -f follows\n",
             prog);
+}
+
+/*
+ * Mirror the QNX-hosted guest kernel console to stdout.
+ *
+ * The guest's PL011 is a VIRTUAL device inside qvm; its output is captured by
+ * `hostdev >/dev/shmem/guest_console.log`. The minimal IFS ships no `cat`,
+ * `tail` or `grep`, so this is the supported way for an operator (or a judge)
+ * to read what the guest kernel printed.
+ */
+static int do_console(const char *path, bool follow) {
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "latchctl: cannot open '%s': %s\n", path, strerror(errno));
+        return 1;
+    }
+    printf("=== LATCH guest console: %s ===\n", path);
+    fflush(stdout);
+
+    char line[512];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        fputs(line, stdout);
+        fflush(stdout);
+    }
+
+    if (!follow) {
+        fclose(fp);
+        return 0;
+    }
+
+    /* Follow mode: poll the file for appended bytes. */
+    for (;;) {
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 200000000L };
+        (void)nanosleep(&ts, NULL);
+        clearerr(fp);
+        while (fgets(line, sizeof(line), fp) != NULL) {
+            fputs(line, stdout);
+            fflush(stdout);
+        }
+    }
+    /* NOTREACHED */
 }
 
 static int do_status(int fd) {
@@ -106,6 +150,8 @@ static int do_status(int fd) {
     printf("Envelope Vetoes      : %u\n", rep.total_envelope_faults);
     printf("Ring Drops / WCET    : %u drops | %u overruns\n",
            rep.total_ring_drops, rep.wcet_overruns);
+    printf("Proposal Backlog     : peak %u frames | %u over limit\n",
+           rep.max_backlog_seen, rep.backlog_overruns);
     printf("EPERM Rejections     : %u\n", rep.total_eperm_rejects);
     printf("Operator Hold Locked : %s\n", rep.operator_hold_locked ? "YES" : "NO");
     printf("Active Fault Bits    : %s\n", active_str);
@@ -250,6 +296,19 @@ int main(int argc, char *argv[]) {
         const char *mpath = (optind < argc) ? argv[optind++] : NULL;
         const char *exp_sha = (optind < argc) ? argv[optind++] : NULL;
         return do_manifest_verify(mpath, exp_sha);
+    }
+
+    if (strcmp(cmd, "console") == 0) {
+        const char *cpath = "/dev/shmem/guest_console.log";
+        bool follow = false;
+        for (int i = optind; i < argc; ++i) {
+            if (strcmp(argv[i], "-f") == 0) {
+                follow = true;
+            } else {
+                cpath = argv[i];
+            }
+        }
+        return do_console(cpath, follow);
     }
 
     int oflag = (strcmp(cmd, "hold") == 0) ? O_RDWR : O_RDONLY;

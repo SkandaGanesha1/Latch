@@ -240,7 +240,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     m->timing.period_us = 1000;
     m->timing.watchdog_ticks = 2;
     m->timing.wcet_budget_us = 100;
-    m->timing.max_backlog_ticks = 4;
+    m->timing.max_backlog_ticks = 256;
 
     m->recovery.hysteresis_clean_frames = 25;
     m->recovery.hold_to_home_ticks = 50;
@@ -270,6 +270,7 @@ void latch_manifest_init_defaults(latch_manifest_t *m) {
     m->actuator.required = false;
 
     m->tape.capacity = 4096;
+    strncpy(m->tape.log_path, "/dev/shmem/latch_tape.csv", sizeof(m->tape.log_path) - 1);
 
     strncpy(m->protocol.magic, "LATH", sizeof(m->protocol.magic) - 1);
     m->protocol.version = 1;
@@ -602,7 +603,7 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     bool has_actuator_type = false, has_act_addr = false, has_act_freq = false, has_act_prescale = false;
     bool has_act_retries = false, has_act_init_delay = false, has_act_required = false;
     bool has_pwm_center = false, has_pwm_min = false, has_pwm_max = false;
-    bool has_tape_cap = false;
+    bool has_tape_cap = false, has_tape_log_path = false;
     bool has_proto_magic = false, has_proto_version = false, has_proto_crc = false, has_proto_cov = false;
 
     const char *buf_end = buf + read_bytes;
@@ -839,6 +840,12 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     {
         const char *cap_p = json_find_key_bounded(tape_sec, tape_end, "capacity");
         if (cap_p && json_match_uint32(&cap_p, &out_m->tape.capacity)) has_tape_cap = true;
+
+        const char *lp_p = json_find_key_bounded(tape_sec, tape_end, "log_path");
+        if (lp_p && json_match_str(&lp_p, out_m->tape.log_path, sizeof(out_m->tape.log_path)) &&
+            out_m->tape.log_path[0] != '\0') {
+            has_tape_log_path = true;
+        }
     }
 
     /* 11. Parse protocol within proto_sec */
@@ -870,7 +877,7 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
         !has_actuator_type || !has_act_addr || !has_act_freq || !has_act_prescale ||
         !has_act_retries || !has_act_init_delay || !has_act_required ||
         !has_pwm_center || !has_pwm_min || !has_pwm_max ||
-        !has_tape_cap ||
+        !has_tape_cap || !has_tape_log_path ||
         !has_proto_magic || !has_proto_version || !has_proto_crc || !has_proto_cov) {
         if (err_buf) snprintf(err_buf, err_len,
                               "Manifest missing required safety parameters (anti-silent-defaults: fail-closed)");
@@ -982,6 +989,12 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
     if (m->tape.capacity < 1 || m->tape.capacity > LATCH_MANIFEST_MAX_TAPE_CAPACITY) {
         if (err_buf) snprintf(err_buf, err_len, "Fail closed: Tape capacity %u outside [1, %u]",
                               m->tape.capacity, (unsigned int)LATCH_MANIFEST_MAX_TAPE_CAPACITY);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->tape.log_path[0] != '/') {
+        if (err_buf) snprintf(err_buf, err_len,
+                              "Fail closed: tape.log_path '%s' must be an absolute path",
+                              m->tape.log_path);
         return LATCH_ADMIT_VIOLATED;
     }
     if (m->actuator.pwm_min >= m->actuator.pwm_center ||

@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "latch_protocol.h"
+#include "latch_manifest.h"
 
 static volatile sig_atomic_t g_log_running = 1;
 
@@ -45,20 +46,59 @@ static const char *mode_str(uint16_t mode) {
 
 int main(int argc, char *argv[]) {
     const char *dev_path    = LATCH_DEV_ACTUATOR;
-    const char *output_file = "/dev/shmem/latch_tape.csv";
+    const char *output_file = NULL;
+    const char *manifest_path = "latch.manifest";
     uint32_t    interval_ms = 100u;
+    bool        output_file_set = false;
+    bool        dev_path_set     = false;
+    bool        manifest_explicit = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:o:i:")) != -1) {
+    while ((opt = getopt(argc, argv, "d:o:i:m:")) != -1) {
         switch (opt) {
-            case 'd': dev_path    = optarg; break;
-            case 'o': output_file = optarg; break;
+            case 'd': dev_path = optarg; dev_path_set = true; break;
+            case 'o': output_file = optarg; output_file_set = true; break;
             case 'i': interval_ms = (uint32_t)strtoul(optarg, NULL, 10); break;
+            case 'm': manifest_path = optarg; manifest_explicit = true; break;
             default:
-                fprintf(stderr, "Usage: %s [-d /dev/latch/actuator] [-o /dev/shmem/latch_tape.csv] [-i interval_ms]\n",
+                fprintf(stderr, "Usage: %s [-m latch.manifest] [-d /dev/latch/actuator] "
+                                "[-o /dev/shmem/latch_tape.csv] [-i interval_ms]\n",
                         argv[0]);
                 return EXIT_FAILURE;
         }
+    }
+
+    /* Resolve the manifest the same way latch-ingest and latchd do: the
+     * target's CWD is "/", so a bare "latch.manifest" is not findable there.
+     * Without this the evidence logger would fail closed and never start. */
+    if (!manifest_explicit && access(manifest_path, F_OK) != 0) {
+        if (access("qnx/latch.manifest", F_OK) == 0) {
+            manifest_path = "qnx/latch.manifest";
+        } else if (access("/proc/boot/latch.manifest", F_OK) == 0) {
+            manifest_path = "/proc/boot/latch.manifest";
+        }
+    }
+
+    /*
+     * Every path in this project comes from the signed manifest, not from a
+     * hardcoded string: `paths.actuator` for the device node and
+     * `tape.log_path` for where the evidence tape is persisted. The `-d`/`-o`
+     * flags remain as operator overrides, but the default is the manifest.
+     */
+    latch_manifest_t manifest;
+    char err_buf[256];
+    if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) != 0) {
+        fprintf(stderr, "latchlog: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
+                manifest_path, err_buf);
+        return EXIT_FAILURE;
+    }    if (!dev_path_set && manifest.paths.actuator[0] != '\0') {
+        dev_path = manifest.paths.actuator;
+    }
+    if (!output_file_set && manifest.tape.log_path[0] != '\0') {
+        output_file = manifest.tape.log_path;
+    }
+    if (output_file == NULL) {
+        output_file = "/dev/shmem/latch_tape.csv";
     }
 
     signal(SIGINT, latch_log_sig_handler);

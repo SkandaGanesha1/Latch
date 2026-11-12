@@ -230,6 +230,8 @@ typedef struct latch_status_reply {
     uint32_t total_eperm_rejects;
     uint32_t total_ring_drops;
     uint32_t wcet_overruns;
+    uint32_t max_backlog_seen;   /* Peak proposal-queue depth observed (frames) */
+    uint32_t backlog_overruns;   /* Ticks where the queue exceeded timing.max_backlog_ticks */
     uint32_t operator_hold_locked;
     uint8_t  manifest_sha256[32];
 } latch_status_reply_t;

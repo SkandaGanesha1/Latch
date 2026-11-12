@@ -29,6 +29,10 @@ type i2c_t;
 type qvm_host_t;
 type slogger2_t;
 type pipe_t;
+# The operator shell gets its OWN type. It deliberately does NOT receive
+# `latch/actuator`, so the "a process without the ability gets EPERM" demo
+# does not depend on the shell happening to be untyped root.
+type operator_shell_t;
 
 # 2. Custom Ability Declaration (created at runtime via procmgr_ability_create)
 ability latch/actuator;
@@ -59,6 +63,32 @@ allow latch_ingest_t self:ability {
 allow i2c_t self:ability {
     io
     interrupt
+    pathspace
+    public_channel
+};
+
+# latchlog: read-only evidence tape logger. It needs to open /dev/latch/actuator
+# read-only and issue DCMD_LATCH_DUMP_TAPE. It does NOT hold `latch/actuator`
+# (giving it that would make it a second keyholder and break the story).
+allow latchlog_t self:ability {
+    nonroot
+    pathspace
+    public_channel
+};
+
+# latch_verify: the on-target verification harness. It writes to
+# /dev/latch/proposal and issues devctls on /dev/latch/actuator. It does NOT
+# hold `latch/actuator` either -- its EPERM checks are the demo.
+allow latch_verify_t self:ability {
+    nonroot
+    pathspace
+    public_channel
+};
+
+# The operator shell: an ordinary unprivileged domain with NO `latch/actuator`.
+# `latchctl grant-check` run from this shell must print DENIED.
+allow operator_shell_t self:ability {
+    nonroot
     pathspace
     public_channel
 };
@@ -122,10 +152,12 @@ allow latch_ingest_t latchd_t:channel connect;
 allow latchctl_t latchd_t:channel connect;
 allow latchlog_t latchd_t:channel connect;
 allow latch_verify_t latchd_t:channel connect;
+allow operator_shell_t latchd_t:channel connect;
 
 # Clients of the system log (incl. qvm's `logger` config)
 allow latchd_t slogger2_t:channel connect;
 allow latchctl_t slogger2_t:channel connect;
 allow latchlog_t slogger2_t:channel connect;
 allow latch_verify_t slogger2_t:channel connect;
+allow operator_shell_t slogger2_t:channel connect;
 allow qvm_host_t slogger2_t:channel connect;

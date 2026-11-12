@@ -3,52 +3,142 @@
 #
 # QNX Hypervisor 8.0 Guest Configuration for LATCH on QEMU AArch64 (`virt`, GICv2)
 #
+# TWO SEPARATE MACHINES -- do not mix their maps:
+#
+#   Outer host (QEMU `virt` machine, defined by QEMU hw/arm/virt.c):
+#     RAM          0x40000000   (IFS [image=0x40080000] = base + 0x80000)
+#     GICv2        GICD=0x08000000 GICC=0x08010000   (host: "FOUND GICv2", 288 SPIs)
+#     PL011 UART   0x09000000, IRQ 33 (SPI 1)
+#     virtio-mmio  0x0a000000, size 0x200, SPI 16 (host side only)
+#     virtio-pcie  0x10000000 (PCI MMIO window)
+#
+#   Inner guest (the `qvm` VM, defined by THIS file):
+#     RAM          0x80000000, 512 MB  (guest-physical, differs on purpose)
+#     GICv2        GICD=0x08000000 GICC=0x08010000 (virtual, via `vdev gic`)
+#     PL011        0x1c090000, IRQ 33  (QNX Linux-guest example address)
+#     virtio-console 0x1c0a0000, IRQ 42  (QNX Linux-guest example address)
+#
+# qvm generates the guest FDT from the vdevs listed below. The Linux guest
+# NEVER sees QEMU's DTB and is not attached to QEMU's virtio card.
+#
 # Static CPU & Priority Isolation:
-#   - _cpu-0 : Host `latchd` SCHED_FIFO decision thread (pinned via ThreadCtl)
-#   - _cpu-1 : Host `latch-ingest` byte parser (no `latch/actuator` ability)
-#   - _cpu-2 : Guest vCPU 0 (`cpu _cpu-2 sched 8r`)
-#   - _cpu-3 : Guest vCPU 1 (`cpu _cpu-3 sched 8r`)
+#   - _cpu-0 : Host `latchd` SCHED_FIFO 63 (pinned via ThreadCtl in latchd)
+#   - _cpu-1 : Host `latch-ingest` / `latchlog` / `ksh`
+#   - _cpu-2 : Guest vCPU 0  (`cpu` + `cluster _cpu-2,_cpu-3` + `sched 8r`)
+#   - _cpu-3 : Guest vCPU 1
+#
+# The guest console node is /dev/qvm/latch-policy-guest-qemu-virt/latch_console
+# (control only -- it is NEVER opened as an actuator).
 ################################################################################
 
 system latch-policy-guest-qemu-virt
 
 logger error,fatal,internal,warn,info stderr
 
-# Disable GICv2 hardware-assist on QEMU TCG virt so virtual timer/PPIs deliver cleanly
+# ------------------------------------------------------------------------------
+# QEMU TCG bring-up valves (qvm configuration variables, not vdev-gic switches).
+#
+# psci-supported = on   *** THE CRITICAL ONE ***
+#   qvm auto-detects host PSCI support by reading the HOST device tree. On the
+#   QEMU virt machine the QNX startup cannot fully read QEMU's DTB (the boot
+#   log shows "no clock-frequency property in FDT!"), so auto-detection can
+#   fail and the generated guest FDT gets NO PSCI node. Without PSCI, Linux
+#   6.12 hangs during secondary-CPU bring-up (PSCI CPU_ON) -- which is exactly
+#   where the guest used to stall, immediately after
+#   "cacheinfo: Unable to detect cache hierarchy for CPU 0". QEMU virt DOES
+#   provide PSCI in its DTB, so we assert it explicitly. This is the exact
+#   override the qvm manual describes:
+#     "[aarch64] psci-supported: global, tristate, default = auto ...
+#      if the host does support PSCI but does not provide an appropriate device
+#      tree or entry, this option can be used to override."
+#
+# pointer-authentication = off
+#   The host console prints "# PE does not support PAUTH feature". qvm's own
+#   note: "all physical cpus on which a vCPU may run must support FEAT_PAUTH".
+#   QEMU's TCG A76 does not implement PAUTH, so advertising FEAT_PAUTH to the
+#   guest is wrong. Turning it off removes the warning AND the mismatch.
+#
+# gic-hwassist = off
+#   The host GICv2 has no hardware-assisted virtualization on QEMU virt; the
+#   auto-detected path misbehaves under TCG. (Real variable; default is true.)
+#
+# linux-fdt-free = on
+#   "Enable this variable to allow the FDT provided to the guest to be located
+#   anywhere in guest memory. By default, the FDT is located in the memory
+#   region within 512M of OS image as required prior to linux 4.2." Our RAM
+#   window is exactly 512 MB, so the FDT placement is on the edge; relax it.
+# ------------------------------------------------------------------------------
+set psci-supported on
+set pointer-authentication off
 set gic-hwassist off
+set linux-fdt-free on
 
+# Linux probes ID registers that QEMU TCG does not implement. These are the
+# normal Linux-on-qvm bring-up valves, not a safety feature.
 unsupported instruction ignore
 unsupported reference ignore
 unsupported register ignore
 
+# Guest-physical RAM (512 MB). Not the QEMU virt host map.
 ram 0x80000000,0x20000000
 
-# 2 guest vCPUs at priority 8 round-robin
+# Static vCPU pinning. QNX 8.0 hypervisor `cpu` takes an INDENTED OPTIONS BLOCK;
+# the only two options are `cluster` and `sched` (confirmed against the qvm
+# binary: "Unknown option '%s'" / "Cluster name '%s' not valid").
+# The `cluster` option takes EXACTLY ONE cluster name (the whole
+# whitespace-delimited token) -- a comma-separated list is NOT accepted in 8.0.
+# One `cpu` block per vCPU, each bound to its own single-CPU cluster.
+#
+# The qvm PROCESS itself is started with an unconstrained runmask (see
+# latch_qemu.build) because `on -C <n>` / `on -R <mask>` resolve to a predefined
+# single-CPU cluster, and no predefined cluster covers CPUs 2+3 together.
 cpu
+    cluster _cpu-2
     sched 8r
 cpu
+    cluster _cpu-3
     sched 8r
 
-# Explicit GICv2 with QEMU virt guest-physical addresses
+# Virtual GICv2 (v3-only `gicr` must NOT be set with version 2 -- it aborts qvm)
 vdev gic
     version 2
     gicd 0x08000000
     gicc 0x08010000
 
-# Bind the guest virtio-console byte stream directly to `/proc/boot/latch-ingest`.
-# `name` creates `/dev/qvm/latch-policy-guest/latch_console` for control only;
-# it is never pointed at `/dev/latch/actuator`.
+# Black channel: guest /dev/hvc0 <-> host /proc/boot/latch-ingest over a QNX pipe.
+# `hostdev >"|cmd"` is the documented pipe form; it requires the `pipe` resource
+# manager to be running BEFORE qvm starts.
+#
+# `sched 60` -- the vdev's guest->host forwarding is PULSE-DRIVEN, and the
+# official reference says: "sched priority: Use the priority specified by
+# priority for pulses indicating that input is available on the host device."
+# At the default (low) priority the forward pulse is starved whenever the host
+# is busy -- measured on QEMU TCG, where the host QNX, the guest Linux and
+# latchd (SCHED_FIFO 63) all contend for the same x86 cores. The starved
+# forward showed up on the evidence tape as 16-tick and then 28-tick gaps
+# between guest frames, during which the supervisor's 2-tick watchdog fired,
+# failed closed into HA-HOLD -> HA-HOME, retracted theta, and turned every
+# later frame into a spurious RATE veto. 40 is above the default 10 and
+# below latchd's decision priority 63, so the data path cannot preempt the
+# 1 kHz decision loop.
+#
+# `-p 30f` on the spawned latch-ingest: the pipe reader must drain the pipe
+# promptly, otherwise the vdev's buffer backs up and the same starvation
+# reappears one stage earlier.
 vdev virtio-console
     loc 0x1c0a0000
     intr gic:42
-    hostdev >"|on -T latch_ingest_t /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
+    sched 60
+    hostdev >"|on -T latch_ingest_t -C 1 -p 30f /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
     name latch_console
 
+# Debug PL011 for the guest kernel console (ttyAMA0) -> /dev/shmem/guest_console.log
 vdev pl011
     loc 0x1c090000
     intr gic:33
     hostdev >/dev/shmem/guest_console.log
 
+# Linux 6.12 AArch64 kernel Image + freestanding /init initramfs
 load 0x80080000,/proc/boot/linux-guest.Image
 initrd load /proc/boot/linux-guest.initrd
 cmdline "earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8"

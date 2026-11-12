@@ -216,6 +216,17 @@ def main() -> int:
                         v_step = min(10, v_max // 2)
         except Exception as e:
             sys.stderr.write(f"Warning: could not parse manifest: {e}\n")
+    elif args.mode == "suite":
+        # Zero-hardcoding rule for a NEW plant: the suite geometry must come
+        # from the manifest or from an explicit flag. Silently defaulting the
+        # keep-out target to 450 would let a suite run against a plant whose
+        # keep-out box is somewhere else entirely -- the frames would simply
+        # not hit the box, and the fault would silently not fire.
+        sys.stderr.write(
+            "liar.py: suite mode needs the plant geometry. Pass --manifest <manifest> "
+            "or --keepout-val <mrad> (and --v-step <mrad>).\n"
+        )
+        return 2
 
     if args.mode == "suite":
         frames = generate_suite_frames(keepout_target=keepout_target, v_step=v_step)

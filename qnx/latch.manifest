@@ -33,7 +33,7 @@
     "period_us": 1000,
     "watchdog_ticks": 2,
     "wcet_budget_us": 100,
-    "max_backlog_ticks": 4
+    "max_backlog_ticks": 256
   },
   "recovery": {
     "hysteresis_clean_frames": 25,
@@ -47,7 +47,7 @@
   "ingest": {
     "cpu": 1,
     "delivery": "queued",
-    "queue_depth": 64
+    "queue_depth": 256
   },
   "paths": {
     "proposal": "/dev/latch/proposal",
@@ -68,7 +68,8 @@
     "required": false
   },
   "tape": {
-    "capacity": 4096
+    "capacity": 4096,
+    "log_path": "/dev/shmem/latch_tape.csv"
   },
   "protocol": {
     "magic": "LATH",

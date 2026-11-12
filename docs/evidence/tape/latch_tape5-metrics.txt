@@ -1,0 +1,54 @@
+==============================================================================
+LATCH on-target tape analysis -- latch_tape5
+==============================================================================
+Source       : /tmp/latch_tape5.log
+Tape rows    : 168257 total (ticks 9668..177924)
+Suite window : ticks 9668..9862 (195 ticks of actual frame traffic)
+Post-suite   : 168062 ticks of the guest's DESIGNED silence (phase 9)
+Keep-out     : [250, 650] mrad
+
+Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         20 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     109 ticks
+
+Fault-bit histogram -- over the whole captured tape (the post-suite tail is the guest's designed silence)
+  0x0002  CRC                          4 ticks
+  0x0008  NAN                          4 ticks
+  0x0080  RATE                         20 ticks
+  0x00A0  KEEPOUT | RATE               7 ticks
+  0x0100  WATCHDOG                     168171 ticks
+
+Mode timeline (first 12 transitions)
+  tick 9668     HP
+  tick 9694     HOLD
+  tick 9743     HOME
+  tick 9744     HOLD
+  tick 9793     HOME
+  tick 9794     HOLD
+  tick 9843     HOME
+  tick 9855     HOLD
+
+HA-HOME retraction : 14 rows, theta -140 -> -10 mrad, monotonic=True
+Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
+Max accepted seq   : 57  (highest sequence applied with no fault latched)
+Max seq observed   : 80
+Max latency (cycles): 58985
+
+Starvation stalls (runs of supervisor ticks with NO new frame consumed)
+  These are the transport defect's signature: the supervisor's
+  2-tick watchdog fires inside a stall, fails closed into HA-HOLD,
+  and retracts theta -- turning every later frame into a spurious
+  RATE veto. A healthy run has none.
+  9 stall(s):
+    ticks 9693..9716  (23 ticks stalled at seq=25)
+    ticks 9724..9741  (17 ticks stalled at seq=25)
+    ticks 9766..9772  (6 ticks stalled at seq=57)
+    ticks 9778..9793  (15 ticks stalled at seq=57)
+    ticks 9794..9797  (3 ticks stalled at seq=0)
+    ticks 9798..9817  (19 ticks stalled at seq=57)
+    ticks 9822..9830  (8 ticks stalled at seq=57)
+    ticks 9843..9858  (15 ticks stalled at seq=57)
+    ticks 9859..9862  (3 ticks stalled at seq=80)

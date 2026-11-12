@@ -1,0 +1,29 @@
+==============================================================================
+LATCH on-target tape analysis -- 20261112-205054
+==============================================================================
+Source       : on-target console
+Tape rows    : 128 total (ticks 224524..224651)
+Suite window : ticks 224524..224524 (1 ticks of actual frame traffic)
+Post-suite   : 127 ticks of the guest's DESIGNED silence (phase 9)
+Keep-out     : [250, 650] mrad
+
+Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
+  (none)
+
+Fault-bit histogram -- over the whole captured tape (the post-suite tail is the guest's designed silence)
+  (none)
+
+Mode timeline (first 12 transitions)
+  tick 224524   HOLD
+
+Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
+Max accepted seq   : 4  (highest sequence applied with no fault latched)
+Max seq observed   : 4
+Max latency (cycles): 471
+
+Starvation stalls (runs of supervisor ticks with NO new frame consumed)
+  These are the transport defect's signature: the supervisor's
+  2-tick watchdog fires inside a stall, fails closed into HA-HOLD,
+  and retracts theta -- turning every later frame into a spurious
+  RATE veto. A healthy run has none.
+  none -- the supervisor was fed continuously

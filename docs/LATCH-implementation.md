@@ -24,7 +24,7 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 |  QNX 8.0 INGESTION BRIDGE (`latch-ingest`)                                            |
 |  - Reads wire proposals from standard input                                           |
 |  - Performs zero-copy unbuffered writes to `/dev/latch/proposal`                      |
-|  - Paces frame writes to match target decision tick period (1 kHz nominal)            |
+|  - Hands frames to the supervisor as fast as the transport delivers them (no artificial delay) |
 +---------------------------------------------------------------------------------------+
                                           |
                                           | (QNX Resource Manager `io_write`)
@@ -146,7 +146,7 @@ The session lifecycle was refactored into a two-phase decoupled handshake:
        st->last_rx_cycles = cycles_in;
    }
    ```
-3. **Pacing in Bridge**: `latch_ingest.c` defers opening `/dev/latch/proposal` until the first valid 32-byte wire frame is read from `stdin`, and paces consecutive writes at $0.5 \times T_{\text{period}}$.
+3. **No artificial pacing in the bridge**: `latch_ingest.c` defers opening `/dev/latch/proposal` until the first valid 32-byte wire frame is read from `stdin`, and then hands each frame to the supervisor as fast as the transport delivers it. The supervisor's ring, bounded by the manifest's `ingest.queue_depth`, is the only buffer in the path. A previous revision slept $0.5 \times T_{\text{period}}$ between writes; on QEMU AArch64 `virt` that let the supervisor's 2-tick watchdog fire while the guest's next batch was still in flight, which failed closed into HA-HOLD $\rightarrow$ HA-HOME, retracted $\theta$, and turned every later frame into a spurious RATE veto (48 envelope vetoes where 7 are correct). The guest's burst is now bounded by `ingest.queue_depth` and asserted across files by `tools/consistency_check.py`.
 
 ### 3.4 Telemetry Proof
 Under the new lifecycle:
@@ -174,7 +174,7 @@ LATCH enforces strict zero-hardcoding. All parameters, constraints, and hardware
 | **Forbidden Keep-Out** | `[+250, +650]` (`PERSON`) | `[+4200, +5000]` (`ENDSTOP_BUFFER`) |
 | **Actuator Hardware** | PCA9685 PWM (`0x40`, `50 Hz`, `205..410` counts) | PCA9685 PWM (`0x40`, `50 Hz`, `205..410` counts) |
 | **Watchdog Budget** | `2` ticks (`2 ms` at `1000 us` period) | `2` ticks (`2 ms` at `1000 us` period) |
-| **Attestation Hash** | `135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06` | `36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3` |
+| **Attestation Hash** | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` | `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e` |
 
 Both contracts validate with 100% cryptographic integrity using native NIST FIPS 180-2 SHA-256 sidecars.
 
@@ -197,4 +197,32 @@ Validation across host simulation and QNX target environments:
 - **I2C Actuation**: `/dev/i2c1` via `i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1` (`GIC_SPI 117 + 32 = IRQ 149`)
 - **Hypervisor Support**: `/lib/dll/qvm` packaged into `/proc/boot` with `latch.qvmconf` (`gicd 0xff841000`, `gicc 0xff842000`; QEMU virt uses `latch_qemu_virt.qvmconf` with `0x08000000`, `0x08010000`).
 - **Real-Time Actuator Safety**: Fail-closed exit if PCA9685 fails initialization while `actuator.required == true`.
+
+### 5.3 QEMU AArch64 `virt` — the demonstrated target
+
+This is the target the submission demonstrates on, and the only one with a
+committed evidence trail.
+
+| Property | Value |
+|---|---|
+| Guest OS | Linux 6.12 (AArch64), freestanding static `/init`, no libc/shell/Python |
+| Host | QNX Neutrino RTOS 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0 (`qvm`), EL2 VHE |
+| Machine | QEMU `virt`, 4x Cortex-A76, GICv2 (`0x08000000`/`0x08010000`), 62.5 MHz architectural timer |
+| Accel | **TCG** (the host is x86_64, so there is no KVM for AArch64) |
+| Actuation | `latchd -n` — **mock I²C**. There is no PCA9685 on this machine and **the horn does not move**. |
+| Guest suite | 84 frames · 12 wire faults · 7 envelope vetoes · 0 ring drops · last accepted seq 80 · latched `0x01AE` |
+| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` |
+| Evidence | `docs/evidence/` — every run's raw console, with an index and a run-output manifest |
+
+The full on-target evidence is archived in `docs/evidence/`, indexed by
+`docs/evidence/README.md`. The canonical artefact is
+`docs/evidence/on-target/09-canonical-session.txt`; the defect record is in
+`docs/evidence/resolution/SUMMARY.md`.
+
+**Note on the latency figures.** Section 5.1's numbers are from an x86_64
+QNX VM. The AArch64 `virt` figures are measured under **TCG** — software
+emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The
+project reports the **last** and the **max** decision latency, in cycles and in
+nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the
+machine. See `docs/evidence/derived/on-target-numbers.txt`.
 

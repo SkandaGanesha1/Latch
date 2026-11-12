@@ -1,0 +1,37 @@
+==============================================================================
+LATCH resolution proof -- 02-vcpu-pin-syntax
+==============================================================================
+DEFECT 2 -- the QNX 8.0 `cpu` syntax
+
+SYMPTOM
+  Two different failures from the same line of the qvmconf:
+    - the Hypervisor 7.1 one-line form 'cpu _cpu-2 sched 8r' is
+      REJECTED by the 8.0 qvm with "Unknown option '_cpu-2'";
+    - a bare 'cpu' block with a floating 'sched 8r' line is ACCEPTED
+      but leaves the vCPU FLOATING on every core -- including the one
+      latchd runs on.
+
+MECHANISM
+  QNX Hypervisor 8.0's `cpu` takes an INDENTED OPTIONS BLOCK whose
+  only two options are `cluster` and `sched`. `cluster` takes exactly
+  ONE name; a comma-separated list is parsed as a single token and
+  rejected.
+
+FIX
+  One `cpu` block per vCPU, each bound to its own single-CPU cluster:
+
+      cpu
+          cluster _cpu-2
+          sched 8r
+      cpu
+          cluster _cpu-3
+          sched 8r
+
+PROOF
+  'pidin -p qvm threads' on the target reports the guest vCPU
+  threads as 'cy-guest-qemu-virt/0' and 'cy-guest-qemu-virt/1' --
+  two distinct, pinned threads, not one floating thread.
+
+  The archived proof is in
+  docs/evidence/on-target/09-canonical-session.txt, in the
+  'pidin -p qvm threads' section.
