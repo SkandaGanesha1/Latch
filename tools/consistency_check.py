@@ -3,8 +3,8 @@
 tools/consistency_check.py — LATCH Production Cross-File Invariant & Metadata Consistency Verifier.
 
 Asserts zero architectural drift between:
-  - qnx/latch.manifest
-  - qnx/latch.manifest.sha256
+  - qnx/latch.manifest & sidecar
+  - qnx/contracts/syringe_pump_bolus.manifest & sidecar
   - qnx/latch_protocol.h
   - qnx/latch_qemu.build
   - qnx/latch_rpi4.build
@@ -32,22 +32,12 @@ def pass_check(msg: str):
     print(f"[CONSISTENCY PASS] {msg}")
 
 
-def main():
-    print("=== LATCH Architectural Consistency & Invariant Verification ===")
+def verify_manifest_sidecar(manifest_path: str, sha256_path: str, label: str):
+    if not os.path.isfile(manifest_path):
+        fail(f"Manifest missing for {label}: {manifest_path}")
+    if not os.path.isfile(sha256_path):
+        fail(f"SHA-256 sidecar missing for {label}: {sha256_path}")
 
-    manifest_path = os.path.join(REPO_ROOT, "qnx", "latch.manifest")
-    sha256_path = os.path.join(REPO_ROOT, "qnx", "latch.manifest.sha256")
-    header_path = os.path.join(REPO_ROOT, "qnx", "latch_protocol.h")
-    qemu_build_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu.build")
-    rpi4_build_path = os.path.join(REPO_ROOT, "qnx", "latch_rpi4.build")
-    secpol_path = os.path.join(REPO_ROOT, "qnx", "latch.secpol")
-    qvmconf_path = os.path.join(REPO_ROOT, "qnx", "latch.qvmconf")
-
-    for p in [manifest_path, sha256_path, header_path, qemu_build_path, rpi4_build_path, secpol_path, qvmconf_path]:
-        if not os.path.isfile(p):
-            fail(f"Required artifact missing: {p}")
-
-    # 1. Verify Manifest Content & SHA-256 Sidecar
     with open(manifest_path, "rb") as f:
         manifest_bytes = f.read()
     computed_sha = hashlib.sha256(manifest_bytes).hexdigest()
@@ -56,8 +46,31 @@ def main():
         sidecar_content = f.read().strip().split()[0]
 
     if computed_sha.lower() != sidecar_content.lower():
-        fail(f"Manifest SHA-256 mismatch: computed {computed_sha} != sidecar {sidecar_content}")
-    pass_check(f"Manifest sidecar SHA-256 match verified: {computed_sha}")
+        fail(f"{label} SHA-256 mismatch: computed {computed_sha} != sidecar {sidecar_content}")
+    pass_check(f"{label} sidecar SHA-256 match verified: {computed_sha}")
+
+
+def main():
+    print("=== LATCH Architectural Consistency & Invariant Verification ===")
+
+    manifest_path = os.path.join(REPO_ROOT, "qnx", "latch.manifest")
+    sha256_path = os.path.join(REPO_ROOT, "qnx", "latch.manifest.sha256")
+    syringe_manifest_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_pump_bolus.manifest")
+    syringe_sha256_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_pump_bolus.manifest.sha256")
+    header_path = os.path.join(REPO_ROOT, "qnx", "latch_protocol.h")
+    qemu_build_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu.build")
+    rpi4_build_path = os.path.join(REPO_ROOT, "qnx", "latch_rpi4.build")
+    secpol_path = os.path.join(REPO_ROOT, "qnx", "latch.secpol")
+    qvmconf_path = os.path.join(REPO_ROOT, "qnx", "latch.qvmconf")
+
+    for p in [manifest_path, sha256_path, syringe_manifest_path, syringe_sha256_path,
+              header_path, qemu_build_path, rpi4_build_path, secpol_path, qvmconf_path]:
+        if not os.path.isfile(p):
+            fail(f"Required artifact missing: {p}")
+
+    # 1. Verify Manifest Content & SHA-256 Sidecars
+    verify_manifest_sidecar(manifest_path, sha256_path, "Default Plant (latch.manifest)")
+    verify_manifest_sidecar(syringe_manifest_path, syringe_sha256_path, "Medical Syringe Plant")
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
@@ -101,7 +114,9 @@ def main():
         fail("qnx/latch_qemu.build missing libqvm.so.1 shared library")
     if "latch.manifest.sha256" not in qemu_build:
         fail("qnx/latch_qemu.build missing latch.manifest.sha256 payload")
-    pass_check("QEMU virt buildfile EL2 hypervisor flags, vdev DLL paths & sidecar verified")
+    if "latch_verify" not in qemu_build:
+        fail("qnx/latch_qemu.build missing latch_verify target binary")
+    pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, latch_verify & sidecar verified")
 
     # 4. Verify RPi4 Buildfile Configuration
     with open(rpi4_build_path, "r", encoding="utf-8") as f:
@@ -109,11 +124,15 @@ def main():
 
     if "-Q enable" not in rpi4_build:
         fail("qnx/latch_rpi4.build startup does not pass '-Q enable'")
-    if "i2c-bcm2711" not in rpi4_build:
-        fail("qnx/latch_rpi4.build missing i2c-bcm2711 driver startup")
+    if "i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1" not in rpi4_build:
+        fail("qnx/latch_rpi4.build missing exact i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1 parameters")
+    if ":/lib/dll/qvm" not in rpi4_build:
+        fail("qnx/latch_rpi4.build LD_LIBRARY_PATH missing :/lib/dll/qvm")
     if "latch.manifest.sha256" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing latch.manifest.sha256 payload")
-    pass_check("RPi4 buildfile BCM2711 peripheral parameters & sidecar verified")
+    if "latch_verify" not in rpi4_build:
+        fail("qnx/latch_rpi4.build missing latch_verify target binary")
+    pass_check("RPi4 buildfile BCM2711 I2C, LD_LIBRARY_PATH, latch_verify & sidecar verified")
 
     # 5. Verify Security Policy Enforcements
     with open(secpol_path, "r", encoding="utf-8") as f:
@@ -135,7 +154,9 @@ def main():
 
     if "virtio-console" not in qvmconf:
         fail("qnx/latch.qvmconf missing virtio-console device definition")
-    pass_check("Hypervisor qvm guest configuration verified")
+    if "-m /proc/boot/latch.manifest" not in qvmconf:
+        fail("qnx/latch.qvmconf ingest hostdev does not pass '-m /proc/boot/latch.manifest'")
+    pass_check("Hypervisor qvm guest configuration & manifest binding verified")
 
     print("\n[SUCCESS] All architectural consistency checks PASSED with 0 errors.")
 

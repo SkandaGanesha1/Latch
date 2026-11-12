@@ -216,8 +216,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Try to read manifest if present to auto-configure paths/CPU */
+    /* Initialize manifest defaults first, then load if present */
     latch_manifest_t manifest;
+    latch_manifest_init_defaults(&manifest);
     char err_buf[256];
     if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) == 0) {
         target_cpu = manifest.ingest.cpu;
@@ -241,17 +242,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    int out_fd = STDOUT_FILENO;
-    if (strcmp(proposal_path, "-") != 0) {
-        out_fd = open(proposal_path, O_WRONLY);
-        if (out_fd < 0) {
-            perror("latch-ingest: open /dev/latch/proposal");
-            if (in_fd != STDIN_FILENO) {
-                close(in_fd);
-            }
-            return EXIT_FAILURE;
-        }
-    }
+    bool is_stdout = (strcmp(proposal_path, "-") == 0);
+    int out_fd = is_stdout ? STDOUT_FILENO : -1;
 
 #ifdef __QNXNTO__
     /* Drop and lock all abilities: latch-ingest only parses wire frames and writes to proposal pipe */
@@ -282,6 +274,18 @@ int main(int argc, char *argv[]) {
             silence_ticks++;
         }
 
+        /* Deferred open: open proposal node only when first wire frame is ready */
+        if (out_fd < 0) {
+            out_fd = open(proposal_path, O_WRONLY);
+            if (out_fd < 0) {
+                perror("latch-ingest: open /dev/latch/proposal");
+                if (in_fd != STDIN_FILENO) {
+                    close(in_fd);
+                }
+                return EXIT_FAILURE;
+            }
+        }
+
         if (verbose) {
             if (ipc_prop.pre_fault_bits == 0u) {
                 fprintf(stderr, "[latch-ingest] Frame #%-3u: seq=%-3u u=%+5d mrad -> FORWARDED\n",
@@ -296,27 +300,29 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        /* 32-frame burst prefill followed by 1 ms pacing when writing to device node */
-        if (out_fd != STDOUT_FILENO && total_frames > LATCH_INGEST_PREFILL_FRAMES) {
-            uint32_t pace_us = (manifest.timing.period_us > 0) ? manifest.timing.period_us : 1000u;
+        /* 32-frame burst prefill followed by 0.5 * period_us pacing when writing to device node */
+        if (!is_stdout && total_frames > LATCH_INGEST_PREFILL_FRAMES) {
+            uint32_t pace_us = (manifest.timing.period_us > 0) ? (manifest.timing.period_us / 2u) : 500u;
             usleep(pace_us);
         }
     }
 
     /* Wait for latchd to drain queued proposals before closing channel */
-    if (out_fd != STDOUT_FILENO) {
-        usleep(15000); /* 15 ms drain wait */
+    if (!is_stdout && out_fd >= 0) {
+        uint32_t drain_wait_us = (manifest.ingest.queue_depth + 10u) * manifest.timing.period_us;
+        if (drain_wait_us < 75000u) drain_wait_us = 75000u;
+        usleep(drain_wait_us);
     }
 
     uint32_t nominal_forwarded = (total_frames >= wire_faults + silence_ticks)
                                      ? (total_frames - wire_faults - silence_ticks)
                                      : 0u;
-    if (verbose || out_fd != STDOUT_FILENO) {
+    if (verbose || !is_stdout) {
         fprintf(stderr, "[latch-ingest] Completed: %u frames processed (%u nominal forwarded, %u silence ticks, %u wire faults sanitized) -> %s\n",
                 total_frames, nominal_forwarded, silence_ticks, wire_faults, proposal_path);
     }
 
-    if (out_fd != STDOUT_FILENO) {
+    if (!is_stdout && out_fd >= 0) {
         close(out_fd);
     }
     if (in_fd != STDIN_FILENO) {

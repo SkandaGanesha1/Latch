@@ -24,6 +24,11 @@ else ifeq ($(TARGET),x86_64)
     CFLAGS     := -Vgcc_ntox86_64 -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
     LDFLAGS    := -Vgcc_ntox86_64 -Wl,-z,relro,-z,now
     OUT_DIR    := $(BUILD_DIR)/nto-x86_64-o
+else ifeq ($(TARGET),native)
+    CC         := gcc
+    CFLAGS     := -std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
+    LDFLAGS    := -lm
+    OUT_DIR    := $(BUILD_DIR)/native
 else ifeq ($(TARGET),host-sim)
     CC         := gcc
     CFLAGS     := -std=c11 $(COMMON_CFLAGS) -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM
@@ -40,7 +45,7 @@ LATCHLOG_BIN  := $(OUT_DIR)/latchlog
 VERIFY_BIN    := $(OUT_DIR)/latch_verify
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 
-.PHONY: all rpi4 x86_64 host-sim check clean dirs qemu
+.PHONY: all rpi4 x86_64 native host-sim check clean dirs qemu
 
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN)
 
@@ -71,6 +76,9 @@ rpi4:
 x86_64:
 	@$(MAKE) --no-print-directory TARGET=x86_64 all
 
+native:
+	@$(MAKE) --no-print-directory TARGET=native all
+
 host-sim:
 	@$(MAKE) --no-print-directory TARGET=host-sim all
 
@@ -78,6 +86,10 @@ check: host-sim
 	./$(BUILD_DIR)/host-sim/latchd -m latch.manifest
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify latch.manifest
 	python3 ../guest/liar.py suite --raw-stdout | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv
+
+demo-syringe: host-sim
+	./$(BUILD_DIR)/host-sim/latchd -m contracts/syringe_pump_bolus.manifest
+	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/syringe_pump_bolus.manifest 36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3
 
 secpol: | dirs
 	secpolc -v -o $(BUILD_DIR)/secpol.bin latch.secpol

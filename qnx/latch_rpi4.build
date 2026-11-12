@@ -17,7 +17,7 @@
 [virtual=aarch64le,raw] boot = {
     startup-bcm2711-rpi4 -v -Q enable,el1-host -r 0,4096,1
     PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
-    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/lib/dll/qvm
     procnto-smp-instr -v
 }
 
@@ -38,7 +38,7 @@
     secpollaunch -e /proc/boot/secpol.bin
 
     # 3. BSP I2C1 driver for PCA9685 servo controller at 0x40
-    i2c-bcm2711 -p 0xfe804000 --intr=181 -c 400000 --u1
+    i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1
     waitfor /dev/i2c1 4
 
     # 4. Start latchd on _cpu-0 (creates ability "latch/actuator", attaches
@@ -86,6 +86,7 @@ libqvm.so.1
 [perms=0755] waitfor
 
 [uid=0 gid=0 perms=0750] /proc/boot/latchd = latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = latch_verify
 [uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = latch-ingest
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog

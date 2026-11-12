@@ -76,6 +76,7 @@ libqvm.so.1
 [perms=0755] waitfor
 
 [uid=0 gid=0 perms=0750] /proc/boot/latchd = latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = latch_verify
 [uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = latch-ingest
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog

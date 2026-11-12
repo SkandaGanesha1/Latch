@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, latch_log_sig_handler);
     signal(SIGTERM, latch_log_sig_handler);
 
-    int fd = open(dev_path, O_RDWR);
+    int fd = open(dev_path, O_RDONLY);
     if (fd < 0) {
         fprintf(stderr, "latchlog: Cannot open '%s': %s\n", dev_path, strerror(errno));
         return EXIT_FAILURE;

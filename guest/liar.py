@@ -68,11 +68,11 @@ def pack_wire_frame(
     )
 
 
-def generate_suite_frames() -> list:
+def generate_suite_frames(keepout_target: int = 450, v_step: int = 10) -> list:
     """
     Generates a deterministic 200-tick verification sequence:
       - Ticks 1..25   : Nominal tracking (0 -> -150 mrad, smooth steps <= 10 mrad/tick)
-      - Ticks 26..32  : Fault #1 — Keep-out box proposal (+450 mrad inside [250, 650])
+      - Ticks 26..32  : Fault #1 — Keep-out box proposal (keepout_target inside keepout zone)
       - Ticks 33..62  : 25-clean-frame hysteresis recovery at -150 mrad, then step to -180 mrad
       - Ticks 63..66  : Fault #2 — CRC bit-flip corruption on the wire
       - Ticks 67..70  : NaN sentinel fault (u_mrad = INT32_MIN)
@@ -91,13 +91,13 @@ def generate_suite_frames() -> list:
     # 1. Ticks 1..25: Nominal tracking in HP mode
     for t in range(1, 26):
         if theta > -150:
-            theta -= 10
+            theta -= v_step
         frames.append(pack_wire_frame(seq=seq, u_mrad=theta))
         seq += 1
 
-    # 2. Ticks 26..32: Fault #1 — Keep-out violation (+450 mrad inside [250, 650])
+    # 2. Ticks 26..32: Fault #1 — Keep-out violation
     for t in range(26, 33):
-        frames.append(pack_wire_frame(seq=seq, u_mrad=450))
+        frames.append(pack_wire_frame(seq=seq, u_mrad=keepout_target))
         seq += 1
 
     # 3. Ticks 33..57: 25 consecutive clean frames at current held pose (-150 mrad)
@@ -108,7 +108,7 @@ def generate_suite_frames() -> list:
     # 4. Ticks 58..62: Restored HP mode tracking (-150 -> -180 mrad)
     for t in range(58, 63):
         if theta > -180:
-            theta -= 10
+            theta -= v_step
         frames.append(pack_wire_frame(seq=seq, u_mrad=theta))
         seq += 1
 
@@ -165,8 +165,8 @@ def main() -> int:
     parser.add_argument(
         "--period-ms",
         type=float,
-        default=1.0,
-        help="Sleep interval between frames in ms (default: 1.0 ms for 1 kHz paced execution; 0.0 for burst stress test)",
+        default=None,
+        help="Sleep interval between frames in ms (default: 0.0 ms for stdout/piped streaming; 1.0 ms for device nodes)",
     )
     parser.add_argument(
         "--manifest",
@@ -185,7 +185,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.period_ms is None:
+        args.period_ms = 0.0 if (args.device == "-" or args.raw_stdout) else 1.0
+
     keepout_target = 450
+    v_step = 10
     if args.manifest and os.path.exists(args.manifest):
         try:
             with open(args.manifest, "r") as mf:
@@ -193,11 +197,14 @@ def main() -> int:
                 klist = mdata.get("envelope", {}).get("keepout", [])
                 if klist:
                     keepout_target = (klist[0].get("lo_mrad", 250) + klist[0].get("hi_mrad", 650)) // 2
+                v_max = mdata.get("envelope", {}).get("v_max", 25)
+                if v_max > 0:
+                    v_step = min(10, v_max // 2)
         except Exception as e:
             sys.stderr.write(f"Warning: could not parse manifest: {e}\n")
 
     if args.mode == "suite":
-        frames = generate_suite_frames()
+        frames = generate_suite_frames(keepout_target=keepout_target, v_step=v_step)
     else:
         frames = []
         seq = 1

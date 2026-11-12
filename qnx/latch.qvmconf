@@ -35,7 +35,7 @@ vdev gic
 vdev virtio-console
     loc 0x1c0a0000
     intr gic:42
-    hostdev >"|/proc/boot/latch-ingest"
+    hostdev >"|/proc/boot/latch-ingest -m /proc/boot/latch.manifest"
     name latch_console
 
 # Optional shared-memory transport (Week 4+ only if byte pipe is too slow):

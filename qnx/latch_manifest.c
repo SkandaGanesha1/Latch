@@ -366,6 +366,24 @@ static const char *json_find_key(const char *json, const char *key) {
     return skip_ws(p);
 }
 
+static const char *json_find_key_bounded(const char *start, const char *end, const char *key) {
+    if (!start || !end || start >= end || !key) return NULL;
+    char target[128];
+    snprintf(target, sizeof(target), "\"%s\"", key);
+    size_t tlen = strlen(target);
+    size_t span = (size_t)(end - start);
+    if (tlen > span) return NULL;
+
+    for (const char *p = start; p <= end - tlen; ++p) {
+        if (strncmp(p, target, tlen) == 0) {
+            const char *val = skip_ws(p + tlen);
+            if (val < end) return val;
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex, char *err_buf, size_t err_len) {
     if (manifest_path == NULL || computed_hex == NULL) {
         if (err_buf) snprintf(err_buf, err_len, "Invalid arguments to sidecar verification");
@@ -464,6 +482,13 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
         return -1;
     }
 
+    /* Validate mandatory sections: envelope and timing must be present (Fail-Closed) */
+    if (json_find_key(buf, "envelope") == NULL || json_find_key(buf, "timing") == NULL) {
+        free(buf);
+        if (err_buf) snprintf(err_buf, err_len, "Manifest missing mandatory 'envelope' or 'timing' section (Fail-Closed)");
+        return -EINVAL;
+    }
+
     const char *p;
 
     /* Parse schema_version */
@@ -489,12 +514,14 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
             while (*p && *p != ']' && out_m->num_axes < LATCH_MAX_AXES) {
                 const char *obj = strchr(p, '{');
                 if (!obj) break;
+                const char *obj_end = strchr(obj, '}');
+                if (!obj_end) break;
                 uint32_t idx = out_m->num_axes;
-                const char *id_ptr   = json_find_key(obj, "id");
-                const char *kind_ptr = json_find_key(obj, "kind");
-                const char *unit_ptr = json_find_key(obj, "unit");
-                const char *min_ptr  = json_find_key(obj, "min");
-                const char *max_ptr  = json_find_key(obj, "max");
+                const char *id_ptr   = json_find_key_bounded(obj, obj_end, "id");
+                const char *kind_ptr = json_find_key_bounded(obj, obj_end, "kind");
+                const char *unit_ptr = json_find_key_bounded(obj, obj_end, "unit");
+                const char *min_ptr  = json_find_key_bounded(obj, obj_end, "min");
+                const char *max_ptr  = json_find_key_bounded(obj, obj_end, "max");
                 if (id_ptr)   json_match_uint32(&id_ptr, &out_m->axes[idx].id);
                 if (kind_ptr) json_match_str(&kind_ptr, out_m->axes[idx].kind, sizeof(out_m->axes[idx].kind));
                 if (unit_ptr) json_match_str(&unit_ptr, out_m->axes[idx].unit, sizeof(out_m->axes[idx].unit));
@@ -502,9 +529,7 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
                 if (max_ptr)  json_match_int32(&max_ptr, &out_m->axes[idx].max);
                 out_m->axes[idx].fullscale_counts_span = out_m->axes[idx].max - out_m->axes[idx].min;
                 out_m->num_axes++;
-                p = strchr(obj, '}');
-                if (!p) break;
-                p++;
+                p = obj_end + 1;
             }
         }
     }
@@ -528,9 +553,11 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
             while (*p && *p != ']' && out_m->envelope.num_keepouts < LATCH_MAX_KEEPOUTS) {
                 const char *obj = strchr(p, '{');
                 if (!obj) break;
-                const char *lo_ptr = json_find_key(obj, "lo_mrad");
-                const char *hi_ptr = json_find_key(obj, "hi_mrad");
-                const char *lb_ptr = json_find_key(obj, "label");
+                const char *obj_end = strchr(obj, '}');
+                if (!obj_end) break;
+                const char *lo_ptr = json_find_key_bounded(obj, obj_end, "lo_mrad");
+                const char *hi_ptr = json_find_key_bounded(obj, obj_end, "hi_mrad");
+                const char *lb_ptr = json_find_key_bounded(obj, obj_end, "label");
 
                 if (lo_ptr && hi_ptr) {
                     uint32_t idx = out_m->envelope.num_keepouts;
@@ -542,9 +569,7 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
                     }
                     out_m->envelope.num_keepouts++;
                 }
-                p = strchr(obj, '}');
-                if (!p) break;
-                p++;
+                p = obj_end + 1;
             }
         }
     }

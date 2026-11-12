@@ -250,7 +250,7 @@ int main(int argc, char *argv[]) {
         return do_manifest_verify(mpath, exp_sha);
     }
 
-    int oflag = (strcmp(cmd, "hold") == 0 || strcmp(cmd, "grant-check") == 0) ? O_RDWR : O_RDONLY;
+    int oflag = (strcmp(cmd, "hold") == 0) ? O_RDWR : O_RDONLY;
     int fd = open(dev_path, oflag);
     if (fd < 0) {
         if (strcmp(cmd, "grant-check") == 0 && (errno == EPERM || errno == EACCES)) {

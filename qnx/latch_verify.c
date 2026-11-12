@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        uint32_t seq = (st_init.last_seq > 0u) ? st_init.last_seq : 0u;
+        uint32_t seq = 0u;
 
         /* 1. Nominal tracking in HP mode: step smoothly from 0 to -100 mrad */
         for (uint32_t i = 1; i <= 10; ++i) {

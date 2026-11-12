@@ -130,6 +130,8 @@ typedef struct latch_simplex_state {
     _Atomic uint32_t total_eperm_rejects;
     _Atomic uint32_t operator_hold_locked;
     _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
+    _Atomic uint32_t session_reset_pending; /* Armed by latch_io_open(), consumed by tick */
+    _Atomic uint32_t open_writers;          /* Active writer reference count */
 
     int            i2c_fd;
     uint32_t       period_ns;
@@ -235,6 +237,16 @@ static bool latch_consume_proposal(latch_publish_buffer_t *buf,
         if (t < h) {
             uint32_t slot_idx = t % LATCH_PUB_RING_SIZE;
             const latch_seqlock_slot_t *slot = &buf->slots[slot_idx];
+            for (int tries = 0; tries < 4; tries++) {
+                uint32_t g1 = atomic_load_explicit(&slot->gen, memory_order_acquire);
+                if ((g1 & 1u) != 0u) continue;
+                *out_prop = slot->proposal;
+                uint32_t g2 = atomic_load_explicit(&slot->gen, memory_order_acquire);
+                if (g1 == g2) {
+                    atomic_store_explicit(&buf->read_tail, t + 1u, memory_order_release);
+                    return true;
+                }
+            }
             *out_prop = slot->proposal;
             atomic_store_explicit(&buf->read_tail, t + 1u, memory_order_release);
             return true;
@@ -519,8 +531,10 @@ static void latch_record_tape(uint64_t tick,
                               int32_t theta_applied,
                               uint16_t mode,
                               uint16_t fault_bits) {
+    uint32_t cap = g_manifest.tape.capacity;
+    if (cap == 0u || cap > LATCH_TAPE_CAPACITY) cap = LATCH_TAPE_CAPACITY;
     uint32_t idx = atomic_load_explicit(&g_tape_write_idx, memory_order_relaxed);
-    latch_tape_entry_t *slot = &g_latch_tape[idx & LATCH_TAPE_MASK];
+    latch_tape_entry_t *slot = &g_latch_tape[idx % cap];
 
     slot->tick          = tick;
     slot->cycles_in     = cycles_in;
@@ -545,9 +559,26 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
 
     if (has_new) {
         st->total_proposals_rx++;
-        st->session_active = true;
-        st->retracted_home = false;
-        st->tape_frozen    = false;
+        if (atomic_exchange_explicit(&st->session_reset_pending, 0u, memory_order_acq_rel) != 0u || !st->session_active) {
+            st->mode               = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
+                                         ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
+            st->session_active     = true;
+            st->retracted_home     = false;
+            st->tape_frozen        = false;
+            st->active_faults      = 0u;
+            st->last_seq           = 0u;
+            st->theta_mrad         = g_manifest.envelope.home_mrad;
+            st->velocity_mrad_tick = 0;
+            st->accel_mrad_tick2   = 0;
+            st->hold_ticks_elapsed = 0u;
+            st->clean_streak       = 0u;
+            st->last_rx_tick       = st->tick;
+            st->last_rx_cycles     = cycles_in;
+        } else {
+            st->session_active     = true;
+            st->retracted_home     = false;
+            st->tape_frozen        = false;
+        }
         if ((prop.wire_flags & LATCH_WIRE_FLAG_SILENCE) != 0u) {
             has_new = false;
         }
@@ -782,27 +813,38 @@ static void latch_fill_status(latch_status_reply_t *out) {
 }
 
 static void latch_fill_tape_dump(latch_tape_dump_t *dump) {
-    uint32_t wr_idx = atomic_load_explicit(&g_tape_write_idx, memory_order_acquire);
-    uint32_t req_count = dump->count;
-    if (req_count == 0u || req_count > LATCH_DUMP_MAX_ENTRIES) {
-        req_count = LATCH_DUMP_MAX_ENTRIES;
-    }
-    if (req_count > wr_idx) {
-        req_count = wr_idx;
-    }
+    for (int retry = 0; retry < 5; ++retry) {
+        uint32_t g1 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if ((g1 & 1u) != 0u) continue;
 
-    uint32_t start = dump->start_index;
-    if (start == UINT32_MAX || start + req_count > wr_idx) {
-        start = (wr_idx >= req_count) ? (wr_idx - req_count) : 0u;
-    }
+        uint32_t cap = g_manifest.tape.capacity;
+        if (cap == 0u || cap > LATCH_TAPE_CAPACITY) cap = LATCH_TAPE_CAPACITY;
 
-    for (uint32_t i = 0; i < req_count; ++i) {
-        dump->entries[i] = g_latch_tape[(start + i) & LATCH_TAPE_MASK];
+        uint32_t wr_idx = atomic_load_explicit(&g_tape_write_idx, memory_order_acquire);
+        uint32_t req_count = dump->count;
+        if (req_count == 0u || req_count > LATCH_DUMP_MAX_ENTRIES) {
+            req_count = LATCH_DUMP_MAX_ENTRIES;
+        }
+        if (req_count > wr_idx) {
+            req_count = wr_idx;
+        }
+
+        uint32_t start = dump->start_index;
+        if (start == UINT32_MAX || start + req_count > wr_idx) {
+            start = (wr_idx >= req_count) ? (wr_idx - req_count) : 0u;
+        }
+
+        for (uint32_t i = 0; i < req_count; ++i) {
+            dump->entries[i] = g_latch_tape[(start + i) % cap];
+        }
+        dump->start_index = start;
+        dump->count       = req_count;
+        dump->latest_tick = g_simplex.tick;
+        memcpy(dump->manifest_sha256, g_manifest.sha256, sizeof(dump->manifest_sha256));
+
+        uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if (g1 == g2) return;
     }
-    dump->start_index = start;
-    dump->count       = req_count;
-    dump->latest_tick = g_simplex.tick;
-    memcpy(dump->manifest_sha256, g_manifest.sha256, sizeof(dump->manifest_sha256));
 }
 
 /* ==========================================================================
@@ -919,15 +961,12 @@ static int latch_io_open(resmgr_context_t *ctp,
         }
     } else if (lattr != NULL && !lattr->is_actuator_node) {
         if (msg->connect.ioflag & _IO_FLAG_WR) {
-            /* Opening /dev/latch/proposal for writing: initiate active stream session */
-            g_simplex.session_active = true;
-            g_simplex.retracted_home = false;
-            g_simplex.tape_frozen    = false;
-            g_simplex.last_seq       = 0u;
-            g_simplex.theta_mrad     = g_manifest.envelope.home_mrad;
-            g_simplex.mode           = (atomic_load_explicit(&g_simplex.operator_hold_locked, memory_order_acquire) != 0u)
-                                           ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
-            g_simplex.clean_streak   = 0u;
+            /* Opening /dev/latch/proposal for writing: flush unread ring slots and arm atomic reset */
+            atomic_store_explicit(&g_pub_buf.read_tail,
+                                  atomic_load_explicit(&g_pub_buf.write_head, memory_order_relaxed),
+                                  memory_order_release);
+            atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
+            atomic_fetch_add_explicit(&g_simplex.open_writers, 1u, memory_order_relaxed);
         }
     }
     return iofunc_open_default(ctp, msg, handle, extra);
@@ -937,6 +976,16 @@ static int latch_io_close_ocb(resmgr_context_t *ctp,
                               void *reserved,
                               RESMGR_OCB_T *ocb) {
     (void)reserved;
+    iofunc_ocb_t *io_ocb = (iofunc_ocb_t *)ocb;
+    if (io_ocb != NULL && io_ocb->attr != NULL) {
+        latch_dev_attr_t *lattr = (latch_dev_attr_t *)io_ocb->attr;
+        if (!lattr->is_actuator_node && (io_ocb->ioflag & _IO_FLAG_WR)) {
+            uint32_t remaining = atomic_fetch_sub_explicit(&g_simplex.open_writers, 1u, memory_order_acq_rel);
+            if (remaining <= 1u) {
+                g_simplex.session_active = false;
+            }
+        }
+    }
     return iofunc_close_ocb_default(ctp, reserved, ocb);
 }
 
@@ -1056,7 +1105,7 @@ static void *latch_decision_thread(void *arg) {
     SIGEV_NONE_INIT(&ch_cfg.event);
     ch_cfg.num_pulses = 64;
     ch_cfg.rearm_threshold = 16;
-    ch_cfg.options = 0;
+    ch_cfg.options = _NTO_CHO_CUSTOM_EVENT;
 
     g_timer_chid = ChannelCreatePulsePool(_NTO_CHF_FIXED_PRIORITY | _NTO_CHF_PRIVATE, &ch_cfg);
     if (g_timer_chid == -1) {
@@ -1180,13 +1229,27 @@ int main(int argc, char *argv[]) {
         g_simplex.i2c_fd = open(i2c_bus_path, O_RDWR);
         if (g_simplex.i2c_fd < 0) {
             perror("latchd: open I2C bus");
+            if (g_manifest.actuator.required) {
+                fprintf(stderr, "latchd: FATAL: Actuator bus '%s' required by manifest but open failed (Fail-Closed)\n",
+                        i2c_bus_path);
+                return EXIT_FAILURE;
+            }
         } else {
             int init_rc = latch_pca9685_init(g_simplex.i2c_fd);
             if (init_rc != 0) {
                 fprintf(stderr, "latchd: WARNING: PCA9685 init failed (code %d)\n", init_rc);
+                if (g_manifest.actuator.required) {
+                    fprintf(stderr, "latchd: FATAL: Actuator required by manifest but init failed (Fail-Closed)\n");
+                    close(g_simplex.i2c_fd);
+                    return EXIT_FAILURE;
+                }
             }
         }
     } else {
+        if (g_manifest.actuator.required) {
+            fprintf(stderr, "latchd: FATAL: Actuator required by manifest but -n (no-i2c) was requested (Fail-Closed)\n");
+            return EXIT_FAILURE;
+        }
         printf("latchd: Operating in NO-I2C mock mode (-n)\n");
     }
 
@@ -1279,7 +1342,8 @@ static void latch_sim_reset(void) {
     atomic_store_explicit(&g_tape_write_idx, 0u, memory_order_relaxed);
     g_simplex.mode           = (uint8_t)LATCH_MODE_HP;
     g_simplex.theta_mrad     = g_manifest.envelope.home_mrad;
-    g_simplex.session_active = true;
+    g_simplex.session_active = false;
+    atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
     g_simplex.period_ns      = g_manifest.timing.period_us * 1000u;
     g_simplex.ticks_per_sec  = (int32_t)(1000000000u / g_simplex.period_ns);
     g_simplex.i2c_fd         = -1;
@@ -1433,11 +1497,19 @@ static int latch_run_self_tests(void) {
 
     latch_sim_reset();
 
+    int32_t step = (g_manifest.envelope.a_max > 0) ? g_manifest.envelope.a_max : 10;
+    if (step > g_manifest.envelope.v_max) step = g_manifest.envelope.v_max;
+    int32_t dir = (g_manifest.envelope.theta_min_mrad < g_manifest.envelope.home_mrad) ? -1 : 1;
+    int32_t home = g_manifest.envelope.home_mrad;
+    int32_t keepout_val = (g_manifest.envelope.num_keepouts > 0)
+                              ? (g_manifest.envelope.keepout[0].lo_mrad + g_manifest.envelope.keepout[0].hi_mrad) / 2
+                              : 450;
+
     /* Nominal tracking in HP mode */
-    int32_t pos = 0;
+    int32_t pos = home;
     uint32_t seq = 1u;
     for (int i = 0; i < 10; ++i) {
-        pos -= 10;
+        pos += dir * step;
         latch_ipc_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
@@ -1449,17 +1521,20 @@ static int latch_run_self_tests(void) {
         latch_publish_proposal(&g_pub_buf, &p);
         latch_simplex_tick(&g_simplex, &g_pub_buf);
         if (g_simplex.mode != (uint8_t)LATCH_MODE_HP || g_simplex.theta_mrad != pos) {
-            fprintf(stderr, "FAIL: Nominal tracking failed at step %d\n", i);
+            fprintf(stderr, "FAIL: Nominal tracking failed at step %d: mode=%u, theta=%d, expected=%d, active_faults=0x%04X\n",
+                    i, (unsigned int)g_simplex.mode, g_simplex.theta_mrad, pos, g_simplex.active_faults);
             return EXIT_FAILURE;
         }
     }
 
-    /* Fault 1: Keep-out box violation (propose +450 mrad inside [250, 650]) */
+    int32_t last_held_pos = pos;
+
+    /* Fault 1: Keep-out box violation */
     {
         latch_ipc_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
-            .u_mrad         = 450,
+            .u_mrad         = keepout_val,
             .wire_flags     = 0u,
             .pre_fault_bits = LATCH_FAULT_NONE,
             .ingest_cycles  = latch_clock_cycles()
@@ -1468,7 +1543,7 @@ static int latch_run_self_tests(void) {
         latch_simplex_tick(&g_simplex, &g_pub_buf);
         if (g_simplex.mode != (uint8_t)LATCH_MODE_HOLD ||
             (g_simplex.active_faults & LATCH_FAULT_KEEPOUT) == 0u ||
-            g_simplex.theta_mrad != -100) {
+            g_simplex.theta_mrad != last_held_pos) {
             fprintf(stderr, "FAIL: Fault 1 (keep-out veto) failed\n");
             return EXIT_FAILURE;
         }
@@ -1479,7 +1554,7 @@ static int latch_run_self_tests(void) {
         latch_ipc_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
-            .u_mrad         = -100,
+            .u_mrad         = last_held_pos,
             .wire_flags     = 0u,
             .pre_fault_bits = LATCH_FAULT_NONE,
             .ingest_cycles  = latch_clock_cycles()
@@ -1516,7 +1591,7 @@ static int latch_run_self_tests(void) {
         latch_ipc_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq - 1u,
-            .u_mrad         = -100,
+            .u_mrad         = last_held_pos,
             .wire_flags     = 0u,
             .pre_fault_bits = LATCH_FAULT_NONE,
             .ingest_cycles  = latch_clock_cycles()
@@ -1529,12 +1604,17 @@ static int latch_run_self_tests(void) {
         }
     }
 
-    /* Silence for 60 ticks: trips WATCHDOG, enters HOME, retracts to 0 */
-    for (int t = 0; t < 60; ++t) {
+    /* Silence: trips WATCHDOG, enters HOME, retracts to home */
+    uint32_t v_home = (g_manifest.envelope.v_home > 0) ? (uint32_t)g_manifest.envelope.v_home : 10u;
+    uint32_t retract_dist = (uint32_t)abs(last_held_pos - home);
+    uint32_t retract_ticks = (retract_dist + v_home - 1u) / v_home;
+    uint32_t silence_ticks = g_manifest.recovery.hold_to_home_ticks + retract_ticks + 20u;
+
+    for (uint32_t t = 0; t < silence_ticks; ++t) {
         latch_simplex_tick(&g_simplex, &g_pub_buf);
     }
-    if (g_simplex.theta_mrad != 0 || g_simplex.mode != (uint8_t)LATCH_MODE_HOLD) {
-        fprintf(stderr, "FAIL: Fault 4 (Watchdog -> HA-HOME -> 0 mrad) failed (theta=%d, mode=%u)\n",
+    if (g_simplex.theta_mrad != home || g_simplex.mode != (uint8_t)LATCH_MODE_HOLD) {
+        fprintf(stderr, "FAIL: Fault 4 (Watchdog -> HA-HOME -> home) failed (theta=%d, mode=%u)\n",
                 g_simplex.theta_mrad, (unsigned int)g_simplex.mode);
         return EXIT_FAILURE;
     }
