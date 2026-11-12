@@ -45,7 +45,7 @@ static const char *mode_str(uint16_t mode) {
 
 int main(int argc, char *argv[]) {
     const char *dev_path    = LATCH_DEV_ACTUATOR;
-    const char *output_file = "/var/log/latch_tape.csv";
+    const char *output_file = "/dev/shmem/latch_tape.csv";
     uint32_t    interval_ms = 100u;
 
     int opt;
@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
             case 'o': output_file = optarg; break;
             case 'i': interval_ms = (uint32_t)strtoul(optarg, NULL, 10); break;
             default:
-                fprintf(stderr, "Usage: %s [-d /dev/latch/actuator] [-o /var/log/latch_tape.csv] [-i interval_ms]\n",
+                fprintf(stderr, "Usage: %s [-d /dev/latch/actuator] [-o /dev/shmem/latch_tape.csv] [-i interval_ms]\n",
                         argv[0]);
                 return EXIT_FAILURE;
         }
@@ -93,6 +93,9 @@ int main(int argc, char *argv[]) {
            dev_path, output_file, interval_ms);
 
     uint64_t last_persisted_tick = 0;
+    uint32_t next_read_index = 0u;
+    bool initial_query = true;
+
     struct timespec sleep_ts = {
         .tv_sec  = (time_t)(interval_ms / 1000u),
         .tv_nsec = (long)((interval_ms % 1000u) * 1000000L)
@@ -102,38 +105,51 @@ int main(int argc, char *argv[]) {
         (void)nanosleep(&sleep_ts, NULL);
         if (!g_log_running) break;
 
-        latch_tape_dump_t dump;
-        memset(&dump, 0, sizeof(dump));
-        dump.start_index = UINT32_MAX;
-        dump.count       = LATCH_DUMP_MAX_ENTRIES;
+        bool drain_more = false;
+        do {
+            latch_tape_dump_t dump;
+            memset(&dump, 0, sizeof(dump));
+            dump.start_index = initial_query ? UINT32_MAX : next_read_index;
+            dump.count       = LATCH_DUMP_MAX_ENTRIES;
 
-        int rc = devctl(fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL);
-        if (rc != EOK) {
-            if (rc == EPERM) {
-                fprintf(stderr, "latchlog: EPERM error (missing 'latch/actuator' ability)\n");
+            int rc = devctl(fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL);
+            if (rc != EOK) {
+                if (rc == EPERM) {
+                    fprintf(stderr, "latchlog: EPERM error (missing 'latch/actuator' ability)\n");
+                }
+                break;
             }
-            continue;
-        }
 
-        uint32_t written_count = 0;
-        for (uint32_t i = 0; i < dump.count; ++i) {
-            const latch_tape_entry_t *e = &dump.entries[i];
-            if (e->tick <= last_persisted_tick) {
-                continue;
+            if (initial_query) {
+                next_read_index = dump.start_index;
+                initial_query = false;
             }
-            uint64_t lat = (e->cycles_out >= e->cycles_in) ? (e->cycles_out - e->cycles_in) : 0;
-            fprintf(fp, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
-                    e->tick, e->cycles_in, e->cycles_out, lat,
-                    e->seq, e->u_proposed, e->theta_applied,
-                    (unsigned int)e->mode, mode_str(e->mode),
-                    (unsigned int)e->fault_bits);
-            last_persisted_tick = e->tick;
-            written_count++;
-        }
 
-        if (written_count > 0) {
-            fflush(fp);
-        }
+            uint32_t written_count = 0;
+            for (uint32_t i = 0; i < dump.count; ++i) {
+                const latch_tape_entry_t *e = &dump.entries[i];
+                if (e->tick <= last_persisted_tick) {
+                    continue;
+                }
+                uint64_t lat = (e->cycles_out >= e->cycles_in) ? (e->cycles_out - e->cycles_in) : 0;
+                fprintf(fp, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
+                        e->tick, e->cycles_in, e->cycles_out, lat,
+                        e->seq, e->u_proposed, e->theta_applied,
+                        (unsigned int)e->mode, mode_str(e->mode),
+                        (unsigned int)e->fault_bits);
+                last_persisted_tick = e->tick;
+                written_count++;
+            }
+
+            next_read_index = dump.start_index + dump.count;
+
+            if (written_count > 0) {
+                fflush(fp);
+            }
+
+            /* Drain back-to-back if a full batch was returned so high-rate bursts are lossless */
+            drain_more = (dump.count == LATCH_DUMP_MAX_ENTRIES);
+        } while (drain_more && g_log_running);
     }
 
     printf("latchlog: Terminating cleanly. Last tick persisted: %" PRIu64 "\n", last_persisted_tick);

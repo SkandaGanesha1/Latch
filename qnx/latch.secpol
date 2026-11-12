@@ -6,7 +6,7 @@
 #
 # Enforces Principle of Least Privilege:
 #   1. Declares custom microkernel ability "latch/actuator".
-#   2. Restricts /dev/i2c1 hardware bus access strictly to `latchd`.
+#   2. Restricts /dev/i2c1 hardware bus access strictly to `latchd` & I2C driver.
 #   3. Restricts /dev/latch/proposal write access to `latch-ingest`.
 #   4. Restricts /dev/latch/actuator control to callers holding `latch/actuator`.
 #   5. Strictly isolates QNX Hypervisor 8.0 `qvm` from hardware actuators.
@@ -21,6 +21,7 @@ type_trans proc_t /proc/boot/latch-ingest latch_ingest_t;
 type_trans proc_t /proc/boot/latchctl latchctl_t;
 type_trans proc_t /proc/boot/latchlog latchlog_t;
 type_trans proc_t /proc/boot/qvm qvm_guest_host_t;
+type_trans proc_t /proc/boot/i2c-bcm2711 i2c_driver_t;
 
 # 3. Ability Allowances
 # Only latchd and authorized admin tool may possess latch/actuator
@@ -37,11 +38,32 @@ allow_ability latchd_t PROCMGR_AID_MEM_LOCK;
 # Ingest process holds NO latch/actuator ability and NO root abilities
 allow_ability latch_ingest_t PROCMGR_AID_RUNMASK;
 
+# I2C driver requires hardware I/O and interrupt attach
+allow_ability i2c_driver_t PROCMGR_AID_IO;
+allow_ability i2c_driver_t PROCMGR_AID_INTERRUPT;
+allow_ability i2c_driver_t PROCMGR_AID_PATHSPACE;
+
+# Hypervisor host requires scheduling, runmask, and pathspace
+allow_ability qvm_guest_host_t PROCMGR_AID_PRIORITY;
+allow_ability qvm_guest_host_t PROCMGR_AID_RUNMASK;
+allow_ability qvm_guest_host_t PROCMGR_AID_PATHSPACE;
+
 # 4. Pathspace Access Control
-# latchd manages the two resource manager nodes and accesses the I2C bus
+# latchd manages the two resource manager nodes, reads contract manifests, and accesses I2C
 allow latchd_t /dev/latch/proposal:all;
 allow latchd_t /dev/latch/actuator:all;
 allow latchd_t /dev/i2c1:all;
+allow latchd_t /proc/boot/latch.manifest:read;
+allow latchd_t /proc/boot/latch.manifest.sha256:read;
+allow latchd_t /dev/shmem:all;
+
+# latchctl connects to actuator node and reads contract manifests
+allow latchctl_t /dev/latch/actuator:all;
+allow latchctl_t /proc/boot/latch.manifest:read;
+allow latchctl_t /proc/boot/latch.manifest.sha256:read;
+
+# I2C driver manages /dev/i2c1 node
+allow i2c_driver_t /dev/i2c1:all;
 
 # latch-ingest connects only to the proposal input node
 allow latch_ingest_t /dev/latch/proposal:write;
@@ -53,8 +75,11 @@ neverallow qvm_guest_host_t /dev/i2c1:all;
 neverallow qvm_guest_host_t /dev/latch/actuator:all;
 neverallow qvm_guest_host_t /dev/latch/proposal:all;
 
+# Hypervisor host loads guest image and configuration
+allow qvm_guest_host_t /proc/boot/linux-guest.Image:read;
+allow qvm_guest_host_t /proc/boot/latch.qvmconf:read;
+allow qvm_guest_host_t /dev/shmem:all;
+
 # Logging daemon queries actuator node and writes evidence tape
 allow latchlog_t /dev/latch/actuator:read,write;
 allow latchlog_t /dev/shmem/latch_tape.csv:all;
-allow latchd_t /dev/shmem:all;
-

@@ -23,6 +23,7 @@ extern "C" {
 #define LATCH_MANIFEST_SCHEMA_VERSION  2u
 #define LATCH_MAX_AXES                4u
 #define LATCH_MAX_KEEPOUTS            8u
+#define LATCH_MANIFEST_MAX_TAPE_CAPACITY 4096u
 
 typedef struct latch_axis {
     uint32_t id;

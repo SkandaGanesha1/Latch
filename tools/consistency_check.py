@@ -85,6 +85,24 @@ def main():
         fail(f"Manifest protocol mismatch: magic={m_proto.get('magic')}, version={m_proto.get('version')}")
     pass_check("Manifest protocol 'LATH' version 1 verified")
 
+    env = manifest.get("envelope", {})
+    t_min = env.get("theta_min_mrad", -1000)
+    t_max = env.get("theta_max_mrad", 1000)
+    t_home = env.get("home_mrad", 0)
+    if not (t_min <= t_home <= t_max):
+        fail(f"Manifest home_mrad {t_home} outside [{t_min}, {t_max}]")
+    keepout = env.get("keepout", [])
+    if not keepout:
+        fail("Manifest envelope.keepout list is empty")
+    for k in keepout:
+        lo = k.get("lo_mrad")
+        hi = k.get("hi_mrad")
+        if lo is None or hi is None or lo >= hi:
+            fail(f"Invalid keepout interval: {k}")
+        if lo < t_min or hi > t_max:
+            fail(f"Keepout interval [{lo}, {hi}] outside bounds [{t_min}, {t_max}]")
+    pass_check(f"Manifest envelope bounds [{t_min}, {t_max}], home {t_home}, and {len(keepout)} keepout intervals valid")
+
     m_paths = manifest.get("paths", {})
     proposal_path = m_paths.get("proposal", "/dev/latch/proposal")
     actuator_path = m_paths.get("actuator", "/dev/latch/actuator")
@@ -116,7 +134,9 @@ def main():
         fail("qnx/latch_qemu.build missing latch.manifest.sha256 payload")
     if "latch_verify" not in qemu_build:
         fail("qnx/latch_qemu.build missing latch_verify target binary")
-    pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, latch_verify & sidecar verified")
+    if "linux-guest.Image = $(GUEST_IMAGE)" not in qemu_build:
+        fail("qnx/latch_qemu.build missing linux-guest.Image guest packaging")
+    pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, latch_verify, sidecar & guest image verified")
 
     # 4. Verify RPi4 Buildfile Configuration
     with open(rpi4_build_path, "r", encoding="utf-8") as f:
@@ -124,15 +144,17 @@ def main():
 
     if "-Q enable" not in rpi4_build:
         fail("qnx/latch_rpi4.build startup does not pass '-Q enable'")
-    if "i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1" not in rpi4_build:
-        fail("qnx/latch_rpi4.build missing exact i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1 parameters")
+    if "i2c-bcm2711 -p0xfe804000 -i147 --b400000 --u1" not in rpi4_build:
+        fail("qnx/latch_rpi4.build missing exact i2c-bcm2711 -p0xfe804000 -i147 --b400000 --u1 parameters (GIC SPI 115 + 32 = IRQ 147)")
     if ":/lib/dll/qvm" not in rpi4_build:
         fail("qnx/latch_rpi4.build LD_LIBRARY_PATH missing :/lib/dll/qvm")
     if "latch.manifest.sha256" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing latch.manifest.sha256 payload")
     if "latch_verify" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing latch_verify target binary")
-    pass_check("RPi4 buildfile BCM2711 I2C, LD_LIBRARY_PATH, latch_verify & sidecar verified")
+    if "linux-guest.Image = $(GUEST_IMAGE)" not in rpi4_build:
+        fail("qnx/latch_rpi4.build missing linux-guest.Image guest packaging")
+    pass_check("RPi4 buildfile BCM2711 I2C IRQ 147, LD_LIBRARY_PATH, latch_verify, sidecar & guest image verified")
 
     # 5. Verify Security Policy Enforcements
     with open(secpol_path, "r", encoding="utf-8") as f:
@@ -144,6 +166,8 @@ def main():
         fail("Security policy does not grant latch/actuator to latchd_t")
     if "allow_ability latchd_t PROCMGR_AID_MEM_LOCK;" not in secpol:
         fail("Security policy does not grant PROCMGR_AID_MEM_LOCK to latchd_t")
+    if "allow latchctl_t /dev/latch/actuator:all;" not in secpol:
+        fail("Security policy does not grant latchctl_t access to /dev/latch/actuator")
     if "neverallow qvm_guest_host_t /dev/latch/actuator:all;" not in secpol:
         fail("Security policy does not strictly isolate qvm_guest_host_t from actuator node")
     pass_check("Security policy ability declarations & least-privilege rules verified")

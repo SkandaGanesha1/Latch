@@ -122,28 +122,14 @@ _Static_assert(offsetof(latch_wire_frame_t, reserved) == 20,
                "reserved must be at offset 20");
 
 /* ==========================================================================
- * 3. Safety Envelope & Simplex Timing Constants
+ * 3. Simplex Memory Ring Capacity
+ * Note: All plant kinematics, keep-out boundaries, timing budgets, and PWM
+ * calibrations are loaded dynamically at runtime from signed latch.manifest
+ * (Zero Hardcoding Architecture).
  * ========================================================================== */
 
-#define THETA_MIN_MRAD           (-1000)  /* Mechanical lower stop (-1.0 rad) */
-#define THETA_MAX_MRAD           (1000)   /* Mechanical upper stop (+1.0 rad) */
-#define KEEPOUT_LO_MRAD          (250)    /* Taped keep-out box lower edge    */
-#define KEEPOUT_HI_MRAD          (650)    /* Taped keep-out box upper edge    */
-#define V_MAX_MRAD_TICK          (25)     /* Max velocity step per tick       */
-#define A_MAX_MRAD_TICK2         (10)     /* Max acceleration delta per tick  */
-#define V_HOME_MRAD_TICK         (10)     /* Max step per tick in HA-HOME     */
-#define HORIZON_TICKS            (10)     /* 10-tick forward lookahead        */
-#define WATCHDOG_TICKS           (2)      /* Silence >= 2 ticks -> HOLD       */
-#define HYSTERESIS_CLEAN_FRAMES  (25)     /* 25 clean frames before HP        */
-#define HOLD_TO_HOME_TICKS       (50)     /* >= 50 ticks in HOLD -> HOME      */
-
-#define LATCH_TAPE_CAPACITY      (4096u)  /* Fixed ring in .bss               */
+#define LATCH_TAPE_CAPACITY      (4096u)  /* Fixed evidence ring in .bss       */
 #define LATCH_TAPE_MASK          (LATCH_TAPE_CAPACITY - 1u)
-
-/* PCA9685 12-bit 50 Hz servo pulse counts (1.0 ms = 205, 1.5 ms = 307, 2.0 ms = 410) */
-#define LATCH_PWM_CENTER_COUNTS  (307)
-#define LATCH_PWM_MIN_COUNTS     (205)
-#define LATCH_PWM_MAX_COUNTS     (410)
 
 /* ==========================================================================
  * 4. Simplex Modes & Fault Bitmask Definitions

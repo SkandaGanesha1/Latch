@@ -4,11 +4,11 @@
 
 LATCH is a production-grade, mixed-criticality runtime-assurance architecture for physical AI on **QNX SDP 8.0.x** and **QNX Hypervisor 8.0**. An untrusted guest AI policy proposes 32-byte motion frames over a virtio-console black channel. A `SCHED_FIFO` priority 63 decision loop inside an ability-locked resource manager (`latchd`) verifies the kinematic envelope, lookahead rollout, and keep-out intervals, actuating via a PCA9685 PWM controller on `/dev/i2c1` or failing closed to High-Assurance (`HA-HOLD` / `HA-HOME`) candidates, recording every verdict in a 4096-entry evidence tape.
 
-- **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0 (build >= 549 for BCM2711 GICv2 support)
-- **Target Board & BSP:** Raspberry Pi 4 Model B (`com.qnx.qnx800.bsp.hw.raspberrypi_bcm2711_rpi4`, SDP 8.0.5 / build 670)
+- **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (build >= 549 for BCM2711 GICv2 support)
+- **Target Board & BSP:** Raspberry Pi 4 Model B (`com.qnx.qnx800.bsp.hw.raspberrypi_bcm2711_rpi4`, SDP 8.0.5 / build 837)
 - **Actuator Bus:** Broadcom `i2c-bcm2711` driving a PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (channel 0 servo)
 - **Zero-Hardcoding Architecture:** Plant geometry, keep-out intervals, velocity/acceleration limits, timing budgets, and bus paths are fully configured via `latch.manifest` with SHA-256 integrity verification.
-- **Concurrency:** Lock-free atomic Seqlock two-slot buffer (`latch_seqlock_slot_t`) eliminating torn reads on high-frequency publisher updates.
+- **Concurrency:** Lockless 256-slot ring buffer with Seqlock snapshot guard eliminating torn reads on high-frequency publisher updates.
 - **Fallback / CI Targets:** QEMU AArch64 / x86_64 (`qcc -Vgcc_ntox86_64`) and POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`)
 - **License:** MIT (`LICENSE`)
 
@@ -165,7 +165,7 @@ Open `host/tape.html` directly in any web browser. It is fully self-contained wi
 | **Microkernel** | `procnto-smp-instr` (SMP Instrumented) | `/proc/boot/procnto-smp-instr` |
 | **Execution Environment** | QEMU KVM `x86pc x86_64` | `SYSPAGE_ENTRY(qtime)->cycles_per_sec = 2,295,649,179 Hz` (TSC) |
 | **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms pulse) | `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
-| **Measured Decision WCET** | **220 ns nominal** / **101.3 µs cold max** | Ground truth telemetry (beats 4.13 ms paper benchmark) |
+| **Measured Decision WCET** | **330 ns nominal** / **58.9 µs cold max** | Ground truth telemetry (beats 4.13 ms paper benchmark) |
 | **Attestation Hash** | `135aadebc2b395d2...413c7c06` | True NIST FIPS 180-2 SHA-256 (`sha256sum qnx/latch.manifest`) |
 | **Security Isolation** | Custom ability `latch/actuator` (flags 0) | `iofunc_client_info_able()` default-deny for root & non-root |
 | **Verification Suite** | Exit code 0 only upon verified transitions | `sudo ./latch_verify` actively asserts `.bss` tape ring |

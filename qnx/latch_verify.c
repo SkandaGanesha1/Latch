@@ -121,8 +121,8 @@ int main(int argc, char *argv[]) {
         memset(&st_ko, 0, sizeof(st_ko));
         (void)devctl(act_fd, DCMD_LATCH_GET_STATUS, &st_ko, sizeof(st_ko), NULL);
         if (st_ko.mode == LATCH_MODE_HOLD && (st_ko.latched_faults & LATCH_FAULT_KEEPOUT) != 0u) {
-            printf("[2/5] PASS: Keep-out violation (+450 mrad) vetoed -> HA-HOLD locked at theta = %d mrad (fault = 0x%04X)\n",
-                   st_ko.theta_mrad, st_ko.active_faults);
+            printf("[2/5] PASS: Keep-out violation (+450 mrad) vetoed -> HA-HOLD locked at theta = %d mrad (latched = 0x%04X)\n",
+                   st_ko.theta_mrad, st_ko.latched_faults);
         } else {
             printf("[2/5] FAIL: Keep-out violation not properly vetoed (theta = %d mrad, mode = %s, faults = 0x%04X)\n",
                    st_ko.theta_mrad, mode_name(st_ko.mode), st_ko.latched_faults);
@@ -156,7 +156,7 @@ int main(int argc, char *argv[]) {
         latch_tape_dump_t tape_check;
         memset(&tape_check, 0, sizeof(tape_check));
         tape_check.start_index = UINT32_MAX;
-        tape_check.count       = 64;
+        tape_check.count       = 128;
         bool saw_home_mode = false;
         if (devctl(act_fd, DCMD_LATCH_DUMP_TAPE, &tape_check, sizeof(tape_check), NULL) == 0) {
             for (uint32_t i = 0; i < tape_check.count; ++i) {
@@ -168,8 +168,8 @@ int main(int argc, char *argv[]) {
         }
 
         if ((st_home.active_faults & LATCH_FAULT_WATCHDOG) != 0u && st_home.theta_mrad == 0) {
-            printf("[4/5] PASS: Sequence replay + 80 ms silence -> Watchdog tripped -> HA-HOME retraction to 0 mrad (tape verified: %s)\n",
-                   saw_home_mode ? "YES" : "CLEAN");
+            printf("[4/5] PASS: Sequence replay + 80 ms silence -> Watchdog tripped -> HA-HOME retraction to 0 mrad (tape verified: HOME-ROWS-SEEN: %s)\n",
+                   saw_home_mode ? "yes" : "no");
         } else {
             printf("[4/5] FAIL: HA-HOME retraction did not settle at 0 mrad (theta = %d mrad, faults = 0x%04X)\n",
                    st_home.theta_mrad, st_home.active_faults);

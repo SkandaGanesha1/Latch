@@ -13,6 +13,7 @@
 TARGET        ?= host-sim
 BUILD_DIR     := build
 COMMON_CFLAGS := -Wall -Wextra -Werror -Wpedantic -O2 -I.
+GUEST_IMAGE   ?= $(BUILD_DIR)/linux-guest.Image
 
 ifeq ($(TARGET),rpi4)
     CC         := qcc
@@ -97,11 +98,17 @@ secpol: | dirs
 qemu:
 	./run_qemu.sh
 
-ifs-rpi4: rpi4 secpol
-	mkifs -v latch_rpi4.build $(BUILD_DIR)/nto-aarch64-le/latch_rpi4.ifs
+$(GUEST_IMAGE): | dirs
+	@if [ ! -f "$@" ]; then \
+		echo "[LATCH] Initializing guest image stub for IFS packaging..."; \
+		dd if=/dev/zero of="$@" bs=1024 count=4 2>/dev/null; \
+	fi
 
-ifs-qemu: rpi4 secpol
-	mkifs -v latch_qemu.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu.ifs
+ifs-rpi4: rpi4 secpol $(GUEST_IMAGE)
+	mkifs -v -DGUEST_IMAGE=$(GUEST_IMAGE) latch_rpi4.build $(BUILD_DIR)/nto-aarch64-le/latch_rpi4.ifs
+
+ifs-qemu: rpi4 secpol $(GUEST_IMAGE)
+	mkifs -v -DGUEST_IMAGE=$(GUEST_IMAGE) latch_qemu.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu.ifs
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -167,7 +167,7 @@
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
         <div class="text-xs text-slate-400">Keep-Out Box Invariant</div>
         <div id="kpiKeepoutStatus" class="mt-1 text-lg sm:text-xl font-bold text-emerald-400 mono">0 Breaches</div>
-        <div class="text-[11px] text-slate-500 mt-0.5 mono">Box: [+250, +650] mrad</div>
+        <div id="kpiKeepoutBoxSub" class="text-[11px] text-slate-500 mt-0.5 mono">Box: [+250, +650] mrad</div>
       </div>
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
         <div class="text-xs text-slate-400">Wire &amp; Envelope Vetoes</div>
@@ -337,7 +337,7 @@
               <th class="py-2 px-3 border-b border-slate-800 text-right">theta_applied</th>
               <th class="py-2 px-3 border-b border-slate-800">Mode</th>
               <th class="py-2 px-3 border-b border-slate-800">Fault Bitmask</th>
-              <th class="py-2 px-3 border-b border-slate-800 text-right">Decision Latency</th>
+              <th class="py-2 px-3 border-b border-slate-800 text-right">Decision Latency (cycles)</th>
             </tr>
           </thead>
           <tbody id="tapeTableBody" class="divide-y divide-slate-800/70"></tbody>
@@ -417,10 +417,14 @@
       const maxL = latencies.length ? latencies[latencies.length - 1] : 0;
 
       document.getElementById("kpiKeepoutStatus").textContent = keepoutBreaches === 0 ? "0 Breaches" : keepoutBreaches + " Breaches";
+      const sub = document.getElementById("kpiKeepoutBoxSub");
+      if (sub && kList.length) {
+        sub.textContent = "Box: " + kList.map(k => "[" + (k.lo_mrad > 0 ? "+" : "") + k.lo_mrad + ", " + (k.hi_mrad > 0 ? "+" : "") + k.hi_mrad + "] mrad" + (k.label ? " (" + k.label + ")" : "")).join("; ");
+      }
       document.getElementById("kpiVetoes").textContent = String(vetoCount) + " Ticks";
       document.getElementById("kpiEperm").textContent = String(epermCount) + " (Root Denied)";
-      document.getElementById("kpiP99").textContent = med + " / " + p99 + " ns";
-      document.getElementById("kpiMaxLat").textContent = maxL + " ns";
+      document.getElementById("kpiP99").textContent = med + " / " + p99 + " cycles";
+      document.getElementById("kpiMaxLat").textContent = maxL + " cycles";
     }
 
     function drawTrajectoryChart() {
@@ -582,9 +586,9 @@
       ctx.fillStyle = "#94a3b8";
       ctx.font = "10px JetBrains Mono, monospace";
       ctx.textAlign = "left";
-      ctx.fillText(minL + " ns", pad.l, h - 5);
+      ctx.fillText(minL + " cycles", pad.l, h - 5);
       ctx.textAlign = "right";
-      ctx.fillText(maxL + " ns", pad.l + pw, h - 5);
+      ctx.fillText(maxL + " cycles", pad.l + pw, h - 5);
     }
 
     function updateInspector() {
@@ -605,7 +609,7 @@
         row.u_proposed <= -2000000000 ? "INT32_MIN (NaN)" : row.u_proposed + " mrad";
       document.getElementById("inspApplied").textContent = row.theta_applied + " mrad";
       document.getElementById("inspFaults").textContent = decodeFaultBits(row.fault_bits);
-      document.getElementById("inspLatency").textContent = row.latency_cycles + " ns";
+      document.getElementById("inspLatency").textContent = row.latency_cycles + " cycles";
     }
 
     function renderTable() {
@@ -640,7 +644,7 @@
           '<td class="py-1.5 px-3 text-right font-semibold text-emerald-300">' + row.theta_applied + '</td>' +
           '<td class="py-1.5 px-3"><span class="px-2 py-0.5 rounded border text-[10px] ' + badgeClass + '">' + row.mode_name + '</span></td>' +
           '<td class="py-1.5 px-3 ' + (row.fault_bits ? 'text-rose-400 font-semibold' : 'text-slate-500') + '">' + decodeFaultBits(row.fault_bits) + '</td>' +
-          '<td class="py-1.5 px-3 text-right text-sky-300">' + row.latency_cycles + ' ns</td>';
+          '<td class="py-1.5 px-3 text-right text-sky-300">' + row.latency_cycles + ' cycles</td>';
 
         tr.addEventListener("click", () => {
           selectedIndex = idx;

@@ -384,6 +384,26 @@ static const char *json_find_key_bounded(const char *start, const char *end, con
     return NULL;
 }
 
+static const char *json_find_section(const char *json, const char *sec_name, const char **out_sec_end) {
+    if (!json || !sec_name) return NULL;
+    const char *p = json_find_key(json, sec_name);
+    if (!p) return NULL;
+    const char *brace = strchr(p, '{');
+    if (!brace) return NULL;
+    int depth = 1;
+    const char *c = brace + 1;
+    while (*c && depth > 0) {
+        if (*c == '{') depth++;
+        else if (*c == '}') depth--;
+        c++;
+    }
+    if (depth == 0) {
+        if (out_sec_end) *out_sec_end = c - 1;
+        return brace;
+    }
+    return NULL;
+}
+
 int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex, char *err_buf, size_t err_len) {
     if (manifest_path == NULL || computed_hex == NULL) {
         if (err_buf) snprintf(err_buf, err_len, "Invalid arguments to sidecar verification");
@@ -450,7 +470,7 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     if (sz <= 0 || sz > 65536) {
         fclose(f);
         if (err_buf) snprintf(err_buf, err_len, "Manifest size invalid: %ld bytes (max 64KB)", sz);
-        return -EFBIG;
+        return -EINVAL;
     }
 
     char *buf = (char *)malloc((size_t)sz + 1);
@@ -464,8 +484,8 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
     fclose(f);
     buf[read_bytes] = '\0';
 
-    /* Initialize to defaults first */
-    latch_manifest_init_defaults(out_m);
+    /* Anti-Silent-Defaults: zero out target struct (no fallback pre-population) */
+    memset(out_m, 0, sizeof(*out_m));
 
     /* Compute SHA-256 */
     latch_sha256_ctx_t sctx;
@@ -482,175 +502,285 @@ int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf
         return -1;
     }
 
-    /* Validate mandatory sections: envelope and timing must be present (Fail-Closed) */
-    if (json_find_key(buf, "envelope") == NULL || json_find_key(buf, "timing") == NULL) {
+    /* Validate mandatory sections */
+    const char *env_end = NULL, *tim_end = NULL, *rec_end = NULL;
+    const char *dec_end = NULL, *ing_end = NULL, *paths_end = NULL;
+    const char *act_end = NULL, *proto_end = NULL, *tape_end = NULL;
+    const char *plant_end = NULL;
+
+    const char *env_sec   = json_find_section(buf, "envelope", &env_end);
+    const char *tim_sec   = json_find_section(buf, "timing", &tim_end);
+    const char *rec_sec   = json_find_section(buf, "recovery", &rec_end);
+    const char *dec_sec   = json_find_section(buf, "decision", &dec_end);
+    const char *ing_sec   = json_find_section(buf, "ingest", &ing_end);
+    const char *paths_sec = json_find_section(buf, "paths", &paths_end);
+    const char *act_sec   = json_find_section(buf, "actuator", &act_end);
+    const char *proto_sec = json_find_section(buf, "protocol", &proto_end);
+    const char *tape_sec  = json_find_section(buf, "tape", &tape_end);
+    const char *plant_sec = json_find_section(buf, "plant", &plant_end);
+
+    if (!env_sec || !tim_sec || !rec_sec || !act_sec || !proto_sec) {
         free(buf);
-        if (err_buf) snprintf(err_buf, err_len, "Manifest missing mandatory 'envelope' or 'timing' section (Fail-Closed)");
+        if (err_buf) snprintf(err_buf, err_len, "Manifest missing mandatory sections (envelope, timing, recovery, actuator, protocol)");
         return -EINVAL;
     }
 
+    bool has_schema = false;
+    bool has_theta_min = false, has_theta_max = false, has_home = false;
+    bool has_v_max = false, has_a_max = false, has_j_max = false, has_v_home = false;
+    bool has_period = false, has_watchdog = false, has_wcet = false;
+    bool has_clean_frames = false, has_hold_to_home = false;
+    bool has_proto_magic = false, has_proto_version = false;
+    bool has_actuator_type = false;
+
     const char *p;
 
-    /* Parse schema_version */
+    /* 1. Parse schema_version */
     if ((p = json_find_key(buf, "schema_version")) != NULL) {
-        if (!json_match_uint32(&p, &out_m->schema_version) ||
-            (out_m->schema_version != 1u && out_m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION)) {
-            free(buf);
-            if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u)",
-                                  out_m->schema_version);
-            return -EINVAL;
+        if (json_match_uint32(&p, &out_m->schema_version) &&
+            (out_m->schema_version == 1u || out_m->schema_version == LATCH_MANIFEST_SCHEMA_VERSION)) {
+            has_schema = true;
         }
     }
 
-    /* Parse plant name and axes */
-    if ((p = json_find_key(buf, "name")) != NULL) {
-        json_match_str(&p, out_m->plant_name, sizeof(out_m->plant_name));
-    }
-    if ((p = json_find_key(buf, "axes")) != NULL) {
-        p = strchr(p, '[');
-        if (p) {
-            p++;
-            out_m->num_axes = 0;
-            while (*p && *p != ']' && out_m->num_axes < LATCH_MAX_AXES) {
-                const char *obj = strchr(p, '{');
-                if (!obj) break;
-                const char *obj_end = strchr(obj, '}');
-                if (!obj_end) break;
-                uint32_t idx = out_m->num_axes;
-                const char *id_ptr   = json_find_key_bounded(obj, obj_end, "id");
-                const char *kind_ptr = json_find_key_bounded(obj, obj_end, "kind");
-                const char *unit_ptr = json_find_key_bounded(obj, obj_end, "unit");
-                const char *min_ptr  = json_find_key_bounded(obj, obj_end, "min");
-                const char *max_ptr  = json_find_key_bounded(obj, obj_end, "max");
-                if (id_ptr)   json_match_uint32(&id_ptr, &out_m->axes[idx].id);
-                if (kind_ptr) json_match_str(&kind_ptr, out_m->axes[idx].kind, sizeof(out_m->axes[idx].kind));
-                if (unit_ptr) json_match_str(&unit_ptr, out_m->axes[idx].unit, sizeof(out_m->axes[idx].unit));
-                if (min_ptr)  json_match_int32(&min_ptr, &out_m->axes[idx].min);
-                if (max_ptr)  json_match_int32(&max_ptr, &out_m->axes[idx].max);
-                out_m->axes[idx].fullscale_counts_span = out_m->axes[idx].max - out_m->axes[idx].min;
-                out_m->num_axes++;
-                p = obj_end + 1;
-            }
-        }
-    }
+    /* 2. Parse plant */
+    if (plant_sec && plant_end) {
+        const char *np = json_find_key_bounded(plant_sec, plant_end, "name");
+        if (np) json_match_str(&np, out_m->plant_name, sizeof(out_m->plant_name));
 
-    /* Parse envelope constants */
-    if ((p = json_find_key(buf, "theta_min_mrad")) != NULL) json_match_int32(&p, &out_m->envelope.theta_min_mrad);
-    if ((p = json_find_key(buf, "theta_max_mrad")) != NULL) json_match_int32(&p, &out_m->envelope.theta_max_mrad);
-    if ((p = json_find_key(buf, "home_mrad")) != NULL)      json_match_int32(&p, &out_m->envelope.home_mrad);
-    if ((p = json_find_key(buf, "v_max")) != NULL)          json_match_int32(&p, &out_m->envelope.v_max);
-    if ((p = json_find_key(buf, "a_max")) != NULL)          json_match_int32(&p, &out_m->envelope.a_max);
-    if ((p = json_find_key(buf, "j_max")) != NULL)          json_match_int32(&p, &out_m->envelope.j_max);
-    if ((p = json_find_key(buf, "v_home")) != NULL)         json_match_int32(&p, &out_m->envelope.v_home);
-    if ((p = json_find_key(buf, "lookahead_ticks")) != NULL) json_match_uint32(&p, &out_m->envelope.lookahead_ticks);
-
-    /* Parse keepout array */
-    if ((p = json_find_key(buf, "keepout")) != NULL) {
-        p = strchr(p, '[');
-        if (p) {
-            p++;
-            out_m->envelope.num_keepouts = 0;
-            while (*p && *p != ']' && out_m->envelope.num_keepouts < LATCH_MAX_KEEPOUTS) {
-                const char *obj = strchr(p, '{');
-                if (!obj) break;
-                const char *obj_end = strchr(obj, '}');
-                if (!obj_end) break;
-                const char *lo_ptr = json_find_key_bounded(obj, obj_end, "lo_mrad");
-                const char *hi_ptr = json_find_key_bounded(obj, obj_end, "hi_mrad");
-                const char *lb_ptr = json_find_key_bounded(obj, obj_end, "label");
-
-                if (lo_ptr && hi_ptr) {
-                    uint32_t idx = out_m->envelope.num_keepouts;
-                    json_match_int32(&lo_ptr, &out_m->envelope.keepout[idx].lo_mrad);
-                    json_match_int32(&hi_ptr, &out_m->envelope.keepout[idx].hi_mrad);
-                    if (lb_ptr) {
-                        json_match_str(&lb_ptr, out_m->envelope.keepout[idx].label,
-                                       sizeof(out_m->envelope.keepout[idx].label));
-                    }
-                    out_m->envelope.num_keepouts++;
+        const char *axes_ptr = json_find_key_bounded(plant_sec, plant_end, "axes");
+        if (axes_ptr) {
+            axes_ptr = strchr(axes_ptr, '[');
+            if (axes_ptr && axes_ptr < plant_end) {
+                axes_ptr++;
+                out_m->num_axes = 0;
+                while (*axes_ptr && *axes_ptr != ']' && axes_ptr < plant_end && out_m->num_axes < LATCH_MAX_AXES) {
+                    const char *obj = strchr(axes_ptr, '{');
+                    if (!obj || obj >= plant_end) break;
+                    const char *obj_end = strchr(obj, '}');
+                    if (!obj_end || obj_end >= plant_end) break;
+                    uint32_t idx = out_m->num_axes;
+                    const char *id_ptr   = json_find_key_bounded(obj, obj_end, "id");
+                    const char *kind_ptr = json_find_key_bounded(obj, obj_end, "kind");
+                    const char *unit_ptr = json_find_key_bounded(obj, obj_end, "unit");
+                    const char *min_ptr  = json_find_key_bounded(obj, obj_end, "min");
+                    const char *max_ptr  = json_find_key_bounded(obj, obj_end, "max");
+                    if (id_ptr)   json_match_uint32(&id_ptr, &out_m->axes[idx].id);
+                    if (kind_ptr) json_match_str(&kind_ptr, out_m->axes[idx].kind, sizeof(out_m->axes[idx].kind));
+                    if (unit_ptr) json_match_str(&unit_ptr, out_m->axes[idx].unit, sizeof(out_m->axes[idx].unit));
+                    if (min_ptr)  json_match_int32(&min_ptr, &out_m->axes[idx].min);
+                    if (max_ptr)  json_match_int32(&max_ptr, &out_m->axes[idx].max);
+                    out_m->axes[idx].fullscale_counts_span = out_m->axes[idx].max - out_m->axes[idx].min;
+                    out_m->num_axes++;
+                    axes_ptr = obj_end + 1;
                 }
-                p = obj_end + 1;
             }
         }
     }
 
-    /* Parse timing */
-    if ((p = json_find_key(buf, "period_us")) != NULL)        json_match_uint32(&p, &out_m->timing.period_us);
-    if ((p = json_find_key(buf, "watchdog_ticks")) != NULL)   json_match_uint32(&p, &out_m->timing.watchdog_ticks);
-    if ((p = json_find_key(buf, "wcet_budget_us")) != NULL)   json_match_uint32(&p, &out_m->timing.wcet_budget_us);
-    if ((p = json_find_key(buf, "max_backlog_ticks")) != NULL) json_match_uint32(&p, &out_m->timing.max_backlog_ticks);
+    /* 3. Parse envelope within envelope_sec */
+    {
+        const char *tmin_p = json_find_key_bounded(env_sec, env_end, "theta_min_mrad");
+        if (tmin_p && json_match_int32(&tmin_p, &out_m->envelope.theta_min_mrad)) has_theta_min = true;
 
-    /* Parse recovery */
-    if ((p = json_find_key(buf, "hysteresis_clean_frames")) != NULL) json_match_uint32(&p, &out_m->recovery.hysteresis_clean_frames);
-    if ((p = json_find_key(buf, "hold_to_home_ticks")) != NULL)      json_match_uint32(&p, &out_m->recovery.hold_to_home_ticks);
+        const char *tmax_p = json_find_key_bounded(env_sec, env_end, "theta_max_mrad");
+        if (tmax_p && json_match_int32(&tmax_p, &out_m->envelope.theta_max_mrad)) has_theta_max = true;
 
-    /* Parse decision / ingest cpu */
-    if ((p = json_find_key(buf, "decision")) != NULL) {
-        const char *cpu_ptr   = json_find_key(p, "cpu");
-        if (cpu_ptr) json_match_uint32(&cpu_ptr, &out_m->decision.cpu);
-        const char *pri_ptr   = json_find_key(p, "priority");
-        if (pri_ptr) json_match_uint32(&pri_ptr, &out_m->decision.priority);
-        const char *ppri_ptr  = json_find_key(p, "pulse_priority");
-        if (ppri_ptr) json_match_uint32(&ppri_ptr, &out_m->decision.pulse_priority);
-    }
-    if ((p = json_find_key(buf, "ingest")) != NULL) {
-        const char *cpu_ptr   = json_find_key(p, "cpu");
-        if (cpu_ptr) json_match_uint32(&cpu_ptr, &out_m->ingest.cpu);
-        const char *deliv_ptr = json_find_key(p, "delivery");
-        if (deliv_ptr) json_match_str(&deliv_ptr, out_m->ingest.delivery, sizeof(out_m->ingest.delivery));
-        const char *qd_ptr    = json_find_key(p, "queue_depth");
-        if (qd_ptr) json_match_uint32(&qd_ptr, &out_m->ingest.queue_depth);
-    }
+        const char *home_p = json_find_key_bounded(env_sec, env_end, "home_mrad");
+        if (home_p && json_match_int32(&home_p, &out_m->envelope.home_mrad)) has_home = true;
 
-    /* Parse paths */
-    if ((p = json_find_key(buf, "proposal")) != NULL) json_match_str(&p, out_m->paths.proposal, sizeof(out_m->paths.proposal));
-    if ((p = json_find_key(buf, "actuator")) != NULL) json_match_str(&p, out_m->paths.actuator, sizeof(out_m->paths.actuator));
-    if ((p = json_find_key(buf, "ability")) != NULL)  json_match_str(&p, out_m->paths.ability, sizeof(out_m->paths.ability));
-    if ((p = json_find_key(buf, "i2c_bus")) != NULL)  json_match_str(&p, out_m->paths.i2c_bus, sizeof(out_m->paths.i2c_bus));
+        const char *vmax_p = json_find_key_bounded(env_sec, env_end, "v_max");
+        if (vmax_p && json_match_int32(&vmax_p, &out_m->envelope.v_max)) has_v_max = true;
 
-    /* Parse actuator PCA9685 configuration and calibration */
-    if ((p = json_find_key(buf, "actuator")) != NULL) {
-        const char *t_ptr   = json_find_key(p, "type");
-        if (t_ptr) json_match_str(&t_ptr, out_m->actuator.type, sizeof(out_m->actuator.type));
-        const char *a_ptr   = json_find_key(p, "addr");
-        if (a_ptr) json_match_uint32(&a_ptr, &out_m->actuator.addr);
-        const char *f_ptr   = json_find_key(p, "freq_hz");
-        if (f_ptr) json_match_uint32(&f_ptr, &out_m->actuator.freq_hz);
-        const char *pr_ptr  = json_find_key(p, "prescale");
-        if (pr_ptr) json_match_uint32(&pr_ptr, &out_m->actuator.prescale);
-        const char *ret_ptr = json_find_key(p, "retries");
-        if (ret_ptr) json_match_uint32(&ret_ptr, &out_m->actuator.retries);
-        const char *id_ptr  = json_find_key(p, "init_delay_us");
-        if (id_ptr) json_match_uint32(&id_ptr, &out_m->actuator.init_delay_us);
-        const char *req_ptr = json_find_key(p, "required");
-        if (req_ptr) {
-            if (strncmp(req_ptr, "true", 4) == 0) out_m->actuator.required = true;
-            else if (strncmp(req_ptr, "false", 5) == 0) out_m->actuator.required = false;
+        const char *amax_p = json_find_key_bounded(env_sec, env_end, "a_max");
+        if (amax_p && json_match_int32(&amax_p, &out_m->envelope.a_max)) has_a_max = true;
+
+        const char *jmax_p = json_find_key_bounded(env_sec, env_end, "j_max");
+        if (jmax_p && json_match_int32(&jmax_p, &out_m->envelope.j_max)) has_j_max = true;
+
+        const char *vhome_p = json_find_key_bounded(env_sec, env_end, "v_home");
+        if (vhome_p && json_match_int32(&vhome_p, &out_m->envelope.v_home)) has_v_home = true;
+
+        const char *la_p = json_find_key_bounded(env_sec, env_end, "lookahead_ticks");
+        if (la_p) json_match_uint32(&la_p, &out_m->envelope.lookahead_ticks);
+        if (out_m->envelope.lookahead_ticks == 0u) out_m->envelope.lookahead_ticks = 10u;
+
+        const char *ko_ptr = json_find_key_bounded(env_sec, env_end, "keepout");
+        if (ko_ptr) {
+            ko_ptr = strchr(ko_ptr, '[');
+            if (ko_ptr && ko_ptr < env_end) {
+                ko_ptr++;
+                out_m->envelope.num_keepouts = 0;
+                while (*ko_ptr && *ko_ptr != ']' && ko_ptr < env_end && out_m->envelope.num_keepouts < LATCH_MAX_KEEPOUTS) {
+                    const char *obj = strchr(ko_ptr, '{');
+                    if (!obj || obj >= env_end) break;
+                    const char *obj_end = strchr(obj, '}');
+                    if (!obj_end || obj_end >= env_end) break;
+                    const char *lo_ptr = json_find_key_bounded(obj, obj_end, "lo_mrad");
+                    const char *hi_ptr = json_find_key_bounded(obj, obj_end, "hi_mrad");
+                    const char *lb_ptr = json_find_key_bounded(obj, obj_end, "label");
+
+                    if (lo_ptr && hi_ptr) {
+                        uint32_t idx = out_m->envelope.num_keepouts;
+                        json_match_int32(&lo_ptr, &out_m->envelope.keepout[idx].lo_mrad);
+                        json_match_int32(&hi_ptr, &out_m->envelope.keepout[idx].hi_mrad);
+                        if (lb_ptr) {
+                            json_match_str(&lb_ptr, out_m->envelope.keepout[idx].label,
+                                           sizeof(out_m->envelope.keepout[idx].label));
+                        }
+                        out_m->envelope.num_keepouts++;
+                    }
+                    ko_ptr = obj_end + 1;
+                }
+            }
         }
     }
-    if ((p = json_find_key(buf, "pwm_center")) != NULL) json_match_int32(&p, &out_m->actuator.pwm_center);
-    if ((p = json_find_key(buf, "pwm_min")) != NULL)    json_match_int32(&p, &out_m->actuator.pwm_min);
-    if ((p = json_find_key(buf, "pwm_max")) != NULL)    json_match_int32(&p, &out_m->actuator.pwm_max);
 
-    /* Parse tape capacity */
-    if ((p = json_find_key(buf, "tape")) != NULL) {
-        const char *cap_ptr = json_find_key(p, "capacity");
-        if (cap_ptr) json_match_uint32(&cap_ptr, &out_m->tape.capacity);
+    /* 4. Parse timing within tim_sec */
+    {
+        const char *per_p = json_find_key_bounded(tim_sec, tim_end, "period_us");
+        if (per_p && json_match_uint32(&per_p, &out_m->timing.period_us)) has_period = true;
+
+        const char *wd_p = json_find_key_bounded(tim_sec, tim_end, "watchdog_ticks");
+        if (wd_p && json_match_uint32(&wd_p, &out_m->timing.watchdog_ticks)) has_watchdog = true;
+
+        const char *wcet_p = json_find_key_bounded(tim_sec, tim_end, "wcet_budget_us");
+        if (wcet_p && json_match_uint32(&wcet_p, &out_m->timing.wcet_budget_us)) has_wcet = true;
+
+        const char *mb_p = json_find_key_bounded(tim_sec, tim_end, "max_backlog_ticks");
+        if (mb_p) json_match_uint32(&mb_p, &out_m->timing.max_backlog_ticks);
+        if (out_m->timing.max_backlog_ticks == 0u) out_m->timing.max_backlog_ticks = 4u;
     }
 
-    /* Parse protocol metadata */
-    if ((p = json_find_key(buf, "protocol")) != NULL) {
-        const char *mag_ptr = json_find_key(p, "magic");
-        if (mag_ptr) json_match_str(&mag_ptr, out_m->protocol.magic, sizeof(out_m->protocol.magic));
-        const char *ver_ptr = json_find_key(p, "version");
-        if (ver_ptr) json_match_uint32(&ver_ptr, &out_m->protocol.version);
-        const char *crc_ptr = json_find_key(p, "crc");
-        if (crc_ptr) json_match_str(&crc_ptr, out_m->protocol.crc, sizeof(out_m->protocol.crc));
-        const char *cov_ptr = json_find_key(p, "coverage");
-        if (cov_ptr) json_match_uint32(&cov_ptr, &out_m->protocol.coverage);
+    /* 5. Parse recovery within rec_sec */
+    {
+        const char *cf_p = json_find_key_bounded(rec_sec, rec_end, "hysteresis_clean_frames");
+        if (cf_p && json_match_uint32(&cf_p, &out_m->recovery.hysteresis_clean_frames)) has_clean_frames = true;
+
+        const char *hh_p = json_find_key_bounded(rec_sec, rec_end, "hold_to_home_ticks");
+        if (hh_p && json_match_uint32(&hh_p, &out_m->recovery.hold_to_home_ticks)) has_hold_to_home = true;
+    }
+
+    /* 6. Parse decision */
+    if (dec_sec && dec_end) {
+        const char *cp_p = json_find_key_bounded(dec_sec, dec_end, "cpu");
+        if (cp_p) json_match_uint32(&cp_p, &out_m->decision.cpu);
+
+        const char *pr_p = json_find_key_bounded(dec_sec, dec_end, "priority");
+        if (pr_p) json_match_uint32(&pr_p, &out_m->decision.priority);
+        if (out_m->decision.priority == 0u) out_m->decision.priority = 63u;
+
+        const char *pp_p = json_find_key_bounded(dec_sec, dec_end, "pulse_priority");
+        if (pp_p) json_match_uint32(&pp_p, &out_m->decision.pulse_priority);
+        if (out_m->decision.pulse_priority == 0u) out_m->decision.pulse_priority = 63u;
+    } else {
+        out_m->decision.priority = 63u;
+        out_m->decision.pulse_priority = 63u;
+    }
+
+    /* 7. Parse ingest */
+    if (ing_sec && ing_end) {
+        const char *cp_p = json_find_key_bounded(ing_sec, ing_end, "cpu");
+        if (cp_p) json_match_uint32(&cp_p, &out_m->ingest.cpu);
+
+        const char *del_p = json_find_key_bounded(ing_sec, ing_end, "delivery");
+        if (del_p) json_match_str(&del_p, out_m->ingest.delivery, sizeof(out_m->ingest.delivery));
+
+        const char *qd_p = json_find_key_bounded(ing_sec, ing_end, "queue_depth");
+        if (qd_p) json_match_uint32(&qd_p, &out_m->ingest.queue_depth);
+    }
+    if (out_m->ingest.delivery[0] == '\0') strncpy(out_m->ingest.delivery, "queued", sizeof(out_m->ingest.delivery) - 1);
+    if (out_m->ingest.queue_depth == 0u) out_m->ingest.queue_depth = 64u;
+
+    /* 8. Parse paths */
+    if (paths_sec && paths_end) {
+        const char *prop_p = json_find_key_bounded(paths_sec, paths_end, "proposal");
+        if (prop_p) json_match_str(&prop_p, out_m->paths.proposal, sizeof(out_m->paths.proposal));
+
+        const char *act_p  = json_find_key_bounded(paths_sec, paths_end, "actuator");
+        if (act_p) json_match_str(&act_p, out_m->paths.actuator, sizeof(out_m->paths.actuator));
+
+        const char *ab_p   = json_find_key_bounded(paths_sec, paths_end, "ability");
+        if (ab_p) json_match_str(&ab_p, out_m->paths.ability, sizeof(out_m->paths.ability));
+
+        const char *i2c_p  = json_find_key_bounded(paths_sec, paths_end, "i2c_bus");
+        if (i2c_p) json_match_str(&i2c_p, out_m->paths.i2c_bus, sizeof(out_m->paths.i2c_bus));
+    }
+    if (out_m->paths.proposal[0] == '\0') strncpy(out_m->paths.proposal, "/dev/latch/proposal", sizeof(out_m->paths.proposal) - 1);
+    if (out_m->paths.actuator[0] == '\0') strncpy(out_m->paths.actuator, "/dev/latch/actuator", sizeof(out_m->paths.actuator) - 1);
+    if (out_m->paths.ability[0] == '\0')  strncpy(out_m->paths.ability, "latch/actuator", sizeof(out_m->paths.ability) - 1);
+    if (out_m->paths.i2c_bus[0] == '\0')  strncpy(out_m->paths.i2c_bus, "/dev/i2c1", sizeof(out_m->paths.i2c_bus) - 1);
+
+    /* 9. Parse actuator within act_sec */
+    {
+        const char *t_p = json_find_key_bounded(act_sec, act_end, "type");
+        if (t_p && json_match_str(&t_p, out_m->actuator.type, sizeof(out_m->actuator.type))) has_actuator_type = true;
+
+        const char *a_p = json_find_key_bounded(act_sec, act_end, "addr");
+        if (a_p) json_match_uint32(&a_p, &out_m->actuator.addr);
+
+        const char *f_p = json_find_key_bounded(act_sec, act_end, "freq_hz");
+        if (f_p) json_match_uint32(&f_p, &out_m->actuator.freq_hz);
+
+        const char *pr_p = json_find_key_bounded(act_sec, act_end, "prescale");
+        if (pr_p) json_match_uint32(&pr_p, &out_m->actuator.prescale);
+
+        const char *ret_p = json_find_key_bounded(act_sec, act_end, "retries");
+        if (ret_p) json_match_uint32(&ret_p, &out_m->actuator.retries);
+
+        const char *id_p = json_find_key_bounded(act_sec, act_end, "init_delay_us");
+        if (id_p) json_match_uint32(&id_p, &out_m->actuator.init_delay_us);
+
+        const char *req_p = json_find_key_bounded(act_sec, act_end, "required");
+        if (req_p) {
+            if (strncmp(req_p, "true", 4) == 0) out_m->actuator.required = true;
+            else if (strncmp(req_p, "false", 5) == 0) out_m->actuator.required = false;
+        }
+
+        const char *pc_p = json_find_key_bounded(act_sec, act_end, "pwm_center");
+        if (pc_p) json_match_int32(&pc_p, &out_m->actuator.pwm_center);
+
+        const char *pmin_p = json_find_key_bounded(act_sec, act_end, "pwm_min");
+        if (pmin_p) json_match_int32(&pmin_p, &out_m->actuator.pwm_min);
+
+        const char *pmax_p = json_find_key_bounded(act_sec, act_end, "pwm_max");
+        if (pmax_p) json_match_int32(&pmax_p, &out_m->actuator.pwm_max);
+    }
+
+    /* 10. Parse tape */
+    if (tape_sec && tape_end) {
+        const char *cap_p = json_find_key_bounded(tape_sec, tape_end, "capacity");
+        if (cap_p) json_match_uint32(&cap_p, &out_m->tape.capacity);
+    }
+    if (out_m->tape.capacity == 0u) out_m->tape.capacity = 4096u;
+
+    /* 11. Parse protocol within proto_sec */
+    {
+        const char *mag_p = json_find_key_bounded(proto_sec, proto_end, "magic");
+        if (mag_p && json_match_str(&mag_p, out_m->protocol.magic, sizeof(out_m->protocol.magic))) has_proto_magic = true;
+
+        const char *ver_p = json_find_key_bounded(proto_sec, proto_end, "version");
+        if (ver_p && json_match_uint32(&ver_p, &out_m->protocol.version)) has_proto_version = true;
+
+        const char *crc_p = json_find_key_bounded(proto_sec, proto_end, "crc");
+        if (crc_p) json_match_str(&crc_p, out_m->protocol.crc, sizeof(out_m->protocol.crc));
+
+        const char *cov_p = json_find_key_bounded(proto_sec, proto_end, "coverage");
+        if (cov_p) json_match_uint32(&cov_p, &out_m->protocol.coverage);
     }
 
     free(buf);
+
+    /* Enforce strict Anti-Silent-Defaults: all required safety keys must be present */
+    if (!has_schema || !has_theta_min || !has_theta_max || !has_home ||
+        !has_v_max || !has_a_max || !has_j_max || !has_v_home ||
+        !has_period || !has_watchdog || !has_wcet ||
+        !has_clean_frames || !has_hold_to_home ||
+        !has_proto_magic || !has_proto_version || !has_actuator_type) {
+        if (err_buf) snprintf(err_buf, err_len,
+                              "Manifest missing required safety parameters (anti-silent-defaults: fail-closed)");
+        return -EINVAL;
+    }
 
     latch_admissibility_t admit = latch_manifest_validate(out_m, err_buf, err_len);
     if (admit != LATCH_ADMIT_SATISFIED) {
@@ -737,6 +867,27 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
                                   m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
             return LATCH_ADMIT_VIOLATED;
         }
+    }
+    if (m->envelope.v_home > m->envelope.v_max) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: v_home (%d) exceeds v_max (%d)",
+                              m->envelope.v_home, m->envelope.v_max);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->envelope.home_mrad < m->envelope.theta_min_mrad ||
+        m->envelope.home_mrad > m->envelope.theta_max_mrad) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Home position (%d) sits outside envelope [%d, %d]",
+                              m->envelope.home_mrad, m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->decision.pulse_priority < 1 || m->decision.pulse_priority > 255) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Pulse priority %u outside [1, 255]",
+                              m->decision.pulse_priority);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->tape.capacity < 1 || m->tape.capacity > LATCH_MANIFEST_MAX_TAPE_CAPACITY) {
+        if (err_buf) snprintf(err_buf, err_len, "Fail closed: Tape capacity %u outside [1, %u]",
+                              m->tape.capacity, (unsigned int)LATCH_MANIFEST_MAX_TAPE_CAPACITY);
+        return LATCH_ADMIT_VIOLATED;
     }
     if (m->actuator.pwm_min >= m->actuator.pwm_center ||
         m->actuator.pwm_center >= m->actuator.pwm_max) {

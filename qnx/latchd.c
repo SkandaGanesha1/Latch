@@ -12,7 +12,7 @@
  *   - Drives PCA9685 16-channel PWM controller at I2C address 0x40 on /dev/i2c1.
  *   - Runs 1.000 ms SCHED_FIFO priority 63 decision tick pinned to _cpu-0.
  *   - Enforces zero-hardcoding metadata architecture via `latch.manifest`.
- *   - Concurrency protected by lock-free atomic Seqlock two-slot buffer.
+ *   - Concurrency: Lockless 256-slot ring buffer with Seqlock snapshot guard for concurrent multi-core reads.
  *   - Calibrates ClockCycles() to truthful nanoseconds via QNX qtime syspage.
  *   - Fully testable via POSIX host-simulation (gcc -DLATCH_HOST_SIM).
  */
@@ -90,6 +90,7 @@ typedef struct latch_publish_buffer {
     _Atomic uint32_t     read_tail;
     _Atomic uint32_t     active_idx;
     _Atomic uint32_t     total_publishes;
+    _Atomic uint32_t     dropped_full;
 } latch_publish_buffer_t;
 
 /* ==========================================================================
@@ -127,6 +128,7 @@ typedef struct latch_simplex_state {
     uint32_t       total_proposals_rx;
     uint32_t       total_wire_faults;
     uint32_t       total_envelope_faults;
+    _Atomic uint32_t total_ring_drops;
     _Atomic uint32_t total_eperm_rejects;
     _Atomic uint32_t operator_hold_locked;
     _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
@@ -208,6 +210,9 @@ static void latch_publish_proposal(latch_publish_buffer_t *buf,
             atomic_store_explicit(&slot->gen, g + 2u, memory_order_release);
             atomic_store_explicit(&buf->write_head, h + 1u, memory_order_release);
             atomic_fetch_add_explicit(&buf->total_publishes, 1u, memory_order_relaxed);
+        } else {
+            atomic_fetch_add_explicit(&buf->dropped_full, 1u, memory_order_relaxed);
+            atomic_fetch_add_explicit(&g_simplex.total_ring_drops, 1u, memory_order_relaxed);
         }
         return;
     }
@@ -406,10 +411,13 @@ static uint16_t latch_mrad_to_pca9685_off(int32_t theta_mrad) {
                                          g_manifest.envelope.theta_min_mrad,
                                          g_manifest.envelope.theta_max_mrad);
     if (latch_manifest_in_keepout(&g_manifest, safe_theta)) {
-        if (g_manifest.envelope.num_keepouts > 0) {
-            int32_t lo = g_manifest.envelope.keepout[0].lo_mrad;
-            int32_t hi = g_manifest.envelope.keepout[0].hi_mrad;
-            safe_theta = (safe_theta < ((lo + hi) / 2)) ? (lo - 1) : (hi + 1);
+        for (uint32_t i = 0; i < g_manifest.envelope.num_keepouts; ++i) {
+            int32_t lo = g_manifest.envelope.keepout[i].lo_mrad;
+            int32_t hi = g_manifest.envelope.keepout[i].hi_mrad;
+            if (safe_theta >= lo && safe_theta <= hi) {
+                safe_theta = (safe_theta < ((lo + hi) / 2)) ? (lo - 1) : (hi + 1);
+                break;
+            }
         }
     }
 
@@ -437,7 +445,9 @@ static uint16_t latch_mrad_to_pca9685_off(int32_t theta_mrad) {
 }
 
 static int latch_pca9685_write_reg(int i2c_fd, uint8_t reg, uint8_t val) {
-    if (i2c_fd < 0) return 0;
+    if (i2c_fd < 0) {
+        return g_manifest.actuator.required ? -ENODEV : 0;
+    }
 #ifdef __QNXNTO__
     struct __attribute__((packed)) {
         i2c_send_t hdr;
@@ -453,6 +463,11 @@ static int latch_pca9685_write_reg(int i2c_fd, uint8_t reg, uint8_t val) {
     pkt.bytes[1]       = val;
 
     int status = devctl(i2c_fd, DCMD_I2C_SEND, &pkt, sizeof(pkt), NULL);
+    uint32_t retries = g_manifest.actuator.retries;
+    while (status != EOK && retries > 0) {
+        retries--;
+        status = devctl(i2c_fd, DCMD_I2C_SEND, &pkt, sizeof(pkt), NULL);
+    }
     return (status == EOK) ? 0 : -status;
 #else
     (void)reg; (void)val; return 0;
@@ -460,7 +475,9 @@ static int latch_pca9685_write_reg(int i2c_fd, uint8_t reg, uint8_t val) {
 }
 
 static int latch_pca9685_init(int i2c_fd) {
-    if (i2c_fd < 0) return 0;
+    if (i2c_fd < 0) {
+        return g_manifest.actuator.required ? -ENODEV : 0;
+    }
 
     int rc = latch_pca9685_write_reg(i2c_fd, PCA9685_REG_MODE1, PCA9685_MODE1_SLEEP);
     if (rc != 0) return rc;
@@ -489,7 +506,9 @@ static int latch_pca9685_write_angle(int i2c_fd, int32_t theta_mrad) {
     if (off_counts < pmin) off_counts = pmin;
     else if (off_counts > pmax) off_counts = pmax;
 
-    if (i2c_fd < 0) return 0;
+    if (i2c_fd < 0) {
+        return g_manifest.actuator.required ? -ENODEV : 0;
+    }
 
 #ifdef __QNXNTO__
     struct __attribute__((packed)) {
@@ -510,7 +529,9 @@ static int latch_pca9685_write_angle(int i2c_fd, int32_t theta_mrad) {
     pkt.payload[4] = (uint8_t)((off_counts >> 8) & 0x0Fu);
 
     int status = devctl(i2c_fd, DCMD_I2C_SEND, &pkt, sizeof(pkt), NULL);
-    if (status != EOK && g_manifest.actuator.retries > 0) {
+    uint32_t retries = g_manifest.actuator.retries;
+    while (status != EOK && retries > 0) {
+        retries--;
         status = devctl(i2c_fd, DCMD_I2C_SEND, &pkt, sizeof(pkt), NULL);
     }
     return (status == EOK) ? 0 : -status;
@@ -593,6 +614,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->theta_mrad = g_manifest.envelope.home_mrad;
         st->velocity_mrad_tick = 0;
         st->accel_mrad_tick2 = 0;
+        (void)latch_pca9685_write_angle(st->i2c_fd, st->theta_mrad);
         return;
     }
 
@@ -825,13 +847,26 @@ static void latch_fill_tape_dump(latch_tape_dump_t *dump) {
         if (req_count == 0u || req_count > LATCH_DUMP_MAX_ENTRIES) {
             req_count = LATCH_DUMP_MAX_ENTRIES;
         }
-        if (req_count > wr_idx) {
-            req_count = wr_idx;
-        }
 
         uint32_t start = dump->start_index;
-        if (start == UINT32_MAX || start + req_count > wr_idx) {
+        if (start == UINT32_MAX) {
+            if (req_count > wr_idx) {
+                req_count = wr_idx;
+            }
             start = (wr_idx >= req_count) ? (wr_idx - req_count) : 0u;
+        } else {
+            /* Support pagination from start_index: clamp if overwritten by ring capacity */
+            if (wr_idx > cap && start < wr_idx - cap) {
+                start = wr_idx - cap;
+            }
+            if (start >= wr_idx) {
+                req_count = 0u;
+            } else {
+                uint32_t avail = wr_idx - start;
+                if (req_count > avail) {
+                    req_count = avail;
+                }
+            }
         }
 
         for (uint32_t i = 0; i < req_count; ++i) {
@@ -1243,6 +1278,9 @@ int main(int argc, char *argv[]) {
                     close(g_simplex.i2c_fd);
                     return EXIT_FAILURE;
                 }
+            } else {
+                /* Park actuator at manifest envelope home position immediately upon hardware init */
+                (void)latch_pca9685_write_angle(g_simplex.i2c_fd, g_manifest.envelope.home_mrad);
             }
         }
     } else {

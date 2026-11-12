@@ -33,6 +33,7 @@ jobs:
         run: |
           ./qnx/build/host-sim/latchd -m qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/latch.manifest
+          ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/syringe_pump_bolus.manifest 36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3
 
       - name: Run 200-Tick End-to-End Pipeline Suite
         run: |
@@ -64,8 +65,11 @@ jobs:
           for r in rows:
               theta = int(r["theta_applied"])
               assert not (250 <= theta <= 650), "Keep-out breach at tick " + str(r["tick"]) + ": " + str(theta)
+              assert int(r["latency_cycles"]) < 150000, "Latency breach: " + str(r["latency_cycles"]) + " cycles"
           eperm_rows = [r for r in rows if int(r["fault_bits"], 16) & 0x0800]
           assert len(eperm_rows) >= 1, "EPERM fault not latched"
-          print("[CI ASSERTION PASS] All 200 ticks satisfied kinematic keep-out and EPERM invariants.")
+          last_seq = max(int(r["seq"]) for r in rows)
+          assert last_seq >= 66, "Expected last sequence >= 66, got " + str(last_seq)
+          print("[CI ASSERTION PASS] All 200 ticks satisfied kinematic keep-out, WCET (<150us), and EPERM invariants (last_seq=" + str(last_seq) + ").")
           '
 

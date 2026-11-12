@@ -191,7 +191,7 @@ ByteByteGo, The Pragmatic Engineer, TLDR, Superhuman, and AI Breakfast were used
 
 Engineering-blog habits stolen from the top-100 list, without their stacks:
 
-- Stripe / Razorpay: idempotency and a sequence number. That is `seq == last + 1`.
+- Stripe / Razorpay: idempotency and a sequence number. That is `seq > last_seq`.
 - Honeycomb / Datadog: one histogram of a thing you actually care about. That is decision cycles.
 - Netflix / Hotstar: a watchdog that is boring and always on. That is two missed ticks.
 - Anthropic's agent notes: the model does not hold the credential. On a robot the credential is the I2C fd.
