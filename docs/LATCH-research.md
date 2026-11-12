@@ -208,7 +208,7 @@ Recorded so it does not get pasted back in.
 | `deadline_timestamp_ns` compared with host `ClockCycles` | Different clocks. Host stamps arrival. |
 | `procmgr_ability_create` then `write()` with no check, mode `0666` | The ability API is real; the sample never calls `iofunc_client_info_able`. Scenario 6 is fiction relative to that file. |
 | `u_applied` computed, never written | The BSP gives you I2C. Use it. |
-| Mutex held across the FIFO tick | Default protocol is priority inheritance, but a two-slot publish is simpler and does not block the tick on the ingest thread. |
+| Mutex held across the FIFO tick | Default protocol is priority inheritance, and the 256-slot SPSC ring + Seqlock status snapshot does not block the tick on the ingest thread. |
 | `mlockall` as the determinism story | On SDP 8 the call does nothing. |
 | Priority 250 as a virtue | Legal, below the clock IST, and unnecessary once the vCPU is pinned at priority 8 on other cores. |
 | `vdev gic` with no version, on a Pi 4 | Default version is 3. The Pi is GICv2. |
@@ -223,7 +223,7 @@ Recorded so it does not get pasted back in.
 | --- | --- | --- |
 | OS | QNX SDP 8.0 host | Hackathon target |
 | Isolation | Hypervisor 8.0, `cpu _cpu-2 sched 8r`, `cpu _cpu-3 sched 8r`, decision on `_cpu-0` | cpu manual, security page |
-| Board interrupt controller | `vdev gic` / `version 2` | vdev gic manual, BCM2711, KB 549 |
+| Board interrupt controller | `vdev gic` / `version 2` | vdev gic manual, BCM2711, QNX KB 501OI00000PEvha |
 | Language on the tick | C, `qcc -Vgcc_ntoaarch64le`, no third-party libs | You need to read every line |
 | Actuator bus | I2C + PCA9685 | BSP contents |
 | Guest | Linux + Python 3 stdlib liar | Perception is not the product |

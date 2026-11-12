@@ -75,8 +75,8 @@ extern "C" {
  * 4       version   uint16_t  1
  * 6       joint     uint8_t   0 only in this build
  * 7       flags     uint8_t   Guest demo bits; ignored by host for safety
- * 8       seq       uint32_t  Must be last_accepted + 1 after first frame
- * 12      u_mrad    int32_t   Proposed angle in milliradians (integer only)
+ * 8       seq       uint32_t  Must strictly exceed last_accepted (seq > last_seq)
+ * 12      u_mrad    int32_t   Proposed position in manifest units (integer)
  * 16      crc32     uint32_t  IEEE 802.3 CRC32 over bytes [0, 16)
  * 20      reserved  uint8[12] Must be all zero; non-zero is a fault
  * ========================================================================== */
@@ -147,10 +147,10 @@ typedef enum latch_mode {
 #define LATCH_FAULT_SEQ          (1u << 2)   /* Sequence gap or replay        */
 #define LATCH_FAULT_NAN          (1u << 3)   /* u_mrad == INT32_MIN           */
 #define LATCH_FAULT_RESERVED     (1u << 4)   /* Non-zero reserved[12] bytes   */
-#define LATCH_FAULT_KEEPOUT      (1u << 5)   /* Enters/crosses [250, 650] box */
-#define LATCH_FAULT_BOUNDS       (1u << 6)   /* Outside [-1000, +1000] mrad   */
-#define LATCH_FAULT_RATE         (1u << 7)   /* Exceeds V_MAX or A_MAX        */
-#define LATCH_FAULT_WATCHDOG     (1u << 8)   /* No accepted frame for 2 ticks */
+#define LATCH_FAULT_KEEPOUT      (1u << 5)   /* Enters/crosses keep-out interval */
+#define LATCH_FAULT_BOUNDS       (1u << 6)   /* Outside manifest envelope stops  */
+#define LATCH_FAULT_RATE         (1u << 7)   /* Exceeds v_max / a_max / j_max    */
+#define LATCH_FAULT_WATCHDOG     (1u << 8)   /* Silent past watchdog_ticks       */
 #define LATCH_FAULT_I2C          (1u << 9)   /* PCA9685 I2C transfer error    */
 #define LATCH_FAULT_OPERATOR     (1u << 10)  /* Operator GPIO / devctl HOLD   */
 #define LATCH_FAULT_EPERM        (1u << 11)  /* Unauthorized actuator devctl  */
@@ -228,6 +228,8 @@ typedef struct latch_status_reply {
     uint32_t total_wire_faults;
     uint32_t total_envelope_faults;
     uint32_t total_eperm_rejects;
+    uint32_t total_ring_drops;
+    uint32_t wcet_overruns;
     uint32_t operator_hold_locked;
     uint8_t  manifest_sha256[32];
 } latch_status_reply_t;

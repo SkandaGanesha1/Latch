@@ -104,6 +104,8 @@ static int do_status(int fd) {
     printf("Proposals Received   : %u\n", rep.total_proposals_rx);
     printf("Wire Faults Caught   : %u\n", rep.total_wire_faults);
     printf("Envelope Vetoes      : %u\n", rep.total_envelope_faults);
+    printf("Ring Drops / WCET    : %u drops | %u overruns\n",
+           rep.total_ring_drops, rep.wcet_overruns);
     printf("EPERM Rejections     : %u\n", rep.total_eperm_rejects);
     printf("Operator Hold Locked : %s\n", rep.operator_hold_locked ? "YES" : "NO");
     printf("Active Fault Bits    : %s\n", active_str);

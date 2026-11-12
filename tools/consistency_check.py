@@ -18,7 +18,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -62,9 +65,14 @@ def main():
     rpi4_build_path = os.path.join(REPO_ROOT, "qnx", "latch_rpi4.build")
     secpol_path = os.path.join(REPO_ROOT, "qnx", "latch.secpol")
     qvmconf_path = os.path.join(REPO_ROOT, "qnx", "latch.qvmconf")
+    qvm_virt_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu_virt.qvmconf")
+    makefile_path = os.path.join(REPO_ROOT, "qnx", "Makefile")
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    impl_doc_path = os.path.join(REPO_ROOT, "docs", "LATCH-implementation.md")
 
     for p in [manifest_path, sha256_path, syringe_manifest_path, syringe_sha256_path,
-              header_path, qemu_build_path, rpi4_build_path, secpol_path, qvmconf_path]:
+              header_path, qemu_build_path, rpi4_build_path, secpol_path, qvmconf_path,
+              qvm_virt_path, makefile_path, readme_path, impl_doc_path]:
         if not os.path.isfile(p):
             fail(f"Required artifact missing: {p}")
 
@@ -128,15 +136,21 @@ def main():
         fail("qnx/latch_qemu.build startup does not pass '-Q enable' for EL2 hypervisor host mode")
     if "/lib/dll/qvm/" not in qemu_build:
         fail("qnx/latch_qemu.build does not install vdev DLLs into /lib/dll/qvm/")
-    if "libqvm.so.1" not in qemu_build:
-        fail("qnx/latch_qemu.build missing libqvm.so.1 shared library")
+    if "libsecpol.so.1" not in qemu_build or "/proc/boot/qvm = qvm" not in qemu_build:
+        fail("qnx/latch_qemu.build missing libsecpol.so.1 or /proc/boot/qvm = qvm hypervisor binary")
+    if "libqvm.so.1" in qemu_build or "vdev-gic.so" in qemu_build:
+        fail("qnx/latch_qemu.build references nonexistent QNX 8.0 libraries (libqvm.so.1 / vdev-gic.so)")
     if "latch.manifest.sha256" not in qemu_build:
         fail("qnx/latch_qemu.build missing latch.manifest.sha256 payload")
     if "latch_verify" not in qemu_build:
         fail("qnx/latch_qemu.build missing latch_verify target binary")
-    if "linux-guest.Image = $(GUEST_IMAGE)" not in qemu_build:
-        fail("qnx/latch_qemu.build missing linux-guest.Image guest packaging")
-    pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, latch_verify, sidecar & guest image verified")
+    if "linux-guest.Image = ${GUEST_IMAGE}" not in qemu_build:
+        fail("qnx/latch_qemu.build missing linux-guest.Image guest packaging (${GUEST_IMAGE})")
+    if "secpolpush /proc/boot/secpol.bin" not in qemu_build:
+        fail("qnx/latch_qemu.build must use secpolpush (not secpollaunch -e) for boot policy activation")
+    if "latch_qemu_virt.qvmconf" not in qemu_build:
+        fail("qnx/latch_qemu.build must reference latch_qemu_virt.qvmconf (QEMU GICv2 0x08000000)")
+    pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, latch_qemu_virt.qvmconf & guest image verified")
 
     # 4. Verify RPi4 Buildfile Configuration
     with open(rpi4_build_path, "r", encoding="utf-8") as f:
@@ -144,43 +158,75 @@ def main():
 
     if "-Q enable" not in rpi4_build:
         fail("qnx/latch_rpi4.build startup does not pass '-Q enable'")
-    if "i2c-bcm2711 -p0xfe804000 -i147 --b400000 --u1" not in rpi4_build:
-        fail("qnx/latch_rpi4.build missing exact i2c-bcm2711 -p0xfe804000 -i147 --b400000 --u1 parameters (GIC SPI 115 + 32 = IRQ 147)")
+    if "i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1" not in rpi4_build:
+        fail("qnx/latch_rpi4.build missing exact i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1 parameters (GIC SPI 117 + 32 = IRQ 149)")
     if ":/lib/dll/qvm" not in rpi4_build:
         fail("qnx/latch_rpi4.build LD_LIBRARY_PATH missing :/lib/dll/qvm")
+    if "secpolpush /proc/boot/secpol.bin" not in rpi4_build:
+        fail("qnx/latch_rpi4.build must use secpolpush (not secpollaunch -e)")
     if "latch.manifest.sha256" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing latch.manifest.sha256 payload")
     if "latch_verify" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing latch_verify target binary")
     if "linux-guest.Image = $(GUEST_IMAGE)" not in rpi4_build:
         fail("qnx/latch_rpi4.build missing linux-guest.Image guest packaging")
-    pass_check("RPi4 buildfile BCM2711 I2C IRQ 147, LD_LIBRARY_PATH, latch_verify, sidecar & guest image verified")
+    pass_check("RPi4 buildfile BCM2711 I2C IRQ 149, secpolpush, LD_LIBRARY_PATH, latch_verify & guest image verified")
 
-    # 5. Verify Security Policy Enforcements
+    # 5. Verify Security Policy Enforcements (QNX 8.0 secpolcompile grammar)
     with open(secpol_path, "r", encoding="utf-8") as f:
         secpol = f.read()
 
-    if f"ability {ability_name};" not in secpol:
-        fail(f"Security policy does not declare ability '{ability_name}'")
-    if "allow_ability latchd_t latch/actuator;" not in secpol:
-        fail("Security policy does not grant latch/actuator to latchd_t")
-    if "allow_ability latchd_t PROCMGR_AID_MEM_LOCK;" not in secpol:
-        fail("Security policy does not grant PROCMGR_AID_MEM_LOCK to latchd_t")
-    if "allow latchctl_t /dev/latch/actuator:all;" not in secpol:
-        fail("Security policy does not grant latchctl_t access to /dev/latch/actuator")
-    if "neverallow qvm_guest_host_t /dev/latch/actuator:all;" not in secpol:
-        fail("Security policy does not strictly isolate qvm_guest_host_t from actuator node")
-    pass_check("Security policy ability declarations & least-privilege rules verified")
+    for bad_tok in ["type_trans", "allow_ability", "neverallow", ":all"]:
+        if bad_tok in secpol:
+            fail(f"Security policy contains invalid non-QNX token '{bad_tok}'")
+    for req_tok in ["type latchd_t;", f"ability {ability_name};", "self:ability",
+                    f"allow_attach latchd_t {proposal_path};",
+                    f"allow_attach latchd_t {actuator_path};",
+                    "latchd_t:channel connect;"]:
+        if req_tok not in secpol:
+            fail(f"Security policy missing valid QNX 8.0 secpolcompile rule '{req_tok}'")
+    secpolc_bin = shutil.which("secpolcompile")
+    if secpolc_bin:
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=True) as tf:
+            rc = subprocess.run([secpolc_bin, "-o", tf.name, secpol_path], capture_output=True, text=True)
+            if rc.returncode != 0:
+                fail(f"secpolcompile failed on {secpol_path}: {rc.stderr}")
+    pass_check("Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified")
 
-    # 6. Verify QVM Guest Configuration
+    # 6. Verify QVM Guest Configurations & Makefile Build System
     with open(qvmconf_path, "r", encoding="utf-8") as f:
         qvmconf = f.read()
+    with open(qvm_virt_path, "r", encoding="utf-8") as f:
+        qvm_virt = f.read()
+    with open(makefile_path, "r", encoding="utf-8") as f:
+        mk = f.read()
 
-    if "virtio-console" not in qvmconf:
-        fail("qnx/latch.qvmconf missing virtio-console device definition")
-    if "-m /proc/boot/latch.manifest" not in qvmconf:
-        fail("qnx/latch.qvmconf ingest hostdev does not pass '-m /proc/boot/latch.manifest'")
-    pass_check("Hypervisor qvm guest configuration & manifest binding verified")
+    if "gicd 0xff841000" not in qvmconf or "gicc 0xff842000" not in qvmconf:
+        fail("qnx/latch.qvmconf missing RPi4 BCM2711 GIC-400 addresses (0xff841000 / 0xff842000)")
+    if "gicd 0x08000000" not in qvm_virt or "gicc 0x08010000" not in qvm_virt:
+        fail("qnx/latch_qemu_virt.qvmconf missing QEMU virt GICv2 addresses (0x08000000 / 0x08010000)")
+    if "-m /proc/boot/latch.manifest" not in qvmconf or "-m /proc/boot/latch.manifest" not in qvm_virt:
+        fail("Hypervisor qvmconf ingest hostdev does not pass '-m /proc/boot/latch.manifest'")
+    if "dd if=/dev/zero" in mk or "secpolc " in mk:
+        fail("qnx/Makefile still contains dummy zero guest stub or invalid 'secpolc' binary name")
+    if "secpolcompile" not in mk:
+        fail("qnx/Makefile must default SECPOLC to secpolcompile")
+    pass_check("Hypervisor qvmconf split (RPi4 vs QEMU virt) & Makefile verified")
+
+    # 7. Verify Documentation Attestation Digest Synchronization
+    with open(sha256_path, "r", encoding="utf-8") as f:
+        default_sha = f.read().strip().split()[0].lower()
+    with open(syringe_sha256_path, "r", encoding="utf-8") as f:
+        syringe_sha = f.read().strip().split()[0].lower()
+    with open(readme_path, "r", encoding="utf-8") as f:
+        readme_txt = f.read().lower()
+    with open(impl_doc_path, "r", encoding="utf-8") as f:
+        impl_txt = f.read().lower()
+    if default_sha not in readme_txt or syringe_sha not in readme_txt:
+        fail("README.md manifest SHA-256 attestation hashes out of sync with .sha256 sidecars")
+    if default_sha not in impl_txt:
+        fail("docs/LATCH-implementation.md manifest SHA-256 attestation hash out of sync with .sha256 sidecar")
+    pass_check("README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced")
 
     print("\n[SUCCESS] All architectural consistency checks PASSED with 0 errors.")
 

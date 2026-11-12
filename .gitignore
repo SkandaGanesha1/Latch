@@ -36,3 +36,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+# QNX Agent Target Config (local SSH connection details)
+TARGET.md
+

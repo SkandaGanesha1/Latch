@@ -2,15 +2,11 @@
 # qnx/latch_qemu.build
 #
 # QNX SDP 8.0 OS Image Buildfile for LATCH on QEMU AArch64 (ARMv8 Virt Machine)
-# Target Platform : QEMU `virt` machine (ARM Cortex-A72, GICv2, VirtIO)
-# Hypervisor      : QNX Hypervisor 8.0 (Build >= 549)
-#
-# QEMU Command:
-#   qemu-system-aarch64 -M virt,gic-version=2 -cpu cortex-a72 -smp 4 -m 2048 \
-#     -kernel latch_qemu.ifs -nographic
+# Target Platform : QEMU `virt` machine (ARM Cortex-A76, GICv2, VirtIO, EL2 VHE)
+# Hypervisor      : QNX Hypervisor 8.0 (AArch64 EL2 + GICv2 0x08000000 / 0x08010000)
 ################################################################################
 
-[image=0x40200000]
+[image=0x40080000]
 [virtual=aarch64le,raw] boot = {
     startup-qemu-virt -v -Q enable
     PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
@@ -19,7 +15,7 @@
 }
 
 [+script] startup-script = {
-    procmgr_symlink ../../proc/boot/libc.so.6 /usr/lib/ldqnx-64.so.2
+    procmgr_symlink ../../proc/boot/ldqnx-64.so.2 /usr/lib/ldqnx-64.so.2
 
     # 1. Serial console (PL011 UART at 0x09000000, IRQ 33 on QEMU virt)
     devc-serpl011 -e -F -b115200 0x09000000,33
@@ -28,24 +24,31 @@
 
     display_msg "================================================================"
     display_msg " LATCH — Last Authority for Trusted Control Handoff (QNX 8.0)"
-    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A72 | GICv2"
+    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2"
     display_msg "================================================================"
 
-    # 2. Activate QNX 8.0 Security Policy
-    secpollaunch -e /proc/boot/secpol.bin
+    # 2. Push compiled QNX 8.0 Security Policy into procnto
+    secpolpush /proc/boot/secpol.bin
 
-    # 3. Start latchd on _cpu-0 in mock I2C mode (-n) or bus path
-    on -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest -n &
+    # 3. Start system logger and pipe resource manager (required for qvm hostdev >"|...")
+    on -T slogger2_t -C 1 /proc/boot/slogger2 &
+    waitfor /dev/slog2 4
+
+    on -T pipe_t -C 1 /proc/boot/pipe &
+    waitfor /dev/pipe 4
+
+    # 4. Start latchd on _cpu-0 in mock I2C mode (-n)
+    on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest -n &
     waitfor /dev/latch/proposal 4
     waitfor /dev/latch/actuator 4
 
-    # 4. Start background evidence logger
-    on -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
+    # 5. Start background evidence logger on _cpu-1
+    on -T latchlog_t -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
 
-    # 5. Launch QNX Hypervisor 8.0 guest VM (vCPUs pinned to _cpu-2 and _cpu-3)
-    on -C 1 /proc/boot/qvm @/proc/boot/latch.qvmconf &
+    # 6. Launch QNX Hypervisor 8.0 guest VM pinned off CPU 0/1
+    on -T qvm_host_t -C 2 /proc/boot/qvm @/proc/boot/latch_qemu_virt.qvmconf &
 
-    # 6. Interactive operator shell on _cpu-1
+    # 7. Interactive operator shell on _cpu-1
     [+session] on -C 1 -p 10r /proc/boot/ksh
 }
 
@@ -53,21 +56,26 @@
 [type=link] /dev/console = /dev/ser1
 [type=link] /tmp = /dev/shmem
 
+ldqnx-64.so.2
 libc.so
 libm.so
 libgcc_s.so.1
 libsecpol.so.1
 libqh.so.1
-libqvm.so.1
+libslog2.so.1
+libslog2parse.so.1
+libfdt.so.1
 
 [perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
 [perms=0755] /lib/dll/qvm/vdev-shmem.so = vdev-shmem.so
 [perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
-[perms=0755] /lib/dll/qvm/vdev-gic.so = vdev-gic.so
 
-[perms=0755] secpollaunch
+[perms=0755] secpolpush
+[perms=0755] slogger2
+[perms=0755] slog2info
+[perms=0755] pipe
 [perms=0755] devc-serpl011
-[perms=0755] qvm
+[perms=0755] /proc/boot/qvm = qvm
 [perms=0755] on
 [perms=0755] ability
 [perms=0755] pidin
@@ -75,14 +83,14 @@ libqvm.so.1
 [perms=0755] ksh
 [perms=0755] waitfor
 
-[uid=0 gid=0 perms=0750] /proc/boot/latchd = latchd
-[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = latch_verify
-[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = latch-ingest
-[uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
-[uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog
-[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = latch.manifest
-[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest.sha256 = latch.manifest.sha256
-[uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
-[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin
-[perms=0644] /proc/boot/linux-guest.Image = $(GUEST_IMAGE)
-
+[uid=0 gid=0 perms=0750] /proc/boot/latchd = build/nto-aarch64-le/latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = build/nto-aarch64-le/latch_verify
+[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = build/nto-aarch64-le/latch-ingest
+[uid=0 gid=0 perms=0750] /proc/boot/latchctl = build/nto-aarch64-le/latchctl
+[uid=0 gid=0 perms=0755] /proc/boot/latchlog = build/nto-aarch64-le/latchlog
+[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = ./latch.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/latch.manifest.sha256 = ./latch.manifest.sha256
+[uid=0 gid=0 perms=0644] /proc/boot/latch_qemu_virt.qvmconf = ./latch_qemu_virt.qvmconf
+[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = build/secpol.bin
+[perms=0644] /proc/boot/linux-guest.Image = ${GUEST_IMAGE}
+[perms=0644] /proc/boot/linux-guest.initrd = ${GUEST_INITRD}

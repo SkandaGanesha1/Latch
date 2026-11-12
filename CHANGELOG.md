@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [3.0.0] - 2026-11-12
+
+### Safety, Concurrency & QNX 8.0 Reconciliation Fixes
+- **Single-Writer Tick Ownership & Graceful EOF Retraction (`latchd.c`)**: Removed immediate `g_simplex.session_active = false` mutation from `latch_io_close_ocb()`. Writer disconnect now sets atomic `writer_closed_eof`, allowing `_cpu-0` to finish `WATCHDOG -> HA-HOLD -> HA-HOME` jerk-bounded retraction before freezing the evidence tape.
+- **Lock-Free Cross-Thread EPERM Propagation (`latchd.c`)**: Routed `latch_record_eperm_fault()` through atomic `eperm_pending` so resource-manager threads never perform concurrent RMW writes on `latched_faults` or `g_latch_tape[]`. Added pre-Frame-1 idle wait handling so empty ticks between `open()` and Frame #1 do not trip `WATCHDOG`.
+- **Protocol Telemetry & Multi-Keepout Hardening (`latch_protocol.h`, `latchd.c`, `latchctl.c`)**: Added `total_ring_drops` and `wcet_overruns` (`wcet_budget_us * 1000` ns comparison) to `latch_status_reply_t` and `latchctl status`; updated keep-out snapping across all `num_keepouts` intervals.
+- **String-Aware Strict Manifest Validation (`latch_manifest.h`, `latch_manifest.c`, `latch_ingest.c`)**: Implemented string-literal-aware / object-depth-aware JSON scanning (`json_find_key_depth`, `json_find_object_end`), `ERANGE` overflow guards, complete anti-silent-defaults key validation across all schema sections, explicit sidecar policy (`latch_manifest_load_opts`), concrete `procmgr_ability()` IDs in `latch_ingest.c`, and fail-closed startup loading.
+- **Valid QNX 8.0 Security Policy & Hardware Alignments (`latch.secpol`, `Makefile`, `*.build`, `*.qvmconf`)**: Rewrote `latch.secpol` in valid `secpolcompile` grammar (`type`, `ability`, `self:ability`, `allow_attach`, `:channel connect`), switched to `secpolcompile` and `secpolpush`, restored RPi4 `i2c-bcm2711 -i149` (`GIC_SPI 117 + 32`), split RPi4 (`0xff841000`) and QEMU virt (`0x08000000`) `.qvmconf` files, and removed the 4 KB zero dummy guest image stub.
+- **Verification, Viewer, Logger & CI Hardening (`latch_verify.c`, `latchlog.c`, `tape.html`, `consistency_check.py`, `ci.yml`)**: Made `latch_verify.c` derive test geometry from manifest and fail Step 4 unless monotonic `HA-HOME` rows exist; added `# GAP` wraparound detection in `latchlog.c`; made `host/tape.html` gridlines/NaN/badges manifest-driven; synced CI and cross-file invariant checks.
+
+---
+
 ## [2.1.0] - 2026-11-11
 
 ### Major Architecture Upgrades
@@ -33,7 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - **`latchctl` CLI Utility (`G3`)**: Added native management and verification tool (`latchctl.c`) supporting `status`, `grant-check` (ability validation), `hold` (emergency stop), and `dump` (tape extraction).
-- **`latchlog` Evidence Persistence Daemon (`G10`)**: Added background logger daemon (`latchlog.c`) querying `DCMD_LATCH_DUMP_TAPE` to continuously stream evidence tape records to persistent flash storage (`/var/log/latch_tape.csv`).
+- **`latchlog` Evidence Persistence Daemon (`G10`)**: Added background logger daemon (`latchlog.c`) querying `DCMD_LATCH_DUMP_TAPE` to stream evidence tape records to `/dev/shmem/latch_tape.csv` (or a specified path).
 - **QNX Security Policy (`G2`)**: Added `qnx/latch.secpol` declaring custom ability `latch/actuator`, confining `/dev/i2c1` and actuator nodes to `latchd`, and isolating the hypervisor guest domain.
 - **Guest VM Bring-Up Automation (`G1`)**: Added `guest/guest_init.sh` for booting and configuring `/dev/hvc0` inside the Linux guest VM.
 - **Automated CI Workflow (`G7`)**: Added `.github/workflows/ci.yml` running protocol static asserts, Seqlock unit tests, and 200-tick pipeline regression on Ubuntu 24.04.

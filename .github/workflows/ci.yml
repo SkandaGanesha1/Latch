@@ -35,10 +35,21 @@ jobs:
           ./qnx/build/host-sim/latchctl manifest-verify qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/syringe_pump_bolus.manifest 36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3
 
-      - name: Run 200-Tick End-to-End Pipeline Suite
+      - name: Run 200-Tick End-to-End Pipeline & Second Plant Tests
         run: |
           cd qnx
           make check
+          make demo-syringe
+          # Negative Fail-Closed Manifest & Sidecar Tamper Checks
+          printf '{"schema_version":2}\n' > /tmp/bad_manifest.json
+          if ./build/host-sim/latchctl manifest-verify /tmp/bad_manifest.json; then
+            echo "Error: stripped manifest unexpectedly passed!"
+            exit 1
+          fi
+          if ./build/host-sim/latchctl manifest-verify latch.manifest 0000000000000000000000000000000000000000000000000000000000000000; then
+            echo "Error: wrong SHA-256 unexpectedly passed!"
+            exit 1
+          fi
 
       - name: Verify Evidence Tape Consistency
         run: |
@@ -58,18 +69,35 @@ jobs:
           # Verify unauthorized caller at tick 110 trips EPERM (0x0900)
           grep -E "110,.*0x0900" host/suite_tape.csv
           python3 -c '
-          import csv
+          import csv, json
+          with open("qnx/latch.manifest") as mf:
+              manifest = json.load(mf)
+          keepouts = [(k["lo_mrad"], k["hi_mrad"]) for k in manifest["envelope"]["keepout"]]
+          wcet_ns = manifest["timing"]["wcet_budget_us"] * 1000
           with open("host/suite_tape.csv") as f:
               rows = list(csv.DictReader(f))
           assert len(rows) == 200, "Expected 200 rows, got " + str(len(rows))
+          prev_clean_seq = 0
+          home_rows = 0
           for r in rows:
+              tick = r["tick"]
               theta = int(r["theta_applied"])
-              assert not (250 <= theta <= 650), "Keep-out breach at tick " + str(r["tick"]) + ": " + str(theta)
-              assert int(r["latency_cycles"]) < 150000, "Latency breach: " + str(r["latency_cycles"]) + " cycles"
+              lat = int(r["latency_cycles"])
+              for lo, hi in keepouts:
+                  assert not (lo <= theta <= hi), f"Keep-out breach at tick {tick}: {theta} in [{lo},{hi}]"
+              assert lat < wcet_ns, f"Latency breach: {lat} ns >= {wcet_ns} ns"
+              fbits = int(r["fault_bits"], 16)
+              seq = int(r["seq"])
+              if fbits == 0 and seq > 0:
+                  assert seq > prev_clean_seq, f"Non-monotonic clean seq at tick {tick}: {seq} <= {prev_clean_seq}"
+                  prev_clean_seq = seq
+              if int(r["mode"]) == 2:
+                  home_rows += 1
+          assert home_rows >= 10, f"Expected >= 10 HA-HOME retraction ticks, got {home_rows}"
           eperm_rows = [r for r in rows if int(r["fault_bits"], 16) & 0x0800]
           assert len(eperm_rows) >= 1, "EPERM fault not latched"
           last_seq = max(int(r["seq"]) for r in rows)
           assert last_seq >= 66, "Expected last sequence >= 66, got " + str(last_seq)
-          print("[CI ASSERTION PASS] All 200 ticks satisfied kinematic keep-out, WCET (<150us), and EPERM invariants (last_seq=" + str(last_seq) + ").")
+          print(f"[CI ASSERTION PASS] All 200 ticks satisfied keep-out, WCET (<{wcet_ns}ns), monotonic seq, HA-HOME ({home_rows} ticks), and EPERM invariants (last_seq={last_seq}).")
           '
 

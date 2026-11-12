@@ -43,12 +43,13 @@ static qtime_dummy_t g_qtime_dummy = { 1000000000ULL };
 #endif
 
 #include "latch_protocol.h"
+#include "latch_manifest.h"
 
 static const char *mode_name(uint16_t m) {
     return (m == LATCH_MODE_HP) ? "HP" : (m == LATCH_MODE_HOLD) ? "HOLD" : "HOME";
 }
 
-static void send_frame(int fd, uint32_t seq, int32_t u_mrad, uint16_t fault) {
+static int send_frame(int fd, uint32_t seq, int32_t u_mrad, uint16_t fault, uint32_t delay_us) {
     latch_ipc_proposal_t p;
     memset(&p, 0, sizeof(p));
     p.ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC;
@@ -56,19 +57,62 @@ static void send_frame(int fd, uint32_t seq, int32_t u_mrad, uint16_t fault) {
     p.u_mrad         = u_mrad;
     p.pre_fault_bits = fault;
     p.ingest_cycles  = ClockCycles();
-    if (write(fd, &p, sizeof(p)) < 0) {
-        /* Ignore write failures during test sequences */
+    ssize_t wr = write(fd, &p, sizeof(p));
+    if (wr != (ssize_t)sizeof(p)) {
+        perror("latch_verify: write(/dev/latch/proposal)");
+        return -1;
     }
-    usleep(500); /* 0.5 ms: keeps the 1 kHz queued delivery buffer continuously fed */
+    if (delay_us > 0u) {
+        usleep(delay_us);
+    }
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
-    int dump_only = (argc > 1 && strcmp(argv[1], "--status") == 0);
+    bool dump_only = false;
+    bool explicit_manifest = false;
+    const char *manifest_path = "latch.manifest";
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--status") == 0) {
+            dump_only = true;
+        } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            manifest_path = argv[++i];
+            explicit_manifest = true;
+        } else {
+            fprintf(stderr, "Usage: %s [--status] [-m latch.manifest]\n", argv[0]);
+            return 1;
+        }
+    }
+
+    if (!explicit_manifest && access(manifest_path, F_OK) != 0) {
+        if (access("qnx/latch.manifest", F_OK) == 0) {
+            manifest_path = "qnx/latch.manifest";
+        } else if (access("/proc/boot/latch.manifest", F_OK) == 0) {
+            manifest_path = "/proc/boot/latch.manifest";
+        }
+    }
+
+    latch_manifest_t manifest;
+    char err_buf[256];
+    if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) != 0) {
+        fprintf(stderr, "latch_verify: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
+                manifest_path, err_buf);
+        return 1;
+    }
+
+    const char *act_path  = (manifest.paths.actuator[0] != '\0') ? manifest.paths.actuator : LATCH_DEV_ACTUATOR;
+    const char *prop_path = (manifest.paths.proposal[0] != '\0') ? manifest.paths.proposal : LATCH_DEV_PROPOSAL;
+    uint32_t period_us    = manifest.timing.period_us;
+    uint32_t send_pace_us = (strcmp(manifest.ingest.delivery, "queued") == 0)
+                                ? 0u
+                                : ((period_us >= 400u) ? (period_us / 2u) : 200u);
+
     bool all_passed = true;
 
-    int act_fd = open(LATCH_DEV_ACTUATOR, O_RDONLY);
+    int act_fd = open(act_path, O_RDONLY);
     if (act_fd < 0) {
-        act_fd = open(LATCH_DEV_ACTUATOR, O_RDWR);
+        act_fd = open(act_path, O_RDWR);
     }
     if (act_fd < 0) {
         perror("open /dev/latch/actuator");
@@ -85,7 +129,7 @@ int main(int argc, char *argv[]) {
 
     if (!dump_only) {
         printf("=== LATCH Native QNX 8.0 Microkernel Verification ===\n");
-        int prop_fd = open(LATCH_DEV_PROPOSAL, O_WRONLY);
+        int prop_fd = open(prop_path, O_WRONLY);
         if (prop_fd < 0) {
             perror("open /dev/latch/proposal");
             close(act_fd);
@@ -93,36 +137,69 @@ int main(int argc, char *argv[]) {
         }
 
         uint32_t seq = 0u;
-
-        /* 1. Nominal tracking in HP mode: step smoothly from 0 to -100 mrad */
-        for (uint32_t i = 1; i <= 10; ++i) {
-            int32_t step_target = (int32_t)(-10 * (int)i);
-            send_frame(prop_fd, ++seq, step_target, LATCH_FAULT_NONE);
+        int32_t home = manifest.envelope.home_mrad;
+        int32_t step = (manifest.envelope.a_max > 0) ? manifest.envelope.a_max : 10;
+        if (step > manifest.envelope.v_max) step = manifest.envelope.v_max;
+        int32_t neg_space = home - manifest.envelope.theta_min_mrad;
+        int32_t pos_space = manifest.envelope.theta_max_mrad - home;
+        int32_t dir = (neg_space >= pos_space) ? -1 : 1;
+        if (latch_manifest_in_keepout(&manifest, home + dir * step * 5)) {
+            dir = -dir;
         }
-        usleep(25000); /* 25 ms: allow the 1 kHz tick loop to drain the queue and track */
+
+        /* 1. Nominal tracking in HP mode: step smoothly along safe ramp from home */
+        int32_t pos = home;
+        uint32_t ramp_frames = 10u;
+        for (uint32_t i = 1u; i <= ramp_frames; ++i) {
+            int32_t cand = pos + dir * step;
+            if (cand < manifest.envelope.theta_min_mrad || cand > manifest.envelope.theta_max_mrad ||
+                latch_manifest_crossed_keepout(&manifest, pos, cand)) {
+                break;
+            }
+            pos = cand;
+            if (send_frame(prop_fd, ++seq, pos, LATCH_FAULT_NONE, send_pace_us) != 0) {
+                all_passed = false;
+            }
+        }
 
         latch_status_reply_t st_nom;
         memset(&st_nom, 0, sizeof(st_nom));
-        (void)devctl(act_fd, DCMD_LATCH_GET_STATUS, &st_nom, sizeof(st_nom), NULL);
-        if (st_nom.theta_mrad <= -80) {
-            printf("[1/5] PASS: Nominal tracking verified (/dev/latch/proposal -> theta = %d mrad reached)\n",
-                   st_nom.theta_mrad);
+        for (uint32_t wait = 0; wait < 20u; ++wait) {
+            (void)devctl(act_fd, DCMD_LATCH_GET_STATUS, &st_nom, sizeof(st_nom), NULL);
+            if (st_nom.theta_mrad == pos) {
+                break;
+            }
+            usleep(period_us);
+        }
+
+        int32_t min_expected_travel = (pos - home) / 2;
+        bool reached_halfway = (dir < 0) ? (st_nom.theta_mrad <= home + min_expected_travel)
+                                         : (st_nom.theta_mrad >= home + min_expected_travel);
+        if (st_nom.mode == LATCH_MODE_HP && reached_halfway) {
+            printf("[1/5] PASS: Nominal HP tracking verified (%s -> theta = %d mrad)\n",
+                   prop_path, st_nom.theta_mrad);
         } else {
-            printf("[1/5] FAIL: Nominal tracking not observed (theta = %d mrad, mode = %s)\n",
-                   st_nom.theta_mrad, mode_name(st_nom.mode));
+            printf("[1/5] FAIL: Nominal HP tracking not observed (theta = %d mrad, target = %d, mode = %s)\n",
+                   st_nom.theta_mrad, pos, mode_name(st_nom.mode));
             all_passed = false;
         }
 
-        /* 2. Keep-out envelope violation (+450 mrad inside [250, 650] mrad) */
-        send_frame(prop_fd, ++seq, 450, LATCH_FAULT_NONE);
-        usleep(10000);
+        /* 2. Keep-out envelope violation derived from manifest */
+        int32_t ko_target = (manifest.envelope.num_keepouts > 0u)
+                                ? ((manifest.envelope.keepout[0].lo_mrad + manifest.envelope.keepout[0].hi_mrad) / 2)
+                                : (manifest.envelope.theta_max_mrad + 500);
+        if (send_frame(prop_fd, ++seq, ko_target, LATCH_FAULT_NONE, send_pace_us) != 0) {
+            all_passed = false;
+        }
+        usleep(period_us * 10u);
 
         latch_status_reply_t st_ko;
         memset(&st_ko, 0, sizeof(st_ko));
         (void)devctl(act_fd, DCMD_LATCH_GET_STATUS, &st_ko, sizeof(st_ko), NULL);
-        if (st_ko.mode == LATCH_MODE_HOLD && (st_ko.latched_faults & LATCH_FAULT_KEEPOUT) != 0u) {
-            printf("[2/5] PASS: Keep-out violation (+450 mrad) vetoed -> HA-HOLD locked at theta = %d mrad (latched = 0x%04X)\n",
-                   st_ko.theta_mrad, st_ko.latched_faults);
+        if (st_ko.mode == LATCH_MODE_HOLD &&
+            (st_ko.latched_faults & (LATCH_FAULT_KEEPOUT | LATCH_FAULT_BOUNDS)) != 0u) {
+            printf("[2/5] PASS: Keep-out violation (%d mrad) vetoed -> HA-HOLD locked at theta = %d mrad (latched = 0x%04X)\n",
+                   ko_target, st_ko.theta_mrad, st_ko.latched_faults);
         } else {
             printf("[2/5] FAIL: Keep-out violation not properly vetoed (theta = %d mrad, mode = %s, faults = 0x%04X)\n",
                    st_ko.theta_mrad, mode_name(st_ko.mode), st_ko.latched_faults);
@@ -130,8 +207,10 @@ int main(int argc, char *argv[]) {
         }
 
         /* 3. Wire CRC bit-flip fault */
-        send_frame(prop_fd, 0, 0, LATCH_FAULT_CRC);
-        usleep(10000);
+        if (send_frame(prop_fd, 0, 0, LATCH_FAULT_CRC, send_pace_us) != 0) {
+            all_passed = false;
+        }
+        usleep(period_us * 10u);
 
         latch_status_reply_t st_crc;
         memset(&st_crc, 0, sizeof(st_crc));
@@ -144,35 +223,52 @@ int main(int argc, char *argv[]) {
             all_passed = false;
         }
 
-        /* 4. Sequence replay + 85 ms silence -> Watchdog trips -> HA-HOME retraction to 0 */
-        send_frame(prop_fd, seq - 1u, -100, LATCH_FAULT_NONE);
-        usleep(85000); /* 85 ms > 50 ticks of hold_to_home_ticks */
+        /* 4. Sequence replay + silence -> Watchdog trips -> HA-HOME retraction to home_mrad */
+        if (send_frame(prop_fd, (seq > 1u) ? (seq - 1u) : 1u, pos, LATCH_FAULT_NONE, send_pace_us) != 0) {
+            all_passed = false;
+        }
+        uint32_t v_home = (manifest.envelope.v_home > 0) ? (uint32_t)manifest.envelope.v_home : 1u;
+        uint32_t dist   = (uint32_t)abs(st_crc.theta_mrad - home);
+        uint32_t retract_ticks = (dist + v_home - 1u) / v_home;
+        uint32_t silence_ticks = manifest.timing.watchdog_ticks +
+                                 manifest.recovery.hold_to_home_ticks +
+                                 retract_ticks + 15u;
+        usleep(silence_ticks * period_us);
 
         latch_status_reply_t st_home;
         memset(&st_home, 0, sizeof(st_home));
         (void)devctl(act_fd, DCMD_LATCH_GET_STATUS, &st_home, sizeof(st_home), NULL);
 
-        /* Inspect evidence tape to verify HOME retraction occurred */
+        /* Inspect evidence tape to verify HOME retraction occurred monotonically */
         latch_tape_dump_t tape_check;
         memset(&tape_check, 0, sizeof(tape_check));
         tape_check.start_index = UINT32_MAX;
-        tape_check.count       = 128;
+        tape_check.count       = LATCH_DUMP_MAX_ENTRIES;
         bool saw_home_mode = false;
+        bool home_monotonic = true;
+        int32_t prev_dist = INT32_MAX;
         if (devctl(act_fd, DCMD_LATCH_DUMP_TAPE, &tape_check, sizeof(tape_check), NULL) == 0) {
             for (uint32_t i = 0; i < tape_check.count; ++i) {
                 if (tape_check.entries[i].mode == LATCH_MODE_HOME) {
                     saw_home_mode = true;
-                    break;
+                    int32_t cur_dist = abs(tape_check.entries[i].theta_applied - home);
+                    if (prev_dist != INT32_MAX && cur_dist > prev_dist) {
+                        home_monotonic = false;
+                    }
+                    prev_dist = cur_dist;
                 }
             }
         }
 
-        if ((st_home.active_faults & LATCH_FAULT_WATCHDOG) != 0u && st_home.theta_mrad == 0) {
-            printf("[4/5] PASS: Sequence replay + 80 ms silence -> Watchdog tripped -> HA-HOME retraction to 0 mrad (tape verified: HOME-ROWS-SEEN: %s)\n",
-                   saw_home_mode ? "yes" : "no");
+        if ((st_home.active_faults & LATCH_FAULT_WATCHDOG) != 0u &&
+            st_home.theta_mrad == home &&
+            saw_home_mode &&
+            home_monotonic) {
+            printf("[4/5] PASS: Sequence replay + silence -> Watchdog tripped -> HA-HOME monotonic retraction to %d mrad\n",
+                   home);
         } else {
-            printf("[4/5] FAIL: HA-HOME retraction did not settle at 0 mrad (theta = %d mrad, faults = 0x%04X)\n",
-                   st_home.theta_mrad, st_home.active_faults);
+            printf("[4/5] FAIL: HA-HOME retraction invalid (theta = %d, expected = %d, faults = 0x%04X, saw_home=%d, mono=%d)\n",
+                   st_home.theta_mrad, home, st_home.active_faults, (int)saw_home_mode, (int)home_monotonic);
             all_passed = false;
         }
 
@@ -225,8 +321,9 @@ int main(int argc, char *argv[]) {
     printf("\n=== LATCH Verified Telemetry & Microkernel Evidence Tape ===\n");
     printf("Tick Counter       : %" PRIu64 " ticks (1 kHz CLOCK_MONOTONIC pulse)\n", st.tick);
     printf("Current Mode       : %s (theta = %d mrad)\n", mode_name(st.mode), st.theta_mrad);
-    printf("Proposals Received : %u | Wire Faults: %u | Envelope Vetoes: %u | EPERM Rejects: %u\n",
-           st.total_proposals_rx, st.total_wire_faults, st.total_envelope_faults, st.total_eperm_rejects);
+    printf("Proposals Received : %u | Wire Faults: %u | Envelope Vetoes: %u | Ring Drops: %u | WCET Overruns: %u | EPERM Rejects: %u\n",
+           st.total_proposals_rx, st.total_wire_faults, st.total_envelope_faults,
+           st.total_ring_drops, st.wcet_overruns, st.total_eperm_rejects);
     printf("Decision Latency   : last = %" PRIu64 " cyc (%u ns) | max = %" PRIu64 " cyc (%u ns) @ %" PRIu64 " Hz\n",
            st.last_latency_cycles, st.last_latency_ns, st.max_latency_cycles, st.max_latency_ns, cps);
     printf("Manifest SHA-256   : %s\n", sha_hex);

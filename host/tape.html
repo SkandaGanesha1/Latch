@@ -125,13 +125,13 @@
       <div>
         <div class="flex flex-wrap items-center gap-2">
           <span class="px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 mono">QNX SDP 8.0 + Hypervisor 8.0</span>
-          <span class="px-2.5 py-0.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono">BCM2711 RPi4B &bull; GICv2 &bull; PCA9685 @ 0x40</span>
+          <span id="plantBadge" class="px-2.5 py-0.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono">BCM2711 RPi4B &bull; GICv2 &bull; PCA9685 @ 0x40</span>
           <span class="px-2.5 py-0.5 text-xs font-medium rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 mono">latch/actuator Ability Locked</span>
         </div>
         <h1 class="mt-2 text-xl sm:text-2xl font-bold tracking-tight text-white">
           LATCH — Last Authority for Trusted Control Handoff
         </h1>
-        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">
+        <p id="tapeSubtitle" class="text-xs sm:text-sm text-slate-400 mt-0.5">
           4096-entry <span class="mono text-slate-300">.bss</span> Evidence Tape &amp; <span class="mono text-slate-300">ClockCycles()</span> Decision Latency Analyzer (100% Offline)
         </p>
       </div>
@@ -487,18 +487,28 @@
         ctx.setLineDash([]);
       }
 
-      // Horizontal grid lines
+      // Dynamic Horizontal Grid Lines derived from manifest stops & keep-outs
       ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
       ctx.fillStyle = "#94a3b8";
       ctx.font = "10px JetBrains Mono, monospace";
       ctx.textAlign = "right";
-      for (const gv of [-1000, -500, 0, 250, 650, 1000]) {
+      const gridSet = new Set([yMin, Math.round(yMin / 2), 0, Math.round(yMax / 2), yMax]);
+      for (const k of kList) {
+        if (k.lo_mrad >= yMin && k.lo_mrad <= yMax) gridSet.add(k.lo_mrad);
+        if (k.hi_mrad >= yMin && k.hi_mrad <= yMax) gridSet.add(k.hi_mrad);
+      }
+      const gridVals = Array.from(gridSet).filter((v) => v >= yMin && v <= yMax).sort((a, b) => a - b);
+      let lastLabelPx = -9999;
+      for (const gv of gridVals) {
         const py = yToPx(gv);
         ctx.beginPath();
         ctx.moveTo(pad.l, py);
         ctx.lineTo(pad.l + pw, py);
         ctx.stroke();
-        ctx.fillText(String(gv), pad.l - 6, py + 3);
+        if (Math.abs(py - lastLabelPx) >= 12) {
+          ctx.fillText(String(gv), pad.l - 6, py + 3);
+          lastLabelPx = py;
+        }
       }
 
       // Proposed u_mrad dashed curve
@@ -507,7 +517,7 @@
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       for (let i = 0; i < tapeData.length; i++) {
-        const rawU = tapeData[i].u_proposed < -10000 ? 1000 : tapeData[i].u_proposed;
+        const rawU = tapeData[i].u_proposed <= -2000000000 ? yMax : tapeData[i].u_proposed;
         const px = xToPx(i);
         const py = yToPx(rawU);
         if (i === 0) ctx.moveTo(px, py);
@@ -757,9 +767,18 @@
           const m = JSON.parse(String(reader.result || ""));
           if (m && m.envelope) {
             currentManifest = m;
+            const unit = (m.plant && m.plant.axes && m.plant.axes[0] && m.plant.axes[0].unit) || "mrad";
+            const plantName = (m.plant && m.plant.name) || "custom plant";
+            const ko = (m.envelope.keepout && m.envelope.keepout[0])
+              ? "[" + m.envelope.keepout[0].lo_mrad + ", " + m.envelope.keepout[0].hi_mrad + "] " + unit
+              : "none";
+            document.getElementById("plantBadge").textContent =
+              plantName + " • [" + m.envelope.theta_min_mrad + ", " + m.envelope.theta_max_mrad + "] " + unit + " • Keep-Out " + ko;
+            document.getElementById("tapeSubtitle").textContent =
+              (m.tape && m.tape.capacity ? m.tape.capacity : 4096) + "-entry .bss Evidence Tape & ClockCycles() Decision Latency Analyzer (" + unit + ", 100% Offline)";
             drawTrajectoryChart();
             computeKpis();
-            showToast("Imported manifest: " + (m.plant && m.plant.name ? m.plant.name : "custom plant"));
+            showToast("Imported manifest: " + plantName);
           }
         } catch (err) {
           showToast("Failed to parse manifest: " + err);

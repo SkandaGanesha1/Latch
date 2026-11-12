@@ -2,84 +2,130 @@
 # latch/qnx/latch.secpol
 #
 # LATCH — Last Authority for Trusted Control Handoff
-# QNX SDP 8.0 Security Policy Definition (compiled to /proc/boot/secpol.bin)
+# QNX SDP 8.0 Security Policy Definition (compiled via `secpolcompile`)
+#
+# Valid QNX SDP 8.0 secpolcompile grammar:
+#   - `type <name>;`
+#   - `ability <name>;`
+#   - `allow <type> self:ability { ... };`
+#   - `allow_attach <type> <path>;`
+#   - `allow <client> <server>:channel connect;`
 #
 # Enforces Principle of Least Privilege:
-#   1. Declares custom microkernel ability "latch/actuator".
-#   2. Restricts /dev/i2c1 hardware bus access strictly to `latchd` & I2C driver.
-#   3. Restricts /dev/latch/proposal write access to `latch-ingest`.
-#   4. Restricts /dev/latch/actuator control to callers holding `latch/actuator`.
-#   5. Strictly isolates QNX Hypervisor 8.0 `qvm` from hardware actuators.
+#   1. Declares custom ability "latch/actuator" (`flags=0` uninherited default).
+#   2. Restricts /dev/i2c1 attachment to `i2c_t` and connection to `latchd_t`.
+#   3. Restricts /dev/latch/proposal & /dev/latch/actuator attachment to `latchd_t`.
+#   4. Grants `latch/actuator` ability only to `latchd_t`, `latchctl_t`, and admin checks.
+#   5. Denies `qvm_host_t` and `latch_ingest_t` any connection or ability toward actuators.
 # ==============================================================================
 
-# 1. Custom Ability Declaration
+# 1. Process Types
+type latchd_t;
+type latch_ingest_t;
+type latchctl_t;
+type latchlog_t;
+type latch_verify_t;
+type i2c_t;
+type qvm_host_t;
+type slogger2_t;
+type pipe_t;
+
+# 2. Custom Ability Declaration (created at runtime via procmgr_ability_create)
 ability latch/actuator;
+# Looked up by the pipe resource manager before it registers as pipe handler
+ability iofunc/exec;
 
-# 2. Process Domains & Types
-type_trans proc_t /proc/boot/latchd latchd_t;
-type_trans proc_t /proc/boot/latch-ingest latch_ingest_t;
-type_trans proc_t /proc/boot/latchctl latchctl_t;
-type_trans proc_t /proc/boot/latchlog latchlog_t;
-type_trans proc_t /proc/boot/qvm qvm_guest_host_t;
-type_trans proc_t /proc/boot/i2c-bcm2711 i2c_driver_t;
+# 3. Process Abilities (self:ability grants)
+allow latchd_t self:ability {
+    able_create
+    mem_lock
+    pathspace
+    priority
+    runstate
+    public_channel
+    latch/actuator
+};
 
-# 3. Ability Allowances
-# Only latchd and authorized admin tool may possess latch/actuator
-allow_ability latchd_t latch/actuator;
-allow_ability latchctl_t latch/actuator;
+allow latchctl_t self:ability {
+    nonroot
+    latch/actuator
+};
 
-# System and pathspace abilities required by latchd
-allow_ability latchd_t PROCMGR_AID_PATHSPACE;
-allow_ability latchd_t PROCMGR_AID_PRIORITY;
-allow_ability latchd_t PROCMGR_AID_RUNMASK;
-allow_ability latchd_t PROCMGR_AID_ABLE_CREATE;
-allow_ability latchd_t PROCMGR_AID_MEM_LOCK;
+# Ingest runs least-privilege without latch/actuator, hardware I/O, or able_create
+allow latch_ingest_t self:ability {
+    nonroot
+};
 
-# Ingest process holds NO latch/actuator ability and NO root abilities
-allow_ability latch_ingest_t PROCMGR_AID_RUNMASK;
+allow i2c_t self:ability {
+    io
+    interrupt
+    pathspace
+    public_channel
+};
 
-# I2C driver requires hardware I/O and interrupt attach
-allow_ability i2c_driver_t PROCMGR_AID_IO;
-allow_ability i2c_driver_t PROCMGR_AID_INTERRUPT;
-allow_ability i2c_driver_t PROCMGR_AID_PATHSPACE;
+allow qvm_host_t self:ability {
+    hyp
+    io
+    interrupt
+    mem_lock
+    mem_phys
+    map_fixed
+    priority
+    pathspace
+    public_channel
+    rsrcdbmgr
+    schedule
+    timer
+    event
+    fork
+    spawn
+    settypeid
+};
 
-# Hypervisor host requires scheduling, runmask, and pathspace
-allow_ability qvm_guest_host_t PROCMGR_AID_PRIORITY;
-allow_ability qvm_guest_host_t PROCMGR_AID_RUNMASK;
-allow_ability qvm_guest_host_t PROCMGR_AID_PATHSPACE;
+# 4. Pathspace Ownership (allow_attach)
+allow_attach latchd_t /dev/latch/proposal;
+allow_attach latchd_t /dev/latch/actuator;
+allow_attach i2c_t /dev/i2c1;
+allow_attach slogger2_t /dev/slog;
+allow_attach slogger2_t /dev/slog2;
+allow_attach slogger2_t /dev/slog2/*;
+allow_attach slogger2_t /dev/slog2_notify;
+allow_attach qvm_host_t /dev/qvm;
+allow_attach qvm_host_t /dev/qvm/*;
+allow_attach qvm_host_t /dev/qvm/*/*;
 
-# 4. Pathspace Access Control
-# latchd manages the two resource manager nodes, reads contract manifests, and accesses I2C
-allow latchd_t /dev/latch/proposal:all;
-allow latchd_t /dev/latch/actuator:all;
-allow latchd_t /dev/i2c1:all;
-allow latchd_t /proc/boot/latch.manifest:read;
-allow latchd_t /proc/boot/latch.manifest.sha256:read;
-allow latchd_t /dev/shmem:all;
+# 4b. slogger2 daemon abilities (attaches /dev/slog2 for system logging)
+allow slogger2_t self:ability {
+    pathspace
+    public_channel
+};
 
-# latchctl connects to actuator node and reads contract manifests
-allow latchctl_t /dev/latch/actuator:all;
-allow latchctl_t /proc/boot/latch.manifest:read;
-allow latchctl_t /proc/boot/latch.manifest.sha256:read;
+# 4c. pipe resource manager (attaches /dev/pipe; needed for qvm `hostdev >"|..."`)
+allow pipe_t self:ability {
+    able_create
+    pathspace
+    public_channel
+    iofunc/exec
+};
 
-# I2C driver manages /dev/i2c1 node
-allow i2c_driver_t /dev/i2c1:all;
+allow_attach pipe_t /dev/pipe;
+allow_attach pipe_t pipe:/;
+allow_attach pipe_t pipe:/...;
 
-# latch-ingest connects only to the proposal input node
-allow latch_ingest_t /dev/latch/proposal:write;
-neverallow latch_ingest_t /dev/latch/actuator:all;
-neverallow latch_ingest_t /dev/i2c1:all;
+# qvm's pipe() opens the pipe manager's channel
+allow qvm_host_t pipe_t:channel connect;
 
-# Hypervisor qvm process may NOT reach actuators or proposal node directly
-neverallow qvm_guest_host_t /dev/i2c1:all;
-neverallow qvm_guest_host_t /dev/latch/actuator:all;
-neverallow qvm_guest_host_t /dev/latch/proposal:all;
+# 5. Inter-Process Channel Connection Rules
+# Notice: qvm_host_t has NO channel connect rule to i2c_t or latchd_t
+allow latchd_t i2c_t:channel connect;
+allow latch_ingest_t latchd_t:channel connect;
+allow latchctl_t latchd_t:channel connect;
+allow latchlog_t latchd_t:channel connect;
+allow latch_verify_t latchd_t:channel connect;
 
-# Hypervisor host loads guest image and configuration
-allow qvm_guest_host_t /proc/boot/linux-guest.Image:read;
-allow qvm_guest_host_t /proc/boot/latch.qvmconf:read;
-allow qvm_guest_host_t /dev/shmem:all;
-
-# Logging daemon queries actuator node and writes evidence tape
-allow latchlog_t /dev/latch/actuator:read,write;
-allow latchlog_t /dev/shmem/latch_tape.csv:all;
+# Clients of the system log (incl. qvm's `logger` config)
+allow latchd_t slogger2_t:channel connect;
+allow latchctl_t slogger2_t:channel connect;
+allow latchlog_t slogger2_t:channel connect;
+allow latch_verify_t slogger2_t:channel connect;
+allow qvm_host_t slogger2_t:channel connect;

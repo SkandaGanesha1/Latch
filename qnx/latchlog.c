@@ -6,7 +6,7 @@
  * On-Target Continuous Evidence Tape Logger:
  *   - Attaches to /dev/latch/actuator via devctl(DCMD_LATCH_DUMP_TAPE).
  *   - Periodically queries the in-memory .bss ring buffer.
- *   - Persists evidence records to /var/log/latch_tape.csv or specified file.
+ *   - Persists evidence records to /dev/shmem/latch_tape.csv or specified file.
  *   - Ensures continuous auditability across target reboots.
  */
 
@@ -123,6 +123,15 @@ int main(int argc, char *argv[]) {
             if (initial_query) {
                 next_read_index = dump.start_index;
                 initial_query = false;
+            } else if (dump.start_index != next_read_index) {
+                uint32_t missed = (dump.start_index >= next_read_index)
+                                      ? (dump.start_index - next_read_index)
+                                      : 0u;
+                fprintf(stderr, "latchlog: WARNING: tape wrapped across %u slots (#%u -> #%u)\n",
+                        missed, next_read_index, dump.start_index);
+                fprintf(fp, "# GAP missed_slots=%u expected=%u actual=%u\n",
+                        missed, next_read_index, dump.start_index);
+                fflush(fp);
             }
 
             uint32_t written_count = 0;

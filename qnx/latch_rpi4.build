@@ -3,8 +3,8 @@
 #
 # QNX SDP 8.0 OS Image Buildfile for LATCH (Last Authority for Trusted Control Handoff)
 # Target Board : Raspberry Pi 4 Model B (Broadcom BCM2711, ARM Cortex-A72, GICv2)
-# Target BSP   : com.qnx.qnx800.bsp.hw.raspberrypi_bcm2711_rpi4 (SDP 8.0.5 / build 670)
-# Hypervisor   : QNX Hypervisor 8.0 (Build >= 549 required for AArch64 GICv2)
+# Target BSP   : com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4 (QNX SDP 8.0)
+# Hypervisor   : QNX Hypervisor 8.0 (AArch64 EL2 host + GICv2 guest support)
 #
 # Notes:
 #   - Startup passes `-Q enable` to activate the EL2 hypervisor host.
@@ -34,25 +34,25 @@
     display_msg " Target: Raspberry Pi 4B BCM2711 | GICv2 | PCA9685 I2C @ 0x40"
     display_msg "================================================================"
 
-    # 2. Activate QNX 8.0 Security Policy
-    secpollaunch -e /proc/boot/secpol.bin
+    # 2. Push compiled QNX 8.0 Security Policy into procnto
+    secpolpush /proc/boot/secpol.bin
 
-    # 3. BSP I2C1 driver for PCA9685 servo controller at 0x40 (BCM2711 BSC1 SPI 115 + 32 = IRQ 147)
-    i2c-bcm2711 -p0xfe804000 -i147 --b400000 --u1
+    # 3. BSP I2C1 driver for PCA9685 servo controller at 0x40 (BCM2711 BSC1 SPI 117 + 32 = IRQ 149)
+    on -T i2c_t /proc/boot/i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1
     waitfor /dev/i2c1 4
 
     # 4. Start latchd on _cpu-0 (creates ability "latch/actuator", attaches
     #    /dev/latch/proposal and /dev/latch/actuator, owns /dev/i2c1)
-    on -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest &
+    on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/latch.manifest &
     waitfor /dev/latch/proposal 4
     waitfor /dev/latch/actuator 4
 
     # 5. Start background continuous evidence logger
-    on -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
+    on -T latchlog_t -C 1 /proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
 
     # 6. Launch QNX Hypervisor 8.0 guest VM (vCPUs pinned to _cpu-2 and _cpu-3
     #    at sched 8r; virtio-console piped into /proc/boot/latch-ingest)
-    on -C 1 /proc/boot/qvm @/proc/boot/latch.qvmconf &
+    on -T qvm_host_t -C 1 /proc/boot/qvm @/proc/boot/latch.qvmconf &
 
     # 7. Operator shell on _cpu-1
     [+session] on -C 1 -p 10r /proc/boot/ksh
@@ -74,7 +74,7 @@ libqvm.so.1
 [perms=0755] /lib/dll/qvm/vdev-shmem.so = vdev-shmem.so
 [perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
 
-[perms=0755] secpollaunch
+[perms=0755] secpolpush
 [perms=0755] devc-serpl011
 [perms=0755] i2c-bcm2711
 [perms=0755] qvm

@@ -171,7 +171,19 @@ def main() -> int:
     parser.add_argument(
         "--manifest",
         default=None,
-        help="Path to latch.manifest for dynamic plant geometry",
+        help="Optional host-side CI convenience path to latch.manifest for plant geometry (untrusted guests should use explicit CLI flags instead of relying on host manifest access)",
+    )
+    parser.add_argument(
+        "--keepout-val",
+        type=int,
+        default=None,
+        help="Explicit keep-out test proposal value (mrad)",
+    )
+    parser.add_argument(
+        "--v-step",
+        type=int,
+        default=None,
+        help="Explicit velocity step size per tick for suite ramp (mrad/tick)",
     )
     parser.add_argument(
         "--raw-stdout",
@@ -188,18 +200,20 @@ def main() -> int:
     if args.period_ms is None:
         args.period_ms = 0.0 if (args.device == "-" or args.raw_stdout) else 1.0
 
-    keepout_target = 450
-    v_step = 10
+    keepout_target = args.keepout_val if args.keepout_val is not None else 450
+    v_step = args.v_step if args.v_step is not None else 10
     if args.manifest and os.path.exists(args.manifest):
         try:
             with open(args.manifest, "r") as mf:
                 mdata = json.load(mf)
-                klist = mdata.get("envelope", {}).get("keepout", [])
-                if klist:
-                    keepout_target = (klist[0].get("lo_mrad", 250) + klist[0].get("hi_mrad", 650)) // 2
-                v_max = mdata.get("envelope", {}).get("v_max", 25)
-                if v_max > 0:
-                    v_step = min(10, v_max // 2)
+                if args.keepout_val is None:
+                    klist = mdata.get("envelope", {}).get("keepout", [])
+                    if klist:
+                        keepout_target = (klist[0].get("lo_mrad", 250) + klist[0].get("hi_mrad", 650)) // 2
+                if args.v_step is None:
+                    v_max = mdata.get("envelope", {}).get("v_max", 25)
+                    if v_max > 0:
+                        v_step = min(10, v_max // 2)
         except Exception as e:
             sys.stderr.write(f"Warning: could not parse manifest: {e}\n")
 

@@ -2,14 +2,14 @@
 
 **The AI may propose. Only QNX may move.**
 
-LATCH is a production-grade, mixed-criticality runtime-assurance architecture for physical AI on **QNX SDP 8.0.x** and **QNX Hypervisor 8.0**. An untrusted guest AI policy proposes 32-byte motion frames over a virtio-console black channel. A `SCHED_FIFO` priority 63 decision loop inside an ability-locked resource manager (`latchd`) verifies the kinematic envelope, lookahead rollout, and keep-out intervals, actuating via a PCA9685 PWM controller on `/dev/i2c1` or failing closed to High-Assurance (`HA-HOLD` / `HA-HOME`) candidates, recording every verdict in a 4096-entry evidence tape.
+LATCH is a mixed-criticality runtime-assurance architecture for physical AI on **QNX SDP 8.0** and **QNX Hypervisor 8.0**. An untrusted guest AI policy proposes 32-byte motion frames over a virtio-console black channel. A `SCHED_FIFO` priority 63 decision loop inside an ability-locked resource manager (`latchd`) verifies the kinematic envelope, lookahead rollout, and keep-out intervals, actuating via a PCA9685 PWM controller on `/dev/i2c1` or failing closed to High-Assurance (`HA-HOLD` / `HA-HOME`) candidates, recording every verdict in a 4096-entry evidence tape.
 
-- **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (build >= 549 for BCM2711 GICv2 support)
-- **Target Board & BSP:** Raspberry Pi 4 Model B (`com.qnx.qnx800.bsp.hw.raspberrypi_bcm2711_rpi4`, SDP 8.0.5 / build 837)
-- **Actuator Bus:** Broadcom `i2c-bcm2711` driving a PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (channel 0 servo)
+- **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (AArch64 EL2 VHE host + GICv2 guest support)
+- **Primary Verified Target:** QEMU AArch64 `virt` (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) hosting a **Linux 6.12 ARM64** guest VM
+- **Actuator Bus:** PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (`/dev/i2c1` on hardware; `-n` no-I2C mock mode on QEMU)
 - **Zero-Hardcoding Architecture:** Plant geometry, keep-out intervals, velocity/acceleration limits, timing budgets, and bus paths are fully configured via `latch.manifest` with SHA-256 integrity verification.
-- **Concurrency:** Lockless 256-slot ring buffer with Seqlock snapshot guard eliminating torn reads on high-frequency publisher updates.
-- **Fallback / CI Targets:** QEMU AArch64 / x86_64 (`qcc -Vgcc_ntox86_64`) and POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`)
+- **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 64`) with Seqlock snapshot guard eliminating torn reads on high-frequency publisher updates.
+- **Fallback / CI Targets:** POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`), QNX `x86_64`, and Raspberry Pi 4B (`com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4`)
 - **License:** MIT (`LICENSE`)
 
 ---
@@ -64,19 +64,28 @@ latch/
   .github/workflows/ci.yml       # GitHub Actions CI workflow
   codelab/dead-mans-handle.md    # 45-minute hands-on QNX 8.0 tutorial
   qnx/
-    Makefile                     # Multi-target build system (host-sim, rpi4, x86_64, check, qemu)
-    latch.manifest               # Zero-hardcoding plant & safety envelope JSON configuration
+    Makefile                     # Multi-target build system (host-sim, rpi4, x86_64, check, demo-syringe, secpol, qemu)
+    latch.manifest               # Zero-hardcoding servo plant & safety envelope JSON configuration
+    latch.manifest.sha256        # NIST FIPS 180-2 SHA-256 sidecar for latch.manifest
+    contracts/
+      syringe_pump_bolus.manifest        # Second plant contract (medical linear bolus pump)
+      syringe_pump_bolus.manifest.sha256 # SHA-256 sidecar for syringe pump contract
     latch_manifest.h             # Manifest parser & SHA-256 header
     latch_manifest.c             # Fail-closed JSON parser & FIPS 180-2 SHA-256 attestation
     latch_protocol.h             # 32-byte wire struct, IPC proposal, devctls, CRC32
-    latchd.c                     # Simplex supervisor, Seqlock buffer, ability guard, PCA9685 driver
+    latchd.c                     # Simplex supervisor, SPSC ring + Seqlock status/tape, ability guard, PCA9685 driver
     latch_ingest.c               # Unprivileged virtio-console bridge -> /dev/latch/proposal
     latchctl.c                   # Native admin & ability verification CLI utility
     latchlog.c                   # On-target continuous evidence tape persistence daemon
     latch_verify.c               # Native QNX 8.0 microkernel verification harness
-    latch.secpol                 # QNX 8.0 declarative security policy
+    latch.secpol                 # QNX 8.0 declarative security policy (secpolcompile)
     latch_rpi4.build             # QNX SDP 8.0 mkifs buildfile for Raspberry Pi 4B
-    latch.qvmconf                # QNX Hypervisor 8.0 guest VM configuration
+    latch_qemu.build             # QNX SDP 8.0 mkifs buildfile for QEMU AArch64 virt
+    latch.qvmconf                # QNX Hypervisor 8.0 guest VM config for RPi4 (GIC-400)
+    latch_qemu_virt.qvmconf      # QNX Hypervisor 8.0 guest VM config for QEMU virt (GICv2)
+    run_qemu.sh                  # QEMU x86_64 (QSTI) / AArch64 launcher script
+  tools/
+    consistency_check.py         # Cross-file architecture & metadata invariant checker
   guest/
     liar.py                      # Python 3 stdlib untrusted policy generator & fault injector
     guest_init.sh                # Linux guest VM minimal initramfs runner
@@ -85,6 +94,8 @@ latch/
     suite_tape.csv               # 200-tick evidence tape generated by the C pipeline
   docs/
     envelope.md                  # Integer safety envelope & Simplex FSM specification
+    LATCH-implementation.md      # Deep architecture, DT-CBF, and target verification report
+    LATCH-research.md            # QNX 8.0 manual verification log & design trade-offs
 ```
 
 ---
@@ -103,18 +114,22 @@ This:
 2. Executes built-in self-tests verifying the 5 fault scenarios, lock-free Seqlock concurrency, and manifest validation.
 3. Streams 200 ticks from `guest/liar.py` through `latch-ingest` into `latchd`, generating `host/suite_tape.csv`.
 
-### 3.2 Cross-Compile for QNX SDP 8.0 (`rpi4` & `x86_64`)
+### 3.2 Build & Run on QEMU AArch64 `virt` (QNX SDP 8.0 + Hypervisor 8.0.5)
 
 ```bash
 # Source QNX SDP 8.0 environment
 source ~/qnx800/qnxsdp-env.sh
 
 cd qnx
-make rpi4
-make x86_64
 
-# Build bootable QNX OS image
-mkifs -v latch_rpi4.build latch_rpi4.ifs
+# Build guest initramfs + QNX binaries + secpol.bin + bootable IFS (one command)
+make ifs-qemu-aarch64 GUEST_IMAGE=/path/to/linux-6.12/arch/arm64/boot/Image
+
+# Launch interactive QEMU AArch64 virt session (4x Cortex-A76, EL2 VHE, GICv2)
+./run_qemu.sh
+
+# Or run the automated end-to-end QEMU verification harness (asserts 200 ticks + VERIFY_RC=0)
+make verify-qemu
 ```
 
 ### 3.3 Administrative CLI (`latchctl`) & Logging (`latchlog`)
@@ -130,7 +145,7 @@ mkifs -v latch_rpi4.build latch_rpi4.ifs
 /proc/boot/latchctl hold 1 42
 
 # Continuous tape logging
-/proc/boot/latchlog -d /dev/latch/actuator -o /var/log/latch_tape.csv &
+/proc/boot/latchlog -d /dev/latch/actuator -o /dev/shmem/latch_tape.csv &
 ```
 
 ---
@@ -143,7 +158,7 @@ mkifs -v latch_rpi4.build latch_rpi4.ifs
 | **2** | **Wire CRC Corruption** | `python3 guest/liar.py corrupt` | `latch-ingest` catches CRC mismatch; `latchd` latches `LATCH_FAULT_CRC` (`0x0002`); maintains `HOLD`. |
 | **3** | **Sequence Replay / Stale** | `python3 guest/liar.py replay` | Sequence re-use detected ($seq \le last\_seq$); flags `LATCH_FAULT_SEQ` (`0x0004`); fails closed. |
 | **4** | **Guest Panic / `kill -9`** | Real `kill -9` in guest VM | 2-tick silence trips watchdog (`0x0100`); transitions from `HOLD` to `HA-HOME` after 50 ticks; horn retracts smoothly to 0 mrad. |
-| **5** | **Unauthorized Actuation** | `cat /dev/zero > /dev/latch/actuator` | Client lacks `latch/actuator` ability; `iofunc_client_info_able()` rejects with `EPERM`; incrementing `total_eperm_rejects`. |
+| **5** | **Unauthorized Actuation** | `/proc/boot/latchctl hold 1 99` (without ability) | Client lacks `latch/actuator` ability; `iofunc_client_info_able()` rejects with `EPERM`; increments `total_eperm_rejects`. |
 
 ---
 
@@ -161,11 +176,12 @@ Open `host/tape.html` directly in any web browser. It is fully self-contained wi
 
 | Parameter | Audited Value | Ground Truth Source |
 |---|---|---|
-| **Target OS** | QNX Neutrino RTOS 8.0.0 (2026/06/05) | `uname -a` on `qnxqemu` target |
-| **Microkernel** | `procnto-smp-instr` (SMP Instrumented) | `/proc/boot/procnto-smp-instr` |
-| **Execution Environment** | QEMU KVM `x86pc x86_64` | `SYSPAGE_ENTRY(qtime)->cycles_per_sec = 2,295,649,179 Hz` (TSC) |
+| **Target OS & Hypervisor** | QNX Neutrino RTOS 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (`qvm`) | `syspage::hypinfo::flags=0x00000001` (EL2 VHE) |
+| **Verified VM Target** | QEMU AArch64 `virt` (`4x Cortex-A76`, GICv2 `0x08000000`/`0x08010000`, `62,500,000 Hz` timer) | `make verify-qemu` (`qemu-system-aarch64`) |
+| **Toolchain** | `qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -D_QNX_SOURCE` | `qnx/Makefile` (`TARGET=rpi4`) |
 | **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms pulse) | `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
-| **Measured Decision WCET** | **330 ns nominal** / **58.9 µs cold max** | Ground truth telemetry (beats 4.13 ms paper benchmark) |
-| **Attestation Hash** | `135aadebc2b395d2...413c7c06` | True NIST FIPS 180-2 SHA-256 (`sha256sum qnx/latch.manifest`) |
+| **Measured Decision Latency** | **1.05–1.76 µs** steady (`66–110 cycles`), **393.7 µs** max (`24,607 cycles`) on QEMU TCG; **1,012 ns** max in Linux host-sim | Live `/proc/boot/latch_verify -m /proc/boot/latch.manifest` & `make check` |
+| **Guest 200-Tick Suite** | `Proposals Received: 200` · `Wire Faults Caught: 12` · `Envelope Vetoes: 7` · `Ring Drops: 0` | Live Linux 6.12 `/init` -> `virtio-console` -> `latch-ingest` -> `latchd` |
+| **Attestation Hashes** | Servo: `135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06`<br>Syringe: `36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3` | True NIST FIPS 180-2 SHA-256 (`sha256sum` sidecars) |
 | **Security Isolation** | Custom ability `latch/actuator` (flags 0) | `iofunc_client_info_able()` default-deny for root & non-root |
-| **Verification Suite** | Exit code 0 only upon verified transitions | `sudo ./latch_verify` actively asserts `.bss` tape ring |
+| **Verification Suite** | Exit code 0 (`VERIFY_RC=0`) only upon all 5 microkernel invariants passing | `/proc/boot/latch_verify -m /proc/boot/latch.manifest` |

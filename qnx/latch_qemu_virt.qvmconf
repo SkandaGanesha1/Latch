@@ -1,0 +1,54 @@
+################################################################################
+# qnx/latch_qemu_virt.qvmconf
+#
+# QNX Hypervisor 8.0 Guest Configuration for LATCH on QEMU AArch64 (`virt`, GICv2)
+#
+# Static CPU & Priority Isolation:
+#   - _cpu-0 : Host `latchd` SCHED_FIFO decision thread (pinned via ThreadCtl)
+#   - _cpu-1 : Host `latch-ingest` byte parser (no `latch/actuator` ability)
+#   - _cpu-2 : Guest vCPU 0 (`cpu _cpu-2 sched 8r`)
+#   - _cpu-3 : Guest vCPU 1 (`cpu _cpu-3 sched 8r`)
+################################################################################
+
+system latch-policy-guest-qemu-virt
+
+logger error,fatal,internal,warn,info stderr
+
+# Disable GICv2 hardware-assist on QEMU TCG virt so virtual timer/PPIs deliver cleanly
+set gic-hwassist off
+
+unsupported instruction ignore
+unsupported reference ignore
+unsupported register ignore
+
+ram 0x80000000,0x20000000
+
+# 2 guest vCPUs at priority 8 round-robin
+cpu
+    sched 8r
+cpu
+    sched 8r
+
+# Explicit GICv2 with QEMU virt guest-physical addresses
+vdev gic
+    version 2
+    gicd 0x08000000
+    gicc 0x08010000
+
+# Bind the guest virtio-console byte stream directly to `/proc/boot/latch-ingest`.
+# `name` creates `/dev/qvm/latch-policy-guest/latch_console` for control only;
+# it is never pointed at `/dev/latch/actuator`.
+vdev virtio-console
+    loc 0x1c0a0000
+    intr gic:42
+    hostdev >"|on -T latch_ingest_t /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
+    name latch_console
+
+vdev pl011
+    loc 0x1c090000
+    intr gic:33
+    hostdev >/dev/shmem/guest_console.log
+
+load 0x80080000,/proc/boot/linux-guest.Image
+initrd load /proc/boot/linux-guest.initrd
+cmdline "earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8"

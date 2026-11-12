@@ -1,8 +1,8 @@
 # Codelab: A Dead-Man's Handle in an Afternoon on QNX 8.0
 
 **Time required:** 45 minutes  
-**Target OS:** QNX Software Development Platform (SDP) 8.0 + QNX Hypervisor 8.0 (build >= 549)  
-**Target Board:** Raspberry Pi 4 Model B (`com.qnx.qnx800.bsp.hw.raspberrypi_bcm2711_rpi4`) or Linux/QEMU Host Simulation
+**Target OS:** QNX Software Development Platform (SDP) 8.0 + QNX Hypervisor 8.0.5  
+**Target Platform:** QEMU AArch64 `virt` (`4x Cortex-A76`, EL2 VHE, GICv2) or Linux Host Simulation (`host-sim`)
 
 ---
 
@@ -27,13 +27,20 @@ make check
 
 `make check` runs both the built-in C self-test suite and a 200-tick UNIX pipe simulation feeding `guest/liar.py` into `latch-ingest` and `latchd`, outputting `host/suite_tape.csv`.
 
-### 2.2 Cross-Compile for Raspberry Pi 4B (`aarch64le`) and QEMU (`x86_64`)
+### 2.2 Build & Boot for QEMU AArch64 `virt` (`aarch64le` + Linux 6.12 Guest)
 
 ```bash
 source ~/qnx800/qnxsdp-env.sh
 cd qnx
-make rpi4
-make x86_64
+make ifs-qemu-aarch64 GUEST_IMAGE=/path/to/linux-6.12/arch/arm64/boot/Image
+./run_qemu.sh
+```
+
+Inside the booted QNX shell, verify the live Linux 6.12 guest stream and run the native 5-invariant verifier:
+
+```ksh
+/proc/boot/latchctl status
+/proc/boot/latch_verify -m /proc/boot/latch.manifest
 ```
 
 ---
@@ -85,4 +92,4 @@ From the guest VM (writing to `/dev/hvc0`) or on your workstation via pipe, run 
 Open `host/tape.html` in any browser and load `host/suite_tape.csv` (or inspect the pre-loaded 200-tick run). Verify:
 - The applied angle `theta_applied` never enters the shaded `[250, 650]` mrad keep-out zone.
 - `HP` mode is only restored after 25 consecutive clean frames (`ticks 33..57`).
-- After the guest is killed at tick 85, `latchd` transitions from `HOLD` to `HOME` after 50 ticks and steps cleanly back to `0` mrad.
+- After the guest is killed at tick 85, `latchd` transitions from `HOLD` to `HOME` after 50 ticks and steps monotonically back to `0` mrad (which `latch_verify` explicitly asserts via `DCMD_LATCH_DUMP_TAPE`).

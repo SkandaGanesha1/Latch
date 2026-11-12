@@ -128,12 +128,15 @@ typedef struct latch_simplex_state {
     uint32_t       total_proposals_rx;
     uint32_t       total_wire_faults;
     uint32_t       total_envelope_faults;
+    uint32_t       wcet_overruns;
     _Atomic uint32_t total_ring_drops;
     _Atomic uint32_t total_eperm_rejects;
+    _Atomic uint32_t eperm_pending;
     _Atomic uint32_t operator_hold_locked;
     _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
     _Atomic uint32_t session_reset_pending; /* Armed by latch_io_open(), consumed by tick */
     _Atomic uint32_t open_writers;          /* Active writer reference count */
+    _Atomic uint32_t writer_closed_eof;     /* Set on last writer close, checked after retract */
 
     int            i2c_fd;
     uint32_t       period_ns;
@@ -183,11 +186,7 @@ static inline uint32_t latch_cycles_to_ns(uint64_t dcycles) {
 
 static void latch_record_eperm_fault(void) {
     atomic_fetch_add_explicit(&g_simplex.total_eperm_rejects, 1u, memory_order_relaxed);
-    g_simplex.latched_faults |= LATCH_FAULT_EPERM;
-    uint32_t widx = atomic_load_explicit(&g_tape_write_idx, memory_order_relaxed);
-    if (widx > 0) {
-        g_latch_tape[(widx - 1u) & LATCH_TAPE_MASK].fault_bits |= LATCH_FAULT_EPERM;
-    }
+    atomic_store_explicit(&g_simplex.eperm_pending, 1u, memory_order_release);
 }
 
 /* ==========================================================================
@@ -416,8 +415,13 @@ static uint16_t latch_mrad_to_pca9685_off(int32_t theta_mrad) {
             int32_t hi = g_manifest.envelope.keepout[i].hi_mrad;
             if (safe_theta >= lo && safe_theta <= hi) {
                 safe_theta = (safe_theta < ((lo + hi) / 2)) ? (lo - 1) : (hi + 1);
-                break;
+                safe_theta = latch_clamp_i32(safe_theta,
+                                             g_manifest.envelope.theta_min_mrad,
+                                             g_manifest.envelope.theta_max_mrad);
             }
+        }
+        if (latch_manifest_in_keepout(&g_manifest, safe_theta)) {
+            safe_theta = g_manifest.envelope.home_mrad;
         }
     }
 
@@ -575,12 +579,18 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     st->tick++;
 
     uint16_t tick_faults = LATCH_FAULT_NONE;
+    if (atomic_exchange_explicit(&st->eperm_pending, 0u, memory_order_acq_rel) != 0u) {
+        tick_faults |= LATCH_FAULT_EPERM;
+        st->latched_faults |= LATCH_FAULT_EPERM;
+    }
+
     latch_ipc_proposal_t prop;
     bool has_new = latch_consume_proposal(pub, &st->last_consumed_pub, &prop);
 
     if (has_new) {
         st->total_proposals_rx++;
         if (atomic_exchange_explicit(&st->session_reset_pending, 0u, memory_order_acq_rel) != 0u || !st->session_active) {
+            atomic_store_explicit(&st->writer_closed_eof, 0u, memory_order_release);
             st->mode               = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
                                          ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
             st->session_active     = true;
@@ -603,6 +613,9 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         if ((prop.wire_flags & LATCH_WIRE_FLAG_SILENCE) != 0u) {
             has_new = false;
         }
+    } else if (atomic_load_explicit(&st->session_reset_pending, memory_order_acquire) != 0u) {
+        /* Writer opened proposal node but Frame #1 has not arrived yet: hold idle without watchdog */
+        st->session_active = false;
     }
 
     if (!st->session_active) {
@@ -775,6 +788,10 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->max_latency_cycles = latency;
         st->max_latency_ns     = lat_ns;
     }
+    if (g_manifest.timing.wcet_budget_us > 0u &&
+        lat_ns > (g_manifest.timing.wcet_budget_us * 1000u)) {
+        st->wcet_overruns++;
+    }
 
     atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
 
@@ -790,8 +807,13 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                           tick_faults);
     }
 
-    if (st->retracted_home && !st->session_active) {
+    bool q_empty = (atomic_load_explicit(&pub->read_tail, memory_order_acquire) >=
+                    atomic_load_explicit(&pub->write_head, memory_order_acquire));
+    if (st->retracted_home &&
+        atomic_load_explicit(&st->writer_closed_eof, memory_order_acquire) != 0u &&
+        q_empty) {
         st->tape_frozen = true;
+        st->session_active = false;
     }
 }
 
@@ -827,6 +849,9 @@ static void latch_fill_status(latch_status_reply_t *out) {
             &g_simplex.total_eperm_rejects, memory_order_relaxed);
         out->operator_hold_locked  = atomic_load_explicit(
             &g_simplex.operator_hold_locked, memory_order_relaxed);
+        out->total_ring_drops      = atomic_load_explicit(
+            &g_simplex.total_ring_drops, memory_order_relaxed);
+        out->wcet_overruns         = g_simplex.wcet_overruns;
         memcpy(out->manifest_sha256, g_manifest.sha256, sizeof(out->manifest_sha256));
 
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
@@ -1000,6 +1025,7 @@ static int latch_io_open(resmgr_context_t *ctp,
             atomic_store_explicit(&g_pub_buf.read_tail,
                                   atomic_load_explicit(&g_pub_buf.write_head, memory_order_relaxed),
                                   memory_order_release);
+            atomic_store_explicit(&g_simplex.writer_closed_eof, 0u, memory_order_release);
             atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
             atomic_fetch_add_explicit(&g_simplex.open_writers, 1u, memory_order_relaxed);
         }
@@ -1017,7 +1043,7 @@ static int latch_io_close_ocb(resmgr_context_t *ctp,
         if (!lattr->is_actuator_node && (io_ocb->ioflag & _IO_FLAG_WR)) {
             uint32_t remaining = atomic_fetch_sub_explicit(&g_simplex.open_writers, 1u, memory_order_acq_rel);
             if (remaining <= 1u) {
-                g_simplex.session_active = false;
+                atomic_store_explicit(&g_simplex.writer_closed_eof, 1u, memory_order_release);
             }
         }
     }
@@ -1463,14 +1489,13 @@ static int latch_run_pipe_simulation(const char *csv_path) {
             fprintf(stderr, "latchd: invalid IPC proposal on pipe\n");
             return EXIT_FAILURE;
         }
-        latch_publish_proposal(&g_pub_buf, &prop);
-        latch_simplex_tick(&g_simplex, &g_pub_buf);
-
-        /* At tick 110, simulate unauthorized client devctl calling force_hold */
-        if (g_simplex.tick == 110u) {
+        /* At tick 110 (before tick runs), simulate unauthorized client devctl calling force_hold */
+        if (g_simplex.tick == 109u) {
             latch_force_hold_cmd_t fcmd = { .lock_hold = 0u, .reason_code = 99u };
             (void)latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_FORCE_HOLD, &fcmd);
         }
+        latch_publish_proposal(&g_pub_buf, &prop);
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
     }
 
     if (csv_path != NULL) {
@@ -1677,7 +1702,95 @@ static int latch_run_self_tests(void) {
         return EXIT_FAILURE;
     }
 
-    printf("[LATCH_HOST_SIM] PASS: All 5 fault scenarios, Seqlock & manifest verified (PWM center=%u counts).\n",
+    /* Fault 6: Atomic EPERM pending flag lands on next single-writer tick without cross-thread race */
+    {
+        uint16_t prev_latched = g_simplex.latched_faults;
+        g_simplex.session_active = true;
+        g_simplex.latched_faults = 0u;
+        latch_force_hold_cmd_t fcmd2 = { .lock_hold = 1u, .reason_code = 2u };
+        (void)latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_FORCE_HOLD, &fcmd2);
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if ((g_simplex.active_faults & LATCH_FAULT_EPERM) == 0u ||
+            (g_simplex.latched_faults & LATCH_FAULT_EPERM) == 0u) {
+            fprintf(stderr, "FAIL: Fault 6 (EPERM pending tick consumption) failed\n");
+            return EXIT_FAILURE;
+        }
+        g_simplex.latched_faults |= prev_latched;
+    }
+
+    /* Test 7: Empty ticks between session open (session_reset_pending) and Frame #1 do NOT trip WATCHDOG */
+    latch_sim_reset();
+    atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
+    for (uint32_t t = 0; t < g_manifest.timing.watchdog_ticks + 5u; ++t) {
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if (g_simplex.active_faults != LATCH_FAULT_NONE || g_simplex.mode != (uint8_t)LATCH_MODE_HP) {
+            fprintf(stderr, "FAIL: Pre-Frame-1 idle wait tripped spurious fault 0x%04X mode=%u\n",
+                    g_simplex.active_faults, (unsigned int)g_simplex.mode);
+            return EXIT_FAILURE;
+        }
+    }
+    /* Now send Frame #1 after wait: should start cleanly in HP */
+    pos = home + dir * step;
+    {
+        latch_ipc_proposal_t p = {
+            .ipc_magic = LATCH_IPC_PROPOSAL_MAGIC, .seq = 1u, .u_mrad = pos,
+            .wire_flags = 0u, .pre_fault_bits = LATCH_FAULT_NONE, .ingest_cycles = latch_clock_cycles()
+        };
+        latch_publish_proposal(&g_pub_buf, &p);
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if (g_simplex.mode != (uint8_t)LATCH_MODE_HP || g_simplex.theta_mrad != pos) {
+            fprintf(stderr, "FAIL: Post-wait Frame #1 failed to enter HP cleanly\n");
+            return EXIT_FAILURE;
+        }
+    }
+
+    /* Test 8: Writer EOF disconnect mid-motion does NOT teleport in 1 tick; retracts via WATCHDOG->HOLD->HOME */
+    for (int i = 0; i < 6; ++i) {
+        pos += dir * step;
+        latch_ipc_proposal_t p = {
+            .ipc_magic = LATCH_IPC_PROPOSAL_MAGIC, .seq = (uint32_t)(2 + i), .u_mrad = pos,
+            .wire_flags = 0u, .pre_fault_bits = LATCH_FAULT_NONE, .ingest_cycles = latch_clock_cycles()
+        };
+        latch_publish_proposal(&g_pub_buf, &p);
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+    }
+    int32_t eof_start_pos = g_simplex.theta_mrad;
+    atomic_store_explicit(&g_simplex.writer_closed_eof, 1u, memory_order_release);
+    latch_simplex_tick(&g_simplex, &g_pub_buf);
+    if (!g_simplex.session_active || g_simplex.theta_mrad == home) {
+        fprintf(stderr, "FAIL: Writer EOF immediately deactivated session or teleported to home\n");
+        return EXIT_FAILURE;
+    }
+    uint32_t eof_retract_dist = (uint32_t)abs(eof_start_pos - home);
+    uint32_t eof_retract_ticks = (eof_retract_dist + v_home - 1u) / v_home;
+    uint32_t eof_budget = g_manifest.timing.watchdog_ticks + g_manifest.recovery.hold_to_home_ticks + eof_retract_ticks + 10u;
+    for (uint32_t t = 0; t < eof_budget; ++t) {
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+    }
+    if (!g_simplex.retracted_home || !g_simplex.tape_frozen || g_simplex.session_active || g_simplex.theta_mrad != home) {
+        fprintf(stderr, "FAIL: Writer EOF controlled retraction did not park and freeze cleanly\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Test 9: Strict anti-silent-defaults manifest parser rejects stripped JSON */
+    {
+        const char *bad_path = "/tmp/latch_test_stripped_manifest.json";
+        FILE *bf = fopen(bad_path, "wb");
+        if (bf) {
+            fputs("{\"schema_version\":2}\n", bf);
+            fclose(bf);
+            latch_manifest_t bad_m;
+            char bad_err[128];
+            int brc = latch_manifest_load_opts(bad_path, &bad_m, false, bad_err, sizeof(bad_err));
+            remove(bad_path);
+            if (brc == 0) {
+                fprintf(stderr, "FAIL: Stripped manifest unexpectedly succeeded\n");
+                return EXIT_FAILURE;
+            }
+        }
+    }
+
+    printf("[LATCH_HOST_SIM] PASS: All 9 safety, EOF, parser & Seqlock tests verified (PWM center=%u counts).\n",
            (unsigned int)latch_mrad_to_pca9685_off(0));
     return EXIT_SUCCESS;
 }

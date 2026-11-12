@@ -138,11 +138,16 @@ void latch_manifest_init_defaults(latch_manifest_t *m);
 /* Load and validate latch.manifest JSON from file. Returns 0 on success, <0 on failure. */
 int latch_manifest_load(const char *path, latch_manifest_t *out_m, char *err_buf, size_t err_len);
 
+/* Load and validate manifest with explicit sidecar enforcement policy. */
+int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool require_sidecar,
+                             char *err_buf, size_t err_len);
+
 /* Three-valued evidence-grounded manifest admissibility validator */
 latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *err_buf, size_t err_len);
 
-/* Verify sidecar file (<manifest_path>.sha256) matches computed hex digest. Returns 0 on success/absent, <0 on mismatch */
-int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex, char *err_buf, size_t err_len);
+/* Verify sidecar file (<manifest_path>.sha256) matches computed hex digest. Returns 0 on success, <0 on mismatch or missing when required */
+int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex,
+                                  bool require_sidecar, char *err_buf, size_t err_len);
 
 /* Compute SHA-256 digest of a manifest file. Returns 0 on success, <0 on failure. */
 int latch_manifest_compute_sha256(const char *path, uint8_t hash_out[32], char hex_out[65]);

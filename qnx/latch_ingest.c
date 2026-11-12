@@ -188,6 +188,7 @@ int main(int argc, char *argv[]) {
     const char *input_path    = NULL;
     const char *proposal_path = LATCH_DEV_PROPOSAL;
     const char *manifest_path = "latch.manifest";
+    bool explicit_manifest    = false;
     unsigned int target_cpu   = 1u;
     bool verbose              = false;
 
@@ -202,6 +203,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm':
                 manifest_path = optarg;
+                explicit_manifest = true;
                 break;
             case 'c':
                 target_cpu = (unsigned int)strtoul(optarg, NULL, 10);
@@ -216,15 +218,25 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Initialize manifest defaults first, then load if present */
-    latch_manifest_t manifest;
-    latch_manifest_init_defaults(&manifest);
-    char err_buf[256];
-    if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) == 0) {
-        target_cpu = manifest.ingest.cpu;
-        if (strcmp(proposal_path, LATCH_DEV_PROPOSAL) == 0 && manifest.paths.proposal[0] != '\0') {
-            proposal_path = manifest.paths.proposal;
+    if (!explicit_manifest && access(manifest_path, F_OK) != 0) {
+        if (access("qnx/latch.manifest", F_OK) == 0) {
+            manifest_path = "qnx/latch.manifest";
+        } else if (access("/proc/boot/latch.manifest", F_OK) == 0) {
+            manifest_path = "/proc/boot/latch.manifest";
         }
+    }
+
+    /* Fail-Closed Manifest Enforcement */
+    latch_manifest_t manifest;
+    char err_buf[256];
+    if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) != 0) {
+        fprintf(stderr, "latch-ingest: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
+                manifest_path, err_buf);
+        return EXIT_FAILURE;
+    }
+    target_cpu = manifest.ingest.cpu;
+    if (strcmp(proposal_path, LATCH_DEV_PROPOSAL) == 0 && manifest.paths.proposal[0] != '\0') {
+        proposal_path = manifest.paths.proposal;
     }
 
     signal(SIGINT, latch_ingest_sig_handler);
@@ -246,11 +258,35 @@ int main(int argc, char *argv[]) {
     int out_fd = is_stdout ? STDOUT_FILENO : -1;
 
 #ifdef __QNXNTO__
-    /* Drop and lock all abilities: latch-ingest only parses wire frames and writes to proposal pipe */
-    (void)procmgr_ability(0,
-                          PROCMGR_ADN_ROOT | PROCMGR_ADN_NONROOT |
-                          PROCMGR_AOP_DENY | PROCMGR_AOP_LOCK,
-                          PROCMGR_AID_EOL);
+    /* Drop and lock concrete abilities: latch-ingest only parses wire frames and writes to proposal pipe */
+    const unsigned drop_flags = PROCMGR_ADN_ROOT | PROCMGR_ADN_NONROOT | PROCMGR_AOP_DENY | PROCMGR_AOP_LOCK;
+    int ab_rc = procmgr_ability(0,
+                                drop_flags | PROCMGR_AID_ABLE_CREATE,
+                                drop_flags | PROCMGR_AID_SETUID,
+                                drop_flags | PROCMGR_AID_SETGID,
+                                drop_flags | PROCMGR_AID_FORK,
+                                drop_flags | PROCMGR_AID_SPAWN,
+                                drop_flags | PROCMGR_AID_MEM_PHYS,
+                                drop_flags | PROCMGR_AID_IO,
+                                drop_flags | PROCMGR_AID_CLOCKSET,
+                                drop_flags | PROCMGR_AID_PUBLIC_CHANNEL,
+                                drop_flags | PROCMGR_AID_XPROCESS_ABLE,
+                                PROCMGR_AID_EOL);
+    if (ab_rc != EOK) {
+        int err = (ab_rc > 0) ? ab_rc : errno;
+        fprintf(stderr, "latch-ingest: WARNING: procmgr_ability() failed (%s)\n", strerror(err));
+    }
+    if (manifest.paths.ability[0] != '\0') {
+        int custom_aid = procmgr_ability_lookup(manifest.paths.ability);
+        if (custom_aid > 0) {
+            int custom_rc = procmgr_ability(0, drop_flags | (unsigned)custom_aid, PROCMGR_AID_EOL);
+            if (custom_rc != EOK) {
+                int err = (custom_rc > 0) ? custom_rc : errno;
+                fprintf(stderr, "latch-ingest: WARNING: procmgr_ability(%s) failed (%s)\n",
+                        manifest.paths.ability, strerror(err));
+            }
+        }
+    }
 #endif
 
     latch_wire_frame_t   wire_frame;

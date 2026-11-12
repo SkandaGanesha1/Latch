@@ -13,7 +13,7 @@
 # the host ability to modify qvm thread affinity.
 ################################################################################
 
-system latch-policy-guest
+system latch-policy-guest-rpi4
 
 ram 0x80000000,0x20000000
 
@@ -23,7 +23,7 @@ cpu _cpu-3 sched 8r
 
 # BCM2711 uses an ARM GIC-400 (GICv2). Default `vdev gic` version is 3, so
 # `version 2` MUST be explicitly specified, and `gicr` MUST NOT be set.
-# Requires QNX Hypervisor 8.0 build >= 549 (12 Jun 2025).
+# For QEMU AArch64 `virt` (gicd 0x08000000 / gicc 0x08010000), use `latch_qemu_virt.qvmconf`.
 vdev gic
     version 2
     gicd 0xff841000
@@ -35,7 +35,7 @@ vdev gic
 vdev virtio-console
     loc 0x1c0a0000
     intr gic:42
-    hostdev >"|/proc/boot/latch-ingest -m /proc/boot/latch.manifest"
+    hostdev >"|on -T latch_ingest_t /proc/boot/latch-ingest -m /proc/boot/latch.manifest"
     name latch_console
 
 # Optional shared-memory transport (Week 4+ only if byte pipe is too slow):

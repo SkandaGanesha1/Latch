@@ -9,13 +9,13 @@
 
 ## 1. End-to-End System Architecture
 
-LATCH (Lockless Asymmetric Transit for Critical Hardware) is a high-assurance Simplex Architecture supervisory framework engineered natively for QNX Neutrino RTOS 8.0.0. It provides mathematical and runtime safety guarantees for untrusted high-performance (HP) guest control policies operating under virtualization (e.g., Linux guest under QNX Hypervisor 8.0) or unprivileged POSIX userspace.
+LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simplex Architecture supervisory framework engineered natively for QNX Neutrino RTOS 8.0.0. It provides mathematical and runtime safety guarantees for untrusted high-performance (HP) guest control policies operating under virtualization (e.g., Linux guest under QNX Hypervisor 8.0) or unprivileged POSIX userspace.
 
-```
+```text
 +---------------------------------------------------------------------------------------+
-|  UNTRUSTED GUEST / AGENT                                                             |
+|  UNTRUSTED GUEST / AGENT                                                              |
 |  - Liar / Linux Control Policy (RL / DNN / Heuristic)                                 |
-|  - Generates 32-byte wire proposal frames: [MAGIC:4][SEQ:4][CMD:2][PAD:2][U:8][CRC:4] |
+|  - Generates 32-byte wire frames: [MAGIC:4][VER:2][JOINT:1][FLAGS:1][SEQ:4][U:4][CRC:4][RES:12] |
 +---------------------------------------------------------------------------------------+
                                           |
                                           | (virtio-console / POSIX pipe)
@@ -61,9 +61,9 @@ LATCH (Lockless Asymmetric Transit for Critical Hardware) is a high-assurance Si
 ```
 
 ### Key Architectural Invariants
-1. **Memory Isolation & Zero Dynamic Allocation**: All ring buffers, state structs, and evidence tapes reside in pre-allocated `.bss` memory. No dynamic heap allocations (`malloc`, `free`) occur during runtime execution.
-2. **Deterministic WCET**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). The worst-case execution time (WCET) is strictly bounded below 250 ns nominal (101.3 µs cold startup cache penalty), far exceeding the 1 ms hard real-time deadline.
-3. **Seqlock Consistency**: State transitions use a 64-bit generation sequence lock. Readers (such as verification inspectors and telemetry reporters) execute optimistic lock-free loops without blocking the safety-critical decision loop.
+1. **Startup-Only Manifest Allocation & Zero Tick Heap Activity**: All ring buffers, state structs, and evidence tapes reside in pre-allocated `.bss` memory. `malloc` is used strictly once at process initialization inside `latch_manifest_load()` and freed before entering the tick loop; zero heap allocations occur during runtime decision ticks.
+2. **Deterministic WCET**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). Measured `latchd` decision cycle times stayed within the `100 µs` (`wcet_budget_us`) budget (`~1.1 µs` host-sim max, `~101.3 µs` observed under x86_64 QNX QEMU load), well inside the 1.0 ms deadline.
+3. **Seqlock Consistency**: Telemetry snapshots use an atomic generation sequence guard (`snapshot_gen`). Readers (such as verification inspectors and telemetry reporters) execute optimistic lock-free retry loops without blocking the safety-critical decision loop.
 
 ---
 
@@ -163,38 +163,38 @@ Under the new lifecycle:
 
 LATCH enforces strict zero-hardcoding. All parameters, constraints, and hardware calibrations are loaded from signed, SHA-256 attested JSON manifests.
 
-| Architectural Parameter | Robotic Servo Gripper (`latch.manifest`) | Syringe Infusion Pump (`syringe_pump_bolus.manifest`) |
+| Architectural Parameter | Robotic Servo (`qnx/latch.manifest`) | Syringe Infusion Pump (`qnx/contracts/syringe_pump_bolus.manifest`) |
 | :--- | :--- | :--- |
-| **Domain Type** | Symmetric Rotary ($\pm 1000\text{ mrad}$) | Unidirectional Linear ($0 \dots 5000\text{ µL}$) |
-| **$\theta_{\text{min}} \dots \theta_{\text{max}}$** | $-1000\text{ mrad} \dots +1000\text{ mrad}$ | $0\text{ µL} \dots 5000\text{ µL}$ |
-| **Home Position** | $0\text{ mrad}$ | $0\text{ µL}$ (fully retracted) |
-| **Max Velocity ($v_{\text{max}}$)** | $25\text{ mrad/ms}$ ($25\text{ rad/s}$) | $150\text{ µL/ms}$ |
-| **Max Acceleration ($a_{\text{max}}$)** | $10\text{ mrad/ms}^2$ | $50\text{ µL/ms}^2$ |
-| **Max Jerk ($j_{\text{max}}$)** | $5\text{ mrad/ms}^3$ | $20\text{ µL/ms}^3$ |
-| **Forbidden Keep-Out** | $[+250, +650]\text{ mrad}$ (Human pinch hazard) | $[3000, 3500]\text{ µL}$ (Air bolus / occlusion zone) |
-| **Actuator Hardware** | I2C PCA9685 PWM ($50\text{ Hz}$, $1.0\dots 2.0\text{ ms}$) | Stepper Driver Pulse / Direction Controller |
-| **Watchdog Budget** | $2\text{ ms}$ ($2\text{ ticks}$) | $5\text{ ms}$ ($5\text{ ticks}$) |
-| **Attestation Hash** | `135aadebc2b395d2...413c7c06` | `36f082454cf416f7...6b8af0a3` |
+| **Domain Type** | Angular (`mrad`, symmetric `[-1000, +1000]`) | Linear (`mm` scaled units, unidirectional `[0, 5000]`) |
+| **$\theta_{\text{min}} \dots \theta_{\text{max}}$** | `-1000 .. +1000` mrad | `0 .. 5000` (axis unit `mm`) |
+| **Home Position** | `0` mrad | `0` (fully retracted) |
+| **Max Velocity ($v_{\text{max}}$)** | `25` mrad/tick | `20` units/tick |
+| **Max Acceleration ($a_{\text{max}}$)** | `10` mrad/tick² | `10` units/tick² |
+| **Max Jerk ($j_{\text{max}}$)** | `20` mrad/tick³ | `15` units/tick³ |
+| **Forbidden Keep-Out** | `[+250, +650]` (`PERSON`) | `[+4200, +5000]` (`ENDSTOP_BUFFER`) |
+| **Actuator Hardware** | PCA9685 PWM (`0x40`, `50 Hz`, `205..410` counts) | PCA9685 PWM (`0x40`, `50 Hz`, `205..410` counts) |
+| **Watchdog Budget** | `2` ticks (`2 ms` at `1000 us` period) | `2` ticks (`2 ms` at `1000 us` period) |
+| **Attestation Hash** | `135aadebc2b395d25ca724b531a53a0ac5d386e23559b93faf364cbc413c7c06` | `36f082454cf416f784d81fb85c0983ff9ad72a3fe8ce0b9c091a0cb96b8af0a3` |
 
 Both contracts validate with 100% cryptographic integrity using native NIST FIPS 180-2 SHA-256 sidecars.
 
 ---
 
-## 5. Target Validation Results across QNX Architectures
+## 5. Target Validation & Build Architecture
 
-Comprehensive test execution across target environments:
+Validation across host simulation and QNX target environments:
 
 ### 5.1 x86_64 QNX SDP 8.0 Target VM (`qnxqemu`)
 - **Kernel**: `procnto-smp-instr` x86_64
-- **Safety Invariant 1 (Ability Gatekeeper)**: `./latchctl grant-check` returns exit code 2 (`EPERM`). Root without custom `latch/actuator` ability is denied access to `/dev/latch/actuator`.
-- **Safety Invariant 2 (NIST SHA-256 Attestation)**: Sidecar validation confirms exact manifest match. Modifying 1 byte triggers immediate fail-closed abort (`EXIT_FAILURE`).
-- **Safety Invariant 3 (DT-CBF Boundary Invariance)**: Ingesting 200 verification frames results in 0 keep-out breaches ($[250, 650]$). 12 corrupted frames discarded by CRC/magic/seq validators.
-- **Safety Invariant 4 (Decoupled Session Handshake)**: Zero premature watchdog trips. Clean 7 keep-out vetoes.
-- **Safety Invariant 5 (Microkernel IPC Latency)**: Pulse round-trip WCET under load: **101.3 µs** (well within 1.0 ms budget).
+- **Safety Invariant 1 (Ability Gatekeeper)**: `./latchctl grant-check` (`open(..., O_RDONLY)` + `DCMD_LATCH_PROBE_ABILITY`) returns exit code 2 (`EPERM`) when invoked without custom `latch/actuator` ability.
+- **Safety Invariant 2 (NIST SHA-256 Attestation)**: Sidecar validation confirms exact manifest match. Modifying 1 byte or supplying a stripped manifest triggers immediate fail-closed abort (`EXIT_FAILURE`).
+- **Safety Invariant 3 (DT-CBF Boundary Invariance)**: Ingesting 200 verification frames results in 0 keep-out breaches ($[250, 650]$). 12 corrupted frames rejected cleanly.
+- **Safety Invariant 4 (Decoupled Session Handshake & EOF)**: Zero premature watchdog trips (`7` keep-out vetoes); writer disconnect completes controlled `WATCHDOG -> HOLD -> HA-HOME` retraction before freezing the tape.
+- **Safety Invariant 5 (Decision Timing)**: Host-sim observed max latency ~1.1 µs; QEMU VM observed within `1.0 ms` period (`101.3 µs` peak measured cycle delta in target VM run).
 
 ### 5.2 ARM64 Raspberry Pi 4 Model B (`latch_rpi4.build`)
 - **Kernel**: `procnto-smp-instr` aarch64le
-- **I2C Actuation**: `/dev/i2c1` via `i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1`
-- **Hypervisor Support**: `/lib/dll/qvm` packaged directly into `/proc/boot` image.
+- **I2C Actuation**: `/dev/i2c1` via `i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1` (`GIC_SPI 117 + 32 = IRQ 149`)
+- **Hypervisor Support**: `/lib/dll/qvm` packaged into `/proc/boot` with `latch.qvmconf` (`gicd 0xff841000`, `gicc 0xff842000`; QEMU virt uses `latch_qemu_virt.qvmconf` with `0x08000000`, `0x08010000`).
 - **Real-Time Actuator Safety**: Fail-closed exit if PCA9685 fails initialization while `actuator.required == true`.
 

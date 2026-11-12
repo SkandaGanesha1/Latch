@@ -100,9 +100,17 @@ done
 # Expand tilde in paths if present
 [[ -n "$IFS_FILE" ]] && IFS_FILE="${IFS_FILE/#\~/$HOME}"
 [[ -n "$DISK_FILE" ]] && DISK_FILE="${DISK_FILE/#\~/$HOME}"
+EXPLICIT_DISK="${DISK_FILE:+yes}"
 
-# Auto-detect disk image if not specified
-if [[ -z "$DISK_FILE" ]]; then
+# Prefer locally built QEMU AArch64 virt IFS when no arch/disk/kernel is explicitly given
+if [[ -z "$ARCH" && -z "$DISK_FILE" && -z "$IFS_FILE" && -f "$SCRIPT_DIR/build/nto-aarch64-le/latch_qemu.ifs" ]]; then
+    ARCH="aarch64"
+    IFS_FILE="$SCRIPT_DIR/build/nto-aarch64-le/latch_qemu.ifs"
+    echo "Auto-detected QNX QEMU AArch64 virt IFS: $IFS_FILE"
+fi
+
+# Auto-detect disk image if not specified and not building an aarch64 virt IFS boot
+if [[ -z "$DISK_FILE" && "$ARCH" != "aarch64" ]]; then
     for candidate in \
         "$HOME/qnx800/images/qemu/qemu/output/disk-qemu.vmdk" \
         "$HOME/qnx800/images/qemu/qemu/output/disk-qemu" \
@@ -229,17 +237,18 @@ elif [[ "$ARCH" == "aarch64" ]]; then
         exit 1
     fi
 
+    if [[ -z "${EXPLICIT_DISK:-}" && "$DISK_FILE" =~ disk-qemu ]]; then
+        DISK_FILE=""
+    fi
+
     QEMU_CMD=(
         "$QEMU_BIN"
-        -M virt,gic-version=2
-        -cpu cortex-a72
+        -M virt,virtualization=on,gic-version=2
+        -cpu cortex-a76
         -smp "$CPUS"
         -m "$MEM_MB"
         -nographic
         -serial mon:stdio
-        -device virtio-serial-device
-        -chardev pty,id=virtcon
-        -device virtconsole,chardev=virtcon
     )
 
     if [[ -n "$IFS_FILE" ]]; then
