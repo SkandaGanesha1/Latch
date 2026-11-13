@@ -179,6 +179,32 @@ wrong.
   channel**: the guest delivered 26 of 84 frames and the wire-fault count
   tripled. The single-virtio-console design is a decision with a measured
   cost, not an accident. See `docs/evidence/resolution/05-rejected-2nd-virtio-console.txt`.
+- **A session reset must be a SESSION event, not an OPEN event.** Arming the
+  supervisor's reset on every open of the proposal node let *any* second
+  process flush the ring, re-base the sequence baseline (defeating replay
+  detection) and teleport the plant angle. Reset only on the 0 → 1 writer
+  transition; a second writer joins the live session.
+- **`secpolpush` IS the enforcement mechanism.** `secpollaunch` is an
+  unrelated setuid-root launcher. Pushing the compiled policy at boot is
+  what *triggers* enforcement, so a buildfile with `secpolpush` has an
+  enforced policy on every boot — and the ability checks are then
+  demonstrated under enforcement, not in theory.
+- **A producer must outrun the consumer, and a burst is not a burst.**
+  The supervisor consumes exactly one proposal per tick, so a *burst* is
+  applied at precisely the same rate as a paced stream — but the ring
+  holds the frames, so the watchdog cannot fire. A stream paced at exactly
+  one frame per tick is a coin flip: one millisecond of jitter and the
+  watchdog fires. This applies to the guest policy, to the bridge, and to
+  the verification harness alike.
+- **The supervisor returns to HP only after
+  `recovery.hysteresis_clean_frames` CONSECUTIVE clean frames.** In HOLD
+  the plant is frozen, so a ramp sent while the supervisor is in HOLD is
+  *consumed but not applied*. Any test that ramps the plant must first
+  drive the supervisor back to HP with clean frames.
+- **Read the answer from the evidence tape, not from an instantaneous
+  status read.** The tape records (tick, seq, u, theta, mode, faults) for
+  every tick, so it is the authoritative record. An instantaneous read has
+  to catch a window as short as two ticks.
 - **There is no `vdev-gic.so` and no `libqvm.so.1` in QNX SDP 8.0.** The
   GIC vdev is linked into the `qvm` binary and `qvm` links `libqh.so.1`.
   `tools/consistency_check.py` verifies the buildfile payloads against the

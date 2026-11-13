@@ -1,0 +1,71 @@
+==============================================================================
+LATCH resolution proof -- 06-session-reset-defect
+==============================================================================
+DEFECT 6 -- OPENING THE PROPOSAL NODE RESET THE SUPERVISOR
+
+SYMPTOM
+  The verification harness failed on target: step 1 reported
+  'Nominal HP tracking not observed', the envelope-veto count was 15
+  instead of 7, and the evidence tape showed the frame sequence
+  frozen at seq=4 with the WATCHDOG fault latched.
+
+  The same defect is a SAFETY defect, not only a tooling one.
+
+MECHANISM
+  `latch_verify` opens /dev/latch/proposal for writing to inject its
+  frames. The proposal node's open handler armed a supervisor
+  SESSION RESET on EVERY open, and that reset:
+
+    - FLUSHED the frame ring, discarding the guest's queued frames;
+    - RE-BASED the sequence baseline to 0, so the first frame after
+      any open was exempt from the sequence check and ANY sequence
+      was thereafter accepted -- REPLAY DETECTION DEFEATED;
+    - TELEPORTED theta to home with zero velocity, so the next frame
+      was judged against a fictitious plant state and vetoed as a
+      spurious RATE fault.
+
+  The proposal node is world-writable (0666) and the guest's
+  latch-ingest holds it open for the whole run, so ANY second
+  process on the target could do this to the supervisor.
+
+FIX
+  qnx/latchd.c, latch_io_open():
+    - The reset is armed only on the 0 -> 1 WRITER TRANSITION. A
+      second writer JOINS the live session: it does not reset it
+      and it does not discard the queued frames.
+    - The discarded frames (on a genuine new session) are COUNTED
+      as ring drops instead of vanishing silently.
+    - The writer count is rolled back if the OCB cannot be
+      allocated, so the EOF/retraction path cannot be lost.
+
+  qnx/latchd.c, the tick:
+    - A session change no longer re-bases the sequence baseline; a
+      NEW SEQUENCE EPOCH is recorded instead, so replay detection
+      survives a session change.
+    - A session change no longer TELEPORTS theta. If the plant is
+      already at rest at home, the reset is a no-op and the session
+      starts in HP. If it is not, the supervisor enters the existing
+      jerk-bounded retraction (WATCHDOG -> HA-HOLD -> HA-HOME).
+
+  qnx/latch_verify.c:
+    - The harness now CONTINUES the supervisor's sequence instead of
+      starting its own at 1.
+    - The ramp is derived from the OBSERVED plant angle, and the
+      result is read from the EVIDENCE TAPE rather than from an
+      instantaneous status read (which had to catch a 2-tick window).
+    - The ramp is sent as a BURST: the supervisor consumes one
+      proposal per tick, so a burst is applied at the same rate as a
+      paced stream, but the ring holds the frames, so the watchdog
+      cannot fire while a measurement is being taken.
+    - RECOVERY frames restore HP before the ramp: the supervisor
+      returns to HP only after `recovery.hysteresis_clean_frames`
+      consecutive clean frames, and in HOLD the plant is frozen, so a
+      ramp would be consumed but not applied.
+    - The step-4 replay is now a REAL replay (the supervisor's own
+      last_seq, re-sent) and the harness ASSERTS that the SEQ fault
+      was latched -- which the previous revision never did.
+
+PROOF
+  Before: 15 envelope vetoes, last_seq frozen at 4, VERIFY_RC=1.
+  After : 84 frames, 12 wire faults, 7 envelope vetoes, 0 ring drops,
+          last accepted seq 80, latched 0x01AE, VERIFY_RC=0.

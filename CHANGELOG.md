@@ -6,6 +6,127 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [3.2.0] - 2026-11-13
+
+### The Self-Contradicting Evidence Archive — Closed, and the Safety Defect Behind It Fixed
+
+The archive contained **two** on-target captures side by side: the numbered canonical
+session (`VERIFY_RC=0`) and a timestamped family whose own "these are the ONLY numbers
+the submission may quote" file said **`VERIFY_RC: 1`**. Nothing in the repository
+explained the failure, the run index listed only the numbered history, and neither the
+consistency gate nor CI inspected the timestamped family — so 15/15 checks passed
+beside a falsified quotable-numbers file. That is the *evidence-theatre* pattern, and it
+is the one thing this project cannot afford.
+
+**The root cause was not the tooling. It was a live safety defect.**
+
+`latch_verify` opens `/dev/latch/proposal` for writing to inject its frames, and the
+proposal node's open handler armed a supervisor **session reset on every open**. That
+reset flushed the frame ring, re-based the sequence baseline to `0` — **defeating
+sequence-replay detection** — and teleported `theta` to home with zero velocity, so the
+next frame was judged against a fictitious plant state and vetoed as a spurious RATE
+fault. The proposal node is world-writable (`0666`) and the guest's `latch-ingest` holds
+it open for the whole run, so **any** second process on the target could do this to the
+supervisor.
+
+| # | Fix | File |
+|---|---|---|
+| 1 | A session reset is a **session** event, not an **open** event: it is armed only on the 0 → 1 writer transition. A second writer joins the live session. | `qnx/latchd.c` |
+| 2 | A session change no longer re-bases the sequence baseline (a new **epoch** is recorded), so replay detection survives it. | `qnx/latchd.c` |
+| 3 | A session change no longer **teleports** `theta`. At rest at home it is a no-op; otherwise the supervisor enters the existing jerk-bounded retraction (`WATCHDOG → HA-HOLD → HA-HOME`). | `qnx/latchd.c` |
+| 4 | The frames discarded on a genuine new session are **counted** as ring drops instead of vanishing silently. | `qnx/latchd.c` |
+| 5 | The writer count is rolled back if the OCB cannot be allocated, so the EOF/retraction path (and the tape freeze) cannot be lost. | `qnx/latchd.c` |
+| 6 | The harness **continues the supervisor's sequence**, derives its ramp from the **observed** plant angle, and reads the result from the **evidence tape** rather than from an instantaneous status read. | `qnx/latch_verify.c` |
+| 7 | The ramp is sent as a **burst**: the supervisor consumes one proposal per tick, so a burst is applied at the same rate as a paced stream, but the ring holds the frames and the 2-tick watchdog cannot fire while a measurement is taken. | `qnx/latch_verify.c` |
+| 8 | **Recovery frames** restore HP before the ramp: the supervisor returns to HP only after `recovery.hysteresis_clean_frames` consecutive clean frames, and in HOLD the plant is frozen, so a ramp was consumed but never applied. | `qnx/latch_verify.c` |
+| 9 | The step-4 replay is now a **real** replay (the supervisor's own `last_seq`, re-sent) and the harness **asserts** that the SEQ fault was latched — which it never did before. | `qnx/latch_verify.c` |
+| 10 | A failed final status read returns a **distinct non-zero code** (2 = "could not complete"), not `0`. A harness that cannot verify must never be mistaken for one that verified. | `qnx/latch_verify.c` |
+
+**Result on target** (one continuous boot of the QEMU AArch64 `virt` image):
+`Proposals Received: 84 · Wire Faults Caught: 12 · Envelope Vetoes: 7 · Ring Drops: 0 ·
+Last Proposed: -180 mrad (seq=80) · Latched: 0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG)`
+and `[1/5]`…`[5c/5]` **ALL PASS**, `VERIFY_RC=0`.
+
+### The Capture Tool Is Now State-Synchronized, and the Gate Cannot Be Fooled
+
+- **State-synchronized driving.** The on-target scenario no longer runs from a
+  fixed-timer script. It tails the console and **waits for state**: for the QNX banner,
+  then for the guest's suite (polling `Proposals Received` until it reaches the guest
+  policy's own declared `LATCH_GUEST_SUITE_FRAMES`), then for the supervisor to settle
+  after the guest's designed silence trips the watchdog. A fixed sleep cannot know when
+  the guest finished, and that difference is the difference between a reproducible
+  capture and a flaky one.
+- **Failed captures are quarantined.** A capture with `VERIFY_RC != 0` is moved under
+  `on-target/FAILED/` and the archive's quotable numbers are **not** regenerated from it.
+  The tool now exits non-zero *before* the index is rebuilt, so a failure can never
+  become the story.
+- **The gate sees everything.** `tools/consistency_check.py` now requires exactly ONE
+  timestamped capture family, checks that it carries the exact on-target signature,
+  checks that `derived/on-target-numbers.txt` agrees with the session it names, and
+  checks that **nothing under `docs/evidence/` is git-ignored**. It found two real
+  problems: the contradictory family, and `.gitignore`'s bare `build/` pattern, which
+  silently excluded `docs/evidence/build/` from the published archive.
+- **The harness that could never pass.** `tools/verify_qemu_aarch64.py` asserted
+  `Proposals Received : 200` while the guest emits 84 — so `make verify-qemu`, the
+  command the README advertises as the end-to-end proof, failed against the repo's own
+  evidence. The expectation is now derived from the guest policy's source.
+- **`--all` never worked.** `capture_evidence.py --all` listed `"--all"` in the
+  positional's `choices`, so argparse read it as an option and rejected it. It is now a
+  real flag.
+- **The anti-rot gate was tautological.** `make evidence-check` regenerated the
+  signature file and then grepped its own fresh output, overwriting the committed
+  archive it was supposed to protect. It now **diffs** a fresh capture against the
+  committed one.
+- **The manifest-driven expectation.** The host-sim signature no longer hardcodes the
+  keep-out box `[250, 650]` and the `12/7/80` signature; both come from the manifest.
+
+### Correctness Fixes Found While Doing It
+
+- **The seqlock did not cover what it claimed.** The guard spanned only the last few
+  dozen lines of the tick, while ~20 status-visible fields were written earlier in the
+  same tick and outside it — and the idle path returned before the guard was even
+  opened. The guard now spans the **whole** tick, so a status read can only sample
+  between ticks, and a snapshot that cannot be taken is reported as `EBUSY` instead of
+  being served as a valid all-zero reply.
+- **The rate check could be bypassed.** `latch_abs_i32` negated `INT32_MIN` — undefined
+  behaviour that in practice returned `INT32_MIN`, so `|v_step| > v_max` evaluated
+  **false**. The kinematic differences are now computed in 64 bits, so `u_mrad` near
+  `INT32_MIN` can no longer flip the sign of the velocity step.
+- **The sequence check was a signed cast of an unsigned difference** — implementation-
+  defined above `INT32_MAX`, and used as the acceptance predicate. It is now a wrap-safe
+  unsigned delta, and "no frame accepted yet" is an explicit flag rather than the
+  overloaded `last_seq == 0`.
+- **The evidence tape was written with `% capacity` and read with a fixed mask**, so any
+  manifest whose `tape.capacity` is not 4096 exported the wrong rows.
+- **The initramfs was not reproducible.** `gzip -9` embedded the input's mtime in a
+  **tracked** binary. It is now built with `gzip -n`, a sorted entry order, and entry
+  mtimes pinned to `SOURCE_DATE_EPOCH`, so rebuilding from unchanged sources produces a
+  byte-identical image.
+- **Static asserts for the devctl payloads.** `latch_status_reply_t` and
+  `latch_tape_dump_t` are cross-process ABI; they now carry the size/offset asserts that
+  the wire, tape and IPC structs already had.
+
+### Documentation Corrections
+
+- `queue_depth` is 256, not 64 (README).
+- The harness asserts the **84-frame** signature, not 200 (README).
+- The "byte-for-byte the same suite" claim is now accurate: phases 1–8 are the same
+  suite; phase 9 differs by design.
+- The video script's `sha256sum` shot showed a digest that matched nothing in the repo.
+- `docs/LATCH-research.md` no longer prescribes the **rejected** one-line
+  `cpu _cpu-2 sched 8r` form, and no longer claims the guest is a Python program.
+- `guest/latch_guest_init.c` no longer calls its 84-frame suite a "200-tick" suite, and
+  no longer claims a host-side pacing that does not exist.
+- **The security-policy claim is corrected — and strengthened.** The archive said an
+  enforced policy boot "has not been run". In fact `secpolpush` at boot **is** the
+  enforcement mechanism (QNX SDP 8.0: *"Pushing the security policy (using secpolpush)
+  triggers policy enforcement"*), and `qnx/latch_qemu.build` pushes it on every boot —
+  so the `latch/actuator` fail-closed behaviour is demonstrated **under an enforced
+  policy**. (`secpollaunch` is an unrelated setuid-root launcher.) What remains undone
+  is an `secpolgenerate` audit of the rule graph against the running image.
+
+---
+
 ## [3.1.0] - 2026-11-12
 
 ### QEMU AArch64 `virt` Bring-Up: The On-Target Path Now Works End To End

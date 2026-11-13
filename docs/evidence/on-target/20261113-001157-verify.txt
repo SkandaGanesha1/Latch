@@ -1,0 +1,39 @@
+latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=$?
+
+=== LATCH Native QNX 8.0 Microkernel Verification ===
+--- pre-flight: supervisor mode=HOLD theta=0 mrad last_seq=80 rx=84
+[1/5] PASS: Nominal HP tracking verified (/dev/latch/proposal -> theta = -100 mrad from -10 mrad, 11 tape rows in HP mode)
+[2/5] PASS: Keep-out violation (450 mrad) vetoed -> HA-HOLD locked at theta = -100 mrad (latched = 0x01AE)
+[3/5] PASS: Wire CRC fault injected -> HA-HOLD maintained (latched = 0x01AE)
+[4/5] PASS: Sequence replay (seq=115) -> SEQ fault latched, then silence -> Watchdog tripped -> HA-HOME monotonic retraction to 0 mrad
+[5a/5] PASS: Dedicated probe devctl(PROBE_ABILITY) WITHOUT 'latch/actuator' ability -> EPERM (Fail-closed)
+[5b/5] PASS: Calling devctl(FORCE_HOLD) WITHOUT 'latch/actuator' ability -> 1 (Operation not permitted)
+[5c/5] PASS: open('/dev/latch/actuator', O_WRONLY) WITHOUT ability -> EPERM (Fail-closed)
+
+=== LATCH Verified Telemetry & Microkernel Evidence Tape ===
+Tick Counter       : 34154 ticks (1 kHz CLOCK_MONOTONIC pulse)
+Current Mode       : HOLD (theta = 0 mrad)
+Proposals Received : 122 | Wire Faults: 14 | Envelope Vetoes: 8 | Ring Drops: 0 | WCET Overruns: 6 | EPERM Rejects: 3
+Decision Latency   : last = 111 cyc (1776 ns) | max = 40374 cyc (645984 ns) @ 62500000 Hz
+Manifest SHA-256   : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+
+Last 12 Evidence Tape Records (.bss Ring):
+  TICK     SEQ      U_PROP     THETA_OUT  MODE   FAULTS   CYCLES    
+  #34154   115      -100       0          HOLD   0x0100   111
+  #34155   115      -100       0          HOLD   0x0100   115
+  #34156   115      -100       0          HOLD   0x0100   195
+  #34157   115      -100       0          HOLD   0x0100   181
+  #34158   115      -100       0          HOLD   0x0100   191
+  #34159   115      -100       0          HOLD   0x0100   120
+  #34160   115      -100       0          HOLD   0x0100   115
+  #34161   115      -100       0          HOLD   0x0100   172
+  #34162   115      -100       0          HOLD   0x0100   1302
+  #34163   115      -100       0          HOLD   0x0100   326
+  #34164   115      -100       0          HOLD   0x0100   938
+  #34165   115      -100       0          HOLD   0x0100   200
+
+[LATCH VERIFY] ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).
+VERIFY_RC=0
+# latchctl console
+
+=== LATCH guest c

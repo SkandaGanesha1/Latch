@@ -6,8 +6,13 @@ running the built IFS under QEMU AArch64 `virt` and reading the supervisor's
 own counters and the evidence tape, and each fix was proven by the same
 counters moving.
 
-The four defects were INDEPENDENT. Fixing any one of them alone still left
-the on-target signature wrong, which is why the bring-up needed eight runs.
+The defects were INDEPENDENT. Fixing any one of them alone still left the
+on-target signature wrong, which is why the bring-up needed nine runs.
+
+Defect 6 is the one that mattered most: it was not a tooling bug but a
+LIVE SAFETY DEFECT in the supervisor, and it is the reason the archive came
+to contain two contradictory sessions. See
+`resolution/06-session-reset-defect.txt`.
 
 
 The summary table
@@ -19,6 +24,8 @@ The summary table
 | 2 | QNX 8.0 `cpu` syntax | the 7.1 one-line form is *rejected*; a bare block leaves the vCPU **floating** on every core | indented `cpu` / `cluster _cpu-N` / `sched 8r` block, one cluster per block | vCPU floating -> **pinned** (`cy-guest-qemu-virt/0`, `/1`) |
 | 3 | `on -C`/`-R` cannot express "CPUs 2+3" | `Invalid cluster runmask specified` | start `qvm` with an **unconstrained** runmask; the qvmconf pins do the isolating | boot refused -> **boots** |
 | 4 | The transport starved the supervisor | 51 envelope vetoes, last seq 25 | vdev `sched 60`; no artificial pacing in the bridge; the guest produces 4 frames / 200 us in 128-byte writes; the guest's markers go to `/dev/kmsg` | 51 -> 27 -> **7** vetoes, seq 25 -> 35 -> 57 -> **80** |
+| 5 | A second `vdev virtio-console` for the guest's markers | **REJECTED**: it corrupted the frame channel | the single-virtio-console design was restored; the markers go to `/dev/kmsg` | 26 of 84 frames -> **84 of 84** |
+| 6 | Opening the proposal node reset the supervisor | 15 envelope vetoes, last_seq frozen at 4, `VERIFY_RC=1` | a session reset is a SESSION event, not an OPEN event; the harness joins the session instead of resetting it | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / `VERIFY_RC=0`** |
 
 The measured progression
 ------------------------

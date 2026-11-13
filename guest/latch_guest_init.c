@@ -5,7 +5,7 @@
  *
  * Zero libc dependencies: direct AArch64 Linux syscalls (`svc #0`).
  * Mounts proc/sysfs/devtmpfs, creates /dev/hvc0 (229:0) & /dev/console (5:1),
- * prints status to /dev/console, and streams a 200-tick LATH wire-frame fault
+ * prints status to /dev/kmsg, and streams an 84-frame LATH wire-frame fault
  * suite to /dev/hvc0.
  *
  * THE GUEST POLICY IS THIS BINARY.
@@ -28,10 +28,13 @@
  *   dramatise: measured on QEMU, even a 1 ms guest pause produced 16 host
  *   ticks of starvation and 48 spurious envelope vetoes instead of 7.
  *
- *   So the guest emits ONE CONTINUOUS byte stream with no gap at all. The
- *   pacing lives on the HOST, in `latch-ingest`, which delivers to
- *   `/dev/latch/proposal` at `period_us / 2` (faster than the host's 1 kHz
- *   tick) and therefore always keeps the decision loop fed. The guest's frame
+ *   So the guest emits ONE CONTINUOUS byte stream with no gap at all, and
+ *   it produces FASTER than the host consumes: 4 frames (128 bytes) every
+ *   200 us is about 20 frames/ms against the supervisor's 1 kHz tick. The
+ *   backlog that builds up is what keeps the supervisor's decision loop fed
+ *   and its watchdog from ever firing spuriously. There is NO artificial
+ *   pacing anywhere in the path -- `latch-ingest` hands each frame over as
+ *   fast as the transport delivers it. The guest's frame
  *   ORDER is what the safety envelope sees, and order is preserved by the
  *   host's 256-slot queue.
  *
@@ -409,7 +412,7 @@ void _start(void) {
         for (;;) sys_sleep_ms(10000);
     }
 
-    phase_marker("[guest] /dev/hvc0 opened! Configuring raw mode & streaming 200-tick LATH suite...\n");
+    phase_marker("[guest] /dev/hvc0 opened! Configuring raw mode & streaming the 84-frame LATH suite...\n");
     set_tty_raw(hvc_fd);
 
     uint32_t seq = 1u;
@@ -499,7 +502,7 @@ void _start(void) {
      * from the phases above. */
     sys_sleep_ms(400);
 
-    phase_marker("[guest] 200-tick LATH suite complete. Guest is now silent. Entering idle sleep.\n");
+    phase_marker("[guest] 84-frame LATH suite complete. Guest is now silent. Entering idle sleep.\n");
     sys_close(hvc_fd);
 
     for (;;) {

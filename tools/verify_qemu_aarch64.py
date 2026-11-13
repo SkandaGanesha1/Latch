@@ -17,6 +17,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from capture_evidence import guest_suite_frames  # noqa: E402
+
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
@@ -76,11 +79,33 @@ def main() -> int:
             print("\nERROR: Timed out waiting for QNX ksh prompt.", file=sys.stderr)
             return 1
 
-        # Wait for Linux 6.12 guest boot + /init 200-tick LATH suite under QEMU TCG
-        read_for(20.0)
+        # Wait for the Linux 6.12 guest to boot and emit its suite under
+        # QEMU TCG. The suite size is read from the guest policy's own
+        # source, so this harness can never drift away from the code it
+        # is verifying.
+        suite_frames = guest_suite_frames()
+
+        # Wait for the guest's suite by STATE, not by a fixed delay: poll
+        # `latchctl status` until the supervisor reports that it has
+        # received the whole suite.
+        deadline = time.time() + 600.0
+        received = 0
+        while time.time() < deadline:
+            os.write(master_fd, b"/proc/boot/latchctl status\n")
+            read_for(3.0)
+            text = buf.decode("utf-8", errors="replace")
+            for m in re.finditer(r"Proposals Received\s*:\s*(\d+)", text):
+                received = int(m.group(1))
+            if received >= suite_frames:
+                break
+            read_for(3.0)
+        if received < suite_frames:
+            print("\nERROR: the guest's suite did not arrive (%d of %d frames)."
+                  % (received, suite_frames), file=sys.stderr)
+            return 1
 
         for command, wait_s in [
-            (b"/proc/boot/latchctl status\n", 1.5),
+            (b"/proc/boot/latchctl status\n", 2.0),
             (b"/proc/boot/latch_verify -m /proc/boot/latch.manifest\n", 3.0),
             (b"echo VERIFY_RC=$?\n", 1.0),
         ]:
@@ -91,7 +116,13 @@ def main() -> int:
 
         checks = [
             (r"syspage::hypinfo::flags=0x00000001", "QNX EL2 VHE hypinfo flag"),
-            (r"Proposals Received\s*:\s*200", "200 guest proposals received"),
+            # The frame count comes from the guest policy, not from a
+            # literal. The previous revision asserted 200, which the
+            # 84-frame guest can never produce -- so `make verify-qemu`,
+            # the command the README advertises as the end-to-end proof,
+            # could never pass against the repo's own evidence.
+            (r"Proposals Received\s*:\s*%d\b" % suite_frames,
+             "%d guest proposals received" % suite_frames),
             (r"Wire Faults Caught\s*:\s*12", "12 wire faults caught"),
             (r"Envelope Vetoes\s*:\s*7\b", "7 keep-out envelope vetoes"),
             (r"Ring Drops / WCET\s*:\s*0 drops", "0 ring drops"),

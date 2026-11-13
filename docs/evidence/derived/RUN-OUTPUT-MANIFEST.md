@@ -66,8 +66,9 @@ proves.
 | 6 | `on-target/06-run6-suite-correct-verify-race.txt` | Run 6 — the suite is exactly right; `latch_verify`'s step 1 lost a race with the watchdog |
 | 7 | `on-target/07-run7-verify-all-pass.txt` | Run 7 — `latch_verify` paced; all five invariants PASS, `VERIFY_RC=0` |
 | 8 | `on-target/08-rejected-2nd-virtio-console.txt` | The **rejected** experiment: a 2nd virtio-console corrupted the frame channel |
-| 9 | `on-target/09-canonical-session.txt` | **THE CANONICAL SESSION** — one continuous boot with every fix in place |
-| 10 | `derived/on-target-run-index.txt` | The whole bring-up in one table, with each run's parsed counters |
+| 9 | `on-target/` + final_src | **THE CANONICAL SESSION** — one continuous boot with every fix in place |
+| 10 | `derived/on-target-run-index.txt` | The whole bring-up in one table, with each run's parsed counters, and the CURRENT canonical session at the top |
+| 11 | `on-target/CURRENT-SESSION.txt` | A **stable pointer** to the current canonical capture family, so the README, the video script and the Devpost page can cite it without being rewritten on every capture |
 
 ---
 
@@ -95,6 +96,7 @@ rows, which covers the whole guest suite.
 | 4 | `resolution/03-qvm-runmask.txt` | Defect 3: `on -C`/`-R` cannot express "CPUs 2+3" |
 | 5 | `resolution/04-transport-starvation.txt` | Defect 4: the four compounding transport causes, and how they produced 51 vetoes |
 | 6 | `resolution/05-rejected-2nd-virtio-console.txt` | The rejected experiment, measured, and why it was reverted |
+| 7 | `resolution/06-session-reset-defect.txt` | The defect that made the archive contradict itself: opening the proposal node reset the supervisor's sequence baseline and teleported its plant state |
 
 ---
 

@@ -8,7 +8,7 @@ LATCH is a mixed-criticality runtime-assurance architecture for physical AI on *
 - **Primary Verified Target:** QEMU AArch64 `virt` (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) hosting a **Linux 6.12 ARM64** guest VM
 - **Actuator Bus:** PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (`/dev/i2c1` on hardware; `-n` no-I2C mock mode on QEMU)
 - **Zero-Hardcoding Architecture:** Plant geometry, keep-out intervals, velocity/acceleration limits, timing budgets, and bus paths are fully configured via `latch.manifest` with SHA-256 integrity verification.
-- **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 64`) with Seqlock snapshot guard eliminating torn reads on high-frequency publisher updates.
+- **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 256`) with a Seqlock snapshot guard covering the **whole** 1 kHz decision tick, so a status read can only ever sample between ticks.
 - **Fallback / CI Targets:** POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`), QNX `x86_64`, and Raspberry Pi 4B (`com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4`)
 - **License:** MIT (`LICENSE`)
 
@@ -109,8 +109,9 @@ latch/
 > `guest/latch_guest_init.c` — a freestanding static AArch64 binary packed as
 > `linux-guest.initrd`. There is no shell and no Python inside the guest.
 > `guest/liar.py` is the **workstation** generator that `make check` drives
-> through a POSIX pipe; it is byte-for-byte the same suite, but it never
-> enters the hypervisor guest.
+> through a POSIX pipe. Phases 1–8 are the same suite; phase 9 differs by
+> design (the guest's real silence, which is what trips the watchdog, versus the
+> generator's padded ticks). It never enters the hypervisor guest.
 
 ---
 
@@ -142,7 +143,8 @@ make ifs-qemu-aarch64 GUEST_IMAGE=/path/to/linux-6.12/arch/arm64/boot/Image
 # Launch interactive QEMU AArch64 virt session (4x Cortex-A76, EL2 VHE, GICv2)
 ./run_qemu.sh
 
-# Or run the automated end-to-end QEMU verification harness (asserts 200 ticks + VERIFY_RC=0)
+# Or run the automated end-to-end QEMU verification harness
+# (asserts the guest's 84-frame suite signature + VERIFY_RC=0)
 make verify-qemu
 
 # Capture the evidence archive: a fresh on-target console session + every
@@ -233,19 +235,19 @@ so the evidence cannot silently drift away from the code it describes.
 | **Verified VM Target** | QEMU AArch64 `virt` (`4x Cortex-A76`, GICv2 `0x08000000`/`0x08010000`, `62,500,000 Hz` timer) | `tools/verify_qemu_aarch64.py` (`qemu-system-aarch64`) |
 | **Toolchain** | `qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -D_QNX_SOURCE` | `qnx/Makefile` (`TARGET=aarch64`) |
 | **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms pulse) | `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
-| **Measured Decision Latency** | **1.23 µs** last (`77 cycles`), **435.9 µs** max (`27,243 cycles`) on QEMU **TCG** — *not* a WCET; **1,422 ns** max in the Linux host-sim | `docs/evidence/on-target/09-canonical-session.txt` (the `latchctl status` section) & `docs/evidence/derived/host-sim-signature.txt` |
-| **Guest Suite (on target)** | `Proposals Received: 84` · `Wire Faults Caught: 12` · `Envelope Vetoes: 7` · `Ring Drops: 0` · `Last Proposed: -180 mrad (seq=80)` · `Latched: 0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `docs/evidence/on-target/09-canonical-session.txt` — live Linux 6.12 `/init` → `virtio-console` → `latch-ingest` → `latchd` |
+| **Measured Decision Latency** | **3.39 µs** last (`212 cycles`), **646.0 µs** max (`40,374 cycles`) on QEMU **TCG** — *not* a WCET; **1,363 ns** max in the Linux host-sim | `docs/evidence/on-target/CURRENT-SESSION.txt` (the `latchctl status` section) & `docs/evidence/derived/host-sim-signature.txt` |
+| **Guest Suite (on target)** | `Proposals Received: 84` · `Wire Faults Caught: 12` · `Envelope Vetoes: 7` · `Ring Drops: 0` · `Last Proposed: -180 mrad (seq=80)` · `Latched: 0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `docs/evidence/on-target/CURRENT-SESSION.txt` — live Linux 6.12 `/init` → `virtio-console` → `latch-ingest` → `latchd` |
 | **Evidence Tape (on target)** | 17 `HA-HOME` rows retracting `-170 → -10 mrad`, monotonic; **0** rows with `theta_applied` inside `[250, 650]` mrad | `docs/evidence/tape/latch_tape6-metrics.txt` (from `/dev/shmem/latch_tape.csv`) |
 | **Attestation Hashes** | Servo: `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823`<br>Syringe: `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e` | True NIST FIPS 180-2 SHA-256 (`sha256sum` sidecars) |
 | **Security Isolation** | Custom ability `latch/actuator` (flags 0) | `iofunc_client_info_able()` default-deny for root & non-root |
-| **Verification Suite** | Exit code 0 (`VERIFY_RC=0`) only upon all 5 microkernel invariants passing | `docs/evidence/on-target/09-canonical-session.txt` — the `[1/5]`…`[5c/5]` section |
+| **Verification Suite** | Exit code 0 (`VERIFY_RC=0`) only upon all 5 microkernel invariants passing | `docs/evidence/on-target/CURRENT-SESSION.txt` — the `[1/5]`…`[5c/5]` section |
 
 > **The on-target evidence is committed — and every number above is traceable to
 > a file.** Start at **`docs/evidence/README.md`**: it maps each claim to the
 > archive file that proves it, lists the exact commands to regenerate every
 > file, and states plainly what is **not** proven.
 >
-> The canonical artefact is `docs/evidence/on-target/09-canonical-session.txt`
+> The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`
 > — the raw QNX host console of **one continuous boot** of the QEMU AArch64
 > `virt` image: the EL2-VHE hypervisor banner, `pidin -p latchd threads` (the
 > decision loop on CPU 0 at SCHED_FIFO 63), `pidin -p qvm threads` (the guest
@@ -264,11 +266,12 @@ so the evidence cannot silently drift away from the code it describes.
 > every push.
 
 > **The on-target signature is the same story as the host-sim tape**
-> (`rx=200 | wire=12 | env=7 | eperm=1` in CI; `84 | 12 | 7 | 0` on the target,
-> where the guest emits 84 frames and `latch_verify` contributes the rest). The
-> guest policy and the CI suite are the same suite; only the frame count differs
-> because the on-target guest stops after its nine fault phases instead of
-> padding to 200 ticks.
+> (`rx=200 | wire=12 | env=7 | eperm=1` in CI; `84 | 12 | 7 | 0` on the target).
+> The guest policy and the CI suite are the same suite; only the frame count
+> differs, because the on-target guest stops after its nine fault phases instead
+> of padding to 200 ticks. After `latch_verify` has run the supervisor has
+> received 97 frames in total — the guest's 84 plus the harness's own 13 —
+> which is why the post-verify telemetry reads `97`, not 200.
 
 > **QEMU target = mock I²C.** The QEMU AArch64 `virt` image runs `latchd -n`, so **no
 > PCA9685 is present and the horn does not move** in that take. The Raspberry Pi 4B

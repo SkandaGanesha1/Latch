@@ -130,7 +130,7 @@ through a POSIX pipe and is what `make check` uses:
 A committed on-target transcript is at
 `docs/evidence/README.md` — the index of the evidence archive. It maps every
 claim to the file that proves it, and it lists what is **not** proven. The
-canonical artefact is `docs/evidence/on-target/09-canonical-session.txt`: the raw
+canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`: the raw
 QNX host console of one continuous QEMU AArch64 `virt` boot, ending in
 `VERIFY_RC=0`. Read it once before you start; it is what you are reproducing.
 

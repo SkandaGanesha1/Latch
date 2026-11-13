@@ -216,7 +216,7 @@ committed evidence trail.
 
 The full on-target evidence is archived in `docs/evidence/`, indexed by
 `docs/evidence/README.md`. The canonical artefact is
-`docs/evidence/on-target/09-canonical-session.txt`; the defect record is in
+`docs/evidence/on-target/CURRENT-SESSION.txt`; the defect record is in
 `docs/evidence/resolution/SUMMARY.md`.
 
 **Note on the latency figures.** Section 5.1's numbers are from an x86_64

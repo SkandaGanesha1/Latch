@@ -55,7 +55,27 @@ Verified on the 8.0 doc set. If a sentence is not in this section, it is not som
 ### Hypervisor
 
 - Enable with startup `-Q enable`. [Configuring the hypervisor host](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/topic/config/hyp.html).
-- vCPU pin syntax that the manual actually prints: `cpu _cpu-3 sched 8r`. Also `cpu cluster _cpu-2, _cpu-3`. An unpinned `cpu` line may run anywhere. [cpu](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/topic/vm/cpu.html).
+- vCPU pin syntax: **QNX Hypervisor 8.0 takes an INDENTED OPTIONS BLOCK** whose only two options are `cluster` and `sched`:
+
+  ```text
+  cpu
+          cluster _cpu-2
+          sched 8r
+  ```
+
+  The Hypervisor 7.1 one-line form `cpu _cpu-2 sched 8r` is **REJECTED** by the 8.0
+  qvm with `Unknown option '_cpu-2'`, and a bare `cpu` / `sched 8r` block leaves the
+  vCPU **floating** on every core — including the one `latchd` runs on. `cluster`
+  takes exactly ONE name; a comma-separated list is parsed as a single token and
+  rejected. **Proven on target**: `pidin -p qvm threads` reports the guest vCPU
+  threads as `cy-guest-qemu-virt/0` and `/1`. See
+  `docs/evidence/resolution/02-vcpu-pin-syntax.txt`. [cpu](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/topic/vm/cpu.html).
+- The `qvm` PROCESS must be started with an **unconstrained** runmask: `on -C <n>`
+  and `on -R <mask>` both resolve to a *predefined single-CPU cluster*, and no
+  predefined cluster covers CPUs 2+3 together, so `-R 0xc` and `-C 2 -C 3` both fail
+  with `Invalid cluster runmask specified`. The isolation comes from the qvmconf
+  pins, not from the process affinity. See
+  `docs/evidence/resolution/03-qvm-runmask.txt`.
 - Guest thread priority does not grant the vCPU the pCPU. The `qvm` vCPU thread's priority does. [Scheduling](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/topic/virt/sched.html).
 - Static vCPU runmask is a documented hypervisor security property: the guest cannot change it, because it does not have the ability. [Hypervisor security](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.security.system/topic/manual/dev_hypervisor.html).
 - `vdev gic` supports version 2 and version 3. Default is 3. If the hardware is GICv2, version 2 must be set. `gicr` with version 2 aborts `qvm`. BCM2711 is GIC-400 (GICv2). The option form is `version 2` under `vdev gic`. [vdev gic](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/topic/vdev_ref/vdev_gic.html).
@@ -222,11 +242,11 @@ Recorded so it does not get pasted back in.
 | Concern | Choice | Evidence |
 | --- | --- | --- |
 | OS | QNX SDP 8.0 host | Hackathon target |
-| Isolation | Hypervisor 8.0, `cpu _cpu-2 sched 8r`, `cpu _cpu-3 sched 8r`, decision on `_cpu-0` | cpu manual, security page |
+| Isolation | Hypervisor 8.0, indented `cpu` / `cluster _cpu-N` / `sched 8r` blocks, decision on `_cpu-0` | cpu manual, security page; proven on target |
 | Board interrupt controller | `vdev gic` / `version 2` | vdev gic manual, BCM2711, QNX KB 501OI00000PEvha |
 | Language on the tick | C, `qcc -Vgcc_ntoaarch64le`, no third-party libs | You need to read every line |
 | Actuator bus | I2C + PCA9685 | BSP contents |
-| Guest | Linux + Python 3 stdlib liar | Perception is not the product |
+| Guest | Linux 6.12 + a freestanding static AArch64 `/init` (no libc, no shell, no Python inside the guest) | Perception is not the product |
 | Auth | `latch/actuator`, default domains empty, check via `iofunc_client_info_able` | Ability manuals |
 | Evidence | Fixed ring, `ClockCycles` in and out | Design criterion |
 | Viewer | Laptop HTML or a serial print | Not a service |

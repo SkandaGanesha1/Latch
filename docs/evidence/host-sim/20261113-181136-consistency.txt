@@ -13,12 +13,15 @@ exit status: 0
 [CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
 [CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
 [CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
-[CONSISTENCY PASS] qnx/latch_qemu.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] qnx/latch_qemu.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
 [CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
-[CONSISTENCY PASS] qnx/latch_rpi4.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] qnx/latch_rpi4.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
 [CONSISTENCY PASS] RPi4 buildfile el1-host, BCM2711 I2C IRQ 149, secpolpush, qvm unconstrained runmask, pipe/slogger2, guest image/initrd verified
 [CONSISTENCY PASS] Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified
 [CONSISTENCY PASS] Hypervisor qvmconf split, static vCPU pins, initrd/rdinit/console cmdline & Makefile verified
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced
+[CONSISTENCY PASS] README.md's reproducibility card still quotes the archived on-target signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)
+[CONSISTENCY PASS] The committed evidence tape carries the exact signature (wire=12, envelope=7, last_seq=80, 17 HA-HOME rows)
+[CONSISTENCY PASS] Evidence archive complete and self-consistent; exactly one canonical on-target family, the derived numbers agree with the session they name, and nothing in the archive is git-ignored
 
 [SUCCESS] All architectural consistency checks PASSED with 0 errors.

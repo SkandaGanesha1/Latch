@@ -110,7 +110,8 @@ typedef struct latch_simplex_state {
     int32_t        accel_mrad_tick2;     /* vel - vel_prev per tick^2         */
     int32_t        last_u_proposed_mrad; /* Last proposed u for telemetry     */
 
-    uint32_t       last_seq;             /* 0 means no frame accepted yet     */
+    uint32_t       last_seq;             /* Last accepted sequence number       */
+    bool           seq_valid;            /* true once a frame has been accepted  */
     uint64_t       last_rx_cycles;       /* 0 means never                     */
     uint64_t       last_rx_tick;         /* Tick index of last accepted frame */
     uint32_t       last_consumed_pub;    /* Total publish count consumed      */
@@ -307,8 +308,29 @@ static inline int32_t latch_clamp_i32(int32_t val, int32_t lo, int32_t hi) {
     return val;
 }
 
-static inline int32_t latch_abs_i32(int32_t val) {
+static inline int64_t latch_clamp_i64(int64_t val, int64_t lo, int64_t hi) {
+    if (val < lo) return lo;
+    if (val > hi) return hi;
+    return val;
+}
+
+/*
+ * Magnitude of a signed value, computed in 64 bits.
+ *
+ * The obvious `val < 0 ? -val : val` on a 32-bit int is undefined
+ * behaviour for INT32_MIN: the negation overflows and, in practice,
+ * yields INT32_MIN again -- so `abs(INT32_MIN) > v_max` evaluates FALSE
+ * and the RATE check is BYPASSED for exactly the one input that must
+ * never pass it. A guest can reach that value because only INT32_MIN
+ * itself is screened as the NaN sentinel.
+ */
+static inline int64_t latch_abs_i64(int64_t val) {
     return (val < 0) ? -val : val;
+}
+
+/* True when |val| exceeds the limit. 64-bit, so nothing can overflow. */
+static inline bool latch_exceeds_i64(int64_t val, int32_t limit) {
+    return latch_abs_i64(val) > (int64_t)limit;
 }
 
 static uint16_t latch_check_envelope(int32_t theta_cur,
@@ -331,32 +353,45 @@ static uint16_t latch_check_envelope(int32_t theta_cur,
         faults |= LATCH_FAULT_KEEPOUT;
     }
 
-    int32_t v_step = u_mrad - theta_cur;
-    int32_t a_step = v_step - v_cur;
-    int32_t j_step = a_step - a_cur;
-    if (latch_abs_i32(v_step) > v_max ||
-        latch_abs_i32(a_step) > a_max ||
-        (j_max > 0 && latch_abs_i32(j_step) > j_max)) {
+    /*
+     * The kinematic differences are computed in 64 bits.
+     *
+     * In 32 bits `u_mrad - theta_cur` overflows for any u_mrad near
+     * INT32_MIN, and a signed overflow is UB: on this target it wraps,
+     * which FLIPS THE SIGN OF THE VELOCITY STEP. A proposal that should
+     * be a huge negative step is then seen as a huge positive one, and
+     * the RATE check passes it.
+     */
+    int64_t v_step = (int64_t)u_mrad - (int64_t)theta_cur;
+    int64_t a_step = v_step - (int64_t)v_cur;
+    int64_t j_step = a_step - (int64_t)a_cur;
+    if (latch_exceeds_i64(v_step, v_max) ||
+        latch_exceeds_i64(a_step, a_max) ||
+        (j_max > 0 && latch_exceeds_i64(j_step, j_max))) {
         faults |= LATCH_FAULT_RATE;
     }
 
     /* Constant-u lookahead rollout */
-    int32_t sim_theta = theta_cur;
+    int64_t sim_theta = (int64_t)theta_cur;
     for (int h = 0; h < horizon; ++h) {
-        int32_t step = latch_clamp_i32(u_mrad - sim_theta, -v_max, v_max);
-        int32_t next_theta = sim_theta + step;
-        if (next_theta < t_min || next_theta > t_max) {
+        int64_t step = latch_clamp_i64((int64_t)u_mrad - sim_theta,
+                                        -(int64_t)v_max, (int64_t)v_max);
+        int64_t next_theta = sim_theta + step;
+        if (next_theta < (int64_t)t_min || next_theta > (int64_t)t_max) {
             faults |= LATCH_FAULT_BOUNDS;
         }
-        if (latch_manifest_crossed_keepout(&g_manifest, sim_theta, next_theta)) {
+        if (latch_manifest_crossed_keepout(&g_manifest,
+                                           (int32_t)latch_clamp_i64(sim_theta, (int64_t)t_min, (int64_t)t_max),
+                                           (int32_t)latch_clamp_i64(next_theta, (int64_t)t_min, (int64_t)t_max))) {
             faults |= LATCH_FAULT_KEEPOUT;
         }
         sim_theta = next_theta;
     }
 
     /* Maximum braking rollout */
-    int32_t brake_theta = theta_cur + latch_clamp_i32(v_step, -v_max, v_max);
-    int32_t brake_v     = brake_theta - theta_cur;
+    int64_t brake_theta = (int64_t)theta_cur +
+                          latch_clamp_i64(v_step, -(int64_t)v_max, (int64_t)v_max);
+    int64_t brake_v     = brake_theta - (int64_t)theta_cur;
     for (int h = 0; h < horizon; ++h) {
         if (brake_v > 0) {
             brake_v -= a_max;
@@ -365,11 +400,13 @@ static uint16_t latch_check_envelope(int32_t theta_cur,
             brake_v += a_max;
             if (brake_v > 0) brake_v = 0;
         }
-        int32_t next_brake = brake_theta + brake_v;
-        if (next_brake < t_min || next_brake > t_max) {
+        int64_t next_brake = brake_theta + brake_v;
+        if (next_brake < (int64_t)t_min || next_brake > (int64_t)t_max) {
             faults |= LATCH_FAULT_BOUNDS;
         }
-        if (latch_manifest_crossed_keepout(&g_manifest, brake_theta, next_brake)) {
+        if (latch_manifest_crossed_keepout(&g_manifest,
+                                           (int32_t)latch_clamp_i64(brake_theta, (int64_t)t_min, (int64_t)t_max),
+                                           (int32_t)latch_clamp_i64(next_brake, (int64_t)t_min, (int64_t)t_max))) {
             faults |= LATCH_FAULT_KEEPOUT;
         }
         brake_theta = next_brake;
@@ -590,6 +627,16 @@ static void latch_record_tape(uint64_t tick,
 
 static void latch_simplex_tick(latch_simplex_state_t *st,
                                latch_publish_buffer_t *pub) {
+    /*
+     * OPEN THE TELEMETRY GUARD.
+     *
+     * The guard spans the WHOLE tick, so every status-visible write below
+     * is inside it. See latch_snapshot_wait_even() for why the previous
+     * narrower window did not support the README's claim.
+     */
+    atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
+    atomic_thread_fence(memory_order_release);
+
     uint64_t cycles_in = latch_clock_cycles();
     st->tick++;
 
@@ -599,25 +646,67 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->latched_faults |= LATCH_FAULT_EPERM;
     }
 
+    /* Initialised explicitly: latch_consume_proposal() fills `prop` only on
+     * the paths that return true, and the compiler cannot prove that across
+     * the call. Zeroing it costs nothing (the field is only read when
+     * has_new is true) and removes a spurious maybe-uninitialized report. */
     latch_ipc_proposal_t prop;
+    memset(&prop, 0, sizeof(prop));
     bool has_new = latch_consume_proposal(pub, &st->last_consumed_pub, &prop);
 
     if (has_new) {
         st->total_proposals_rx++;
         if (atomic_exchange_explicit(&st->session_reset_pending, 0u, memory_order_acq_rel) != 0u || !st->session_active) {
             atomic_store_explicit(&st->writer_closed_eof, 0u, memory_order_release);
-            st->mode               = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
-                                         ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
             st->session_active     = true;
             st->retracted_home     = false;
             st->tape_frozen        = false;
             st->active_faults      = 0u;
-            st->last_seq           = 0u;
-            st->theta_mrad         = g_manifest.envelope.home_mrad;
-            st->velocity_mrad_tick = 0;
-            st->accel_mrad_tick2   = 0;
-            st->hold_ticks_elapsed = 0u;
-            st->clean_streak       = 0u;
+
+            /*
+             * A GENUINE NEW SESSION (the FIRST writer opened the node).
+             *
+             * Two things must NOT happen here, because both are safety
+             * defects and both were live:
+             *
+             * 1. The plant state must not change DISCONTINUOUSLY. A previous
+             *    revision unconditionally set theta to home_mrad with zero
+             *    velocity. If the plant was anywhere else, that is an
+             *    unbounded jump of the actuator -- and the NEXT frame is then
+             *    judged against that fictitious state, so it is vetoed as a
+             *    spurious RATE fault. The correct posture when the plant is
+             *    NOT already at rest at home is the jerk-bounded retraction
+             *    (WATCHDOG -> HA-HOLD -> HA-HOME), never an instantaneous
+             *    set. When the plant IS already at home and at rest, the
+             *    reset is a no-op and the session may start in HP.
+             *
+             * 2. The sequence baseline must be re-based for the new session
+             *    (a new client starts its sequence at 1) -- but ONLY for a
+             *    genuine new session. See latch_io_open(): a SECOND writer
+             *    joining a live session does not arm this reset at all, so a
+             *    legitimate second producer (the verification harness) can
+             *    no longer reset the supervisor's sequence baseline and
+             *    thereby defeat replay detection.
+             */
+            bool plant_at_rest = (st->theta_mrad == g_manifest.envelope.home_mrad) &&
+                                 (st->velocity_mrad_tick == 0) &&
+                                 (st->accel_mrad_tick2 == 0);
+            st->last_seq           = 0u;   /* new sequence epoch */
+            st->seq_valid          = false;
+            if (plant_at_rest) {
+                st->mode               = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
+                                             ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
+                st->theta_mrad         = g_manifest.envelope.home_mrad;
+                st->velocity_mrad_tick = 0;
+                st->accel_mrad_tick2   = 0;
+                st->hold_ticks_elapsed = 0u;
+                st->clean_streak       = 0u;
+            } else {
+                /* Not at rest: retract, jerk-bounded. Do NOT teleport. */
+                st->mode               = (uint8_t)LATCH_MODE_HOLD;
+                st->hold_ticks_elapsed = 1u;
+                st->clean_streak       = 0u;
+            }
             st->last_rx_tick       = st->tick;
             st->last_rx_cycles     = cycles_in;
         } else {
@@ -643,6 +732,12 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->velocity_mrad_tick = 0;
         st->accel_mrad_tick2 = 0;
         (void)latch_pca9685_write_angle(st->i2c_fd, st->theta_mrad);
+        /* CLOSE THE TELEMETRY GUARD on the idle path too. The previous
+         * revision returned here with the guard still open (or never
+         * opened), so a reader could sample a half-updated idle state
+         * with no detection at all. */
+        atomic_thread_fence(memory_order_release);
+        atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
         return;
     }
 
@@ -669,16 +764,33 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         }
 
         /* 3. Sequence check:
-         *    Reject if sequence <= last_seq (stale/replay fault).
+         *    Reject if the sequence does not advance (stale/replay fault).
          *    Accept advances (seq > last_seq) even if frames coalesced in queue.
+         *
+         *    The comparison is a WRAP-SAFE UNSIGNED DELTA, not a signed cast.
+         *    The previous form, `(int32_t)(prop.seq - st->last_seq) <= 0`,
+         *    converts a uint32_t difference above INT32_MAX to int32_t, which
+         *    is implementation-defined (C11 6.3.1.3p3) and was used as the
+         *    acceptance predicate. With last_seq = 0xFFFFFFFF a frame with
+         *    seq = 0 is legitimately the NEXT value in a wrapping scheme, so
+         *    that case must be accepted -- but the old form also degraded
+         *    the "no frame accepted yet" special case, because last_seq == 0
+         *    was overloaded to mean "nothing accepted yet" rather than "the
+         *    sequence wrapped to 0". The two meanings are now separated by
+         *    the explicit seq_valid flag.
+         *
+         *    A frame is STALE when the unsigned delta is zero (an exact
+         *    replay) or greater than half the sequence space (it comes from
+         *    before the last wrap).
          */
         if ((tick_faults & (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_RESERVED)) == 0u) {
-            if (st->last_seq == 0u) {
+            if (!st->seq_valid) {
                 if (prop.seq == 0u) {
                     tick_faults |= LATCH_FAULT_SEQ;
                 }
             } else {
-                if ((int32_t)(prop.seq - st->last_seq) <= 0) {
+                uint32_t delta = prop.seq - st->last_seq;
+                if (delta == 0u || delta > 0x7FFFFFFFu) {
                     tick_faults |= LATCH_FAULT_SEQ;
                 }
             }
@@ -698,6 +810,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
 
         if (tick_faults == LATCH_FAULT_NONE) {
             st->last_seq       = prop.seq;
+            st->seq_valid      = true;
             st->last_rx_cycles = cycles_in;
             st->last_rx_tick   = st->tick;
         }
@@ -789,9 +902,6 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     uint64_t latency    = cycles_out - cycles_in;
     uint32_t lat_ns     = latch_cycles_to_ns(latency);
 
-    /* Telemetry Seqlock Guard */
-    atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
-
     st->accel_mrad_tick2    = next_vel - st->velocity_mrad_tick;
     st->theta_mrad          = next_theta;
     st->velocity_mrad_tick  = next_vel;
@@ -835,8 +945,6 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         }
     }
 
-    atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
-
     /* 8. Append to Evidence Tape */
     if (!st->tape_frozen) {
         latch_record_tape(st->tick,
@@ -857,16 +965,68 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->tape_frozen = true;
         st->session_active = false;
     }
+
+    /* CLOSE THE TELEMETRY GUARD: the tick's state is now consistent. */
+    atomic_thread_fence(memory_order_release);
+    atomic_fetch_add_explicit(&st->snapshot_gen, 1u, memory_order_release);
 }
 
 /* ==========================================================================
  * 9. Status & Tape Snapshot Helpers (Fix E-7)
  * ========================================================================== */
 
-static void latch_fill_status(latch_status_reply_t *out) {
+/*
+ * TELEMETRY SEQLOCK GUARD.
+ *
+ * The guard covers the WHOLE decision tick, not just its last few dozen
+ * lines.
+ *
+ * The previous window was opened just before the command-generation step and
+ * closed just after it, while ~20 status-visible fields -- tick, last_seq,
+ * last_u_proposed_mrad, mode, active_faults, latched_faults, clean_streak,
+ * hold_ticks_elapsed, theta_mrad, velocity_mrad_tick, the wire/envelope
+ * counters and the rx counter -- were written EARLIER in the same tick and
+ * OUTSIDE it. The idle path returned before the window was even opened. A
+ * reader could therefore observe `tick = N` together with `last_seq` from
+ * tick N+1, and the README's "seqlock snapshot guard eliminates torn reads"
+ * claim did not hold.
+ *
+ * The window is now opened at the top of the tick and closed at the bottom,
+ * so a reader can only ever sample BETWEEN ticks. The tick is 1 ms, so a
+ * status read that arrives mid-tick waits for that tick to finish -- the
+ * correct trade for an operator-facing query.
+ */
+#define LATCH_SNAPSHOT_RETRIES  100
+#define LATCH_SNAPSHOT_WAIT_NS  (100L * 1000L)   /* 100 us */
+
+/*
+ * Wait until the writer is not inside a tick, and return the stable
+ * generation. Returns false if the writer did not settle in time, so the
+ * caller can FAIL LOUDLY instead of serving a torn snapshot as if it were
+ * valid.
+ */
+static bool latch_snapshot_wait_even(uint32_t *gen_out) {
+    struct timespec ts;
+    ts.tv_sec  = 0;
+    ts.tv_nsec = LATCH_SNAPSHOT_WAIT_NS;
+    for (int i = 0; i < LATCH_SNAPSHOT_RETRIES; ++i) {
+        uint32_t g = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if ((g & 1u) == 0u) {
+            *gen_out = g;
+            return true;
+        }
+        (void)nanosleep(&ts, NULL);
+    }
+    return false;
+}
+
+static bool latch_fill_status(latch_status_reply_t *out) {
     for (int tries = 0; tries < 4; tries++) {
-        uint32_t g1 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
-        if (g1 & 1u) continue;
+        uint32_t g1 = 0u;
+        if (!latch_snapshot_wait_even(&g1)) {
+            return false;
+        }
+        atomic_thread_fence(memory_order_acquire);
 
         out->tick                  = g_simplex.tick;
         out->last_latency_cycles   = g_simplex.last_latency_cycles;
@@ -898,15 +1058,24 @@ static void latch_fill_status(latch_status_reply_t *out) {
         out->backlog_overruns      = g_simplex.backlog_overruns;
         memcpy(out->manifest_sha256, g_manifest.sha256, sizeof(out->manifest_sha256));
 
+        atomic_thread_fence(memory_order_acquire);
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
-        if (g1 == g2) return;
+        if (g1 == g2) {
+            return true;
+        }
     }
+    /* The writer never settled: the snapshot is not trustworthy. Report the
+     * failure rather than serving a torn reply as if it were valid. */
+    return false;
 }
 
-static void latch_fill_tape_dump(latch_tape_dump_t *dump) {
+static bool latch_fill_tape_dump(latch_tape_dump_t *dump) {
     for (int retry = 0; retry < 5; ++retry) {
-        uint32_t g1 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
-        if ((g1 & 1u) != 0u) continue;
+        uint32_t g1 = 0u;
+        if (!latch_snapshot_wait_even(&g1)) {
+            return false;
+        }
+        atomic_thread_fence(memory_order_acquire);
 
         uint32_t cap = g_manifest.tape.capacity;
         if (cap == 0u || cap > LATCH_TAPE_CAPACITY) cap = LATCH_TAPE_CAPACITY;
@@ -946,9 +1115,15 @@ static void latch_fill_tape_dump(latch_tape_dump_t *dump) {
         dump->latest_tick = g_simplex.tick;
         memcpy(dump->manifest_sha256, g_manifest.sha256, sizeof(dump->manifest_sha256));
 
+        atomic_thread_fence(memory_order_acquire);
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
-        if (g1 == g2) return;
+        if (g1 == g2) {
+            return true;
+        }
     }
+    /* The writer never settled: the dump is not trustworthy. Report the
+     * failure rather than serving a partial dump as if it were complete. */
+    return false;
 }
 
 /* ==========================================================================
@@ -1065,13 +1240,66 @@ static int latch_io_open(resmgr_context_t *ctp,
         }
     } else if (lattr != NULL && !lattr->is_actuator_node) {
         if (msg->connect.ioflag & _IO_FLAG_WR) {
-            /* Opening /dev/latch/proposal for writing: flush unread ring slots and arm atomic reset */
-            atomic_store_explicit(&g_pub_buf.read_tail,
-                                  atomic_load_explicit(&g_pub_buf.write_head, memory_order_relaxed),
-                                  memory_order_release);
-            atomic_store_explicit(&g_simplex.writer_closed_eof, 0u, memory_order_release);
-            atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
-            atomic_fetch_add_explicit(&g_simplex.open_writers, 1u, memory_order_relaxed);
+            /*
+             * OPENING THE PROPOSAL NODE FOR WRITING.
+             *
+             * A session reset must be a SESSION event, not an OPEN event.
+             *
+             * The previous revision armed the reset on EVERY open. Because
+             * the proposal node is world-writable (0666) and the guest's
+             * latch-ingest holds it open for the whole run, ANY second
+             * process that opened the node -- the verification harness, or
+             * anything else -- silently:
+             *
+             *   - flushed the frame ring, discarding queued frames;
+             *   - re-based the supervisor's sequence baseline to 0, which
+             *     DEFEATED REPLAY DETECTION (the first frame after any open
+             *     was exempt from the sequence check, and any sequence was
+             *     thereafter accepted);
+             *   - teleported theta to home with zero velocity, so the next
+             *     frame was judged against a fictitious plant state and
+             *     vetoed as a spurious RATE fault.
+             *
+             * That is a safety defect, and it is what made the verification
+             * harness fail on target.
+             *
+             * The correct rule: only the FIRST writer (the 0 -> 1
+             * transition) starts a session. A second writer JOINS the live
+             * session -- it does not reset it, and it does not discard the
+             * frames already queued.
+             */
+            uint32_t prior_writers = atomic_fetch_add_explicit(&g_simplex.open_writers, 1u,
+                                                                memory_order_acq_rel);
+            bool first_writer = (prior_writers == 0u);
+
+            if (first_writer) {
+                /* Discard the PREVIOUS session's queued frames -- they belong
+                 * to a producer that is gone -- and COUNT them, so the loss
+                 * is visible in the telemetry instead of being silent. */
+                uint32_t head = atomic_load_explicit(&g_pub_buf.write_head, memory_order_relaxed);
+                uint32_t tail = atomic_load_explicit(&g_pub_buf.read_tail, memory_order_acquire);
+                uint32_t stale = head - tail;
+                atomic_store_explicit(&g_pub_buf.read_tail, head, memory_order_release);
+                if (stale > 0u) {
+                    atomic_fetch_add_explicit(&g_simplex.total_ring_drops, stale, memory_order_relaxed);
+                }
+                atomic_store_explicit(&g_simplex.writer_closed_eof, 0u, memory_order_release);
+                atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
+            }
+
+            /* iofunc_open_default() returns 0 on success and -1 on failure
+             * (it does NOT return the OCB pointer). */
+            int rc = iofunc_open_default(ctp, msg, handle, extra);
+            if (rc != 0) {
+                /* The OCB could not be allocated. Roll the writer count back,
+                 * or the count leaks and the EOF/retraction path never fires
+                 * (the evidence tape would never freeze). */
+                atomic_fetch_sub_explicit(&g_simplex.open_writers, 1u, memory_order_acq_rel);
+                if (first_writer) {
+                    atomic_store_explicit(&g_simplex.session_reset_pending, 0u, memory_order_release);
+                }
+            }
+            return rc;
         }
     }
     return iofunc_open_default(ctp, msg, handle, extra);
@@ -1167,7 +1395,12 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             }
             latch_status_reply_t rep;
             memset(&rep, 0, sizeof(rep));
-            latch_fill_status(&rep);
+            /* FAIL LOUDLY if a consistent snapshot could not be taken. A
+             * torn or all-zero reply served as "valid" would tell the
+             * operator a lie about the supervisor's state. */
+            if (!latch_fill_status(&rep)) {
+                return EBUSY;
+            }
             memcpy(data_ptr, &rep, sizeof(rep));
             nbytes_out = sizeof(rep);
             break;
@@ -1177,7 +1410,9 @@ static int latch_io_devctl(resmgr_context_t *ctp,
                 return EBADMSG;
             }
             latch_tape_dump_t *dump = (latch_tape_dump_t *)data_ptr;
-            latch_fill_tape_dump(dump);
+            if (!latch_fill_tape_dump(dump)) {
+                return EBUSY;
+            }
             nbytes_out = sizeof(*dump);
             break;
         }
@@ -1476,12 +1711,12 @@ static int latch_sim_devctl_actuator(bool caller_has_ability,
         return 0;
     }
     if (dcmd == (unsigned int)DCMD_LATCH_GET_STATUS && payload != NULL) {
-        latch_fill_status((latch_status_reply_t *)payload);
-        return 0;
+        /* EBUSY if a consistent snapshot could not be taken: a torn reply
+         * served as valid would misreport the supervisor's state. */
+        return latch_fill_status((latch_status_reply_t *)payload) ? 0 : EBUSY;
     }
     if (dcmd == (unsigned int)DCMD_LATCH_DUMP_TAPE && payload != NULL) {
-        latch_fill_tape_dump((latch_tape_dump_t *)payload);
-        return 0;
+        return latch_fill_tape_dump((latch_tape_dump_t *)payload) ? 0 : EBUSY;
     }
     return ENOTTY;
 }
@@ -1494,10 +1729,16 @@ static int latch_export_tape_csv(const char *csv_path) {
     }
     fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits\n");
     uint32_t wr_idx = atomic_load_explicit(&g_tape_write_idx, memory_order_acquire);
-    uint32_t count = (wr_idx > LATCH_TAPE_CAPACITY) ? LATCH_TAPE_CAPACITY : wr_idx;
+    /* The tape is WRITTEN with `% cap` (the manifest's tape.capacity), so it
+     * must be READ the same way. The previous form used a fixed
+     * `& LATCH_TAPE_MASK`, which reads the wrong slots for any manifest
+     * whose capacity is not 4096. */
+    uint32_t cap = g_manifest.tape.capacity;
+    if (cap == 0u || cap > LATCH_TAPE_CAPACITY) cap = LATCH_TAPE_CAPACITY;
+    uint32_t count = (wr_idx > cap) ? cap : wr_idx;
     uint32_t start = wr_idx - count;
     for (uint32_t i = 0; i < count; ++i) {
-        const latch_tape_entry_t *e = &g_latch_tape[(start + i) & LATCH_TAPE_MASK];
+        const latch_tape_entry_t *e = &g_latch_tape[(start + i) % cap];
         uint64_t lat = e->cycles_out - e->cycles_in;
         fprintf(fp,
                 "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",

@@ -482,7 +482,18 @@ HISTORY = [
 
 
 def summarise_console(text):
-    """Extract the supervisor's own counters from a raw console log."""
+    """Extract the supervisor's own counters from a raw console log.
+
+    The FIRST status block in a chronologically-ordered console is the
+    PRE-verification state -- the guest's suite signature, which is what the
+    submission quotes. (The post-verification telemetry further down includes
+    the harness's own injected faults and must not be quoted as the guest's
+    signature.)
+
+    For a capture produced by the on-target scenario the split files are
+    available and are preferred, because the pre-verification status is then
+    exact rather than "the first one that happens to appear".
+    """
     def one(pat):
         m = re.search(pat, text)
         return m.group(1).strip() if m else None
@@ -548,12 +559,72 @@ def scenario_history(args):
         print("[HISTORY] %-42s -> %s" % (src_name, os.path.relpath(
             os.path.join(out, dst_name), REPO_ROOT)))
 
+    # The CURRENT canonical capture, if there is one. It is the run that
+    # produced the archive's quotable numbers, so it must be in the index --
+    # the previous revision's index listed only the numbered history, which
+    # is how a committed capture could be invisible to the archive.
+    current = []
+    on_target_dir = os.path.join(args.out, "on-target")
+    if os.path.isdir(on_target_dir):
+        fams = {}
+        for fn in sorted(os.listdir(on_target_dir)):
+            m = re.match(r"^(\d{8}-\d{6})-", fn)
+            if m:
+                fams.setdefault(m.group(1), []).append(fn)
+        for fam in sorted(fams):
+            console_file = os.path.join(on_target_dir, "%s-console.txt" % fam)
+            if not os.path.isfile(console_file):
+                continue
+            with io.open(console_file, encoding="utf-8", errors="replace") as f:
+                c = summarise_console(f.read())
+            # Prefer the split files: the status file is the supervisor's
+            # PRE-verification state (the guest's suite signature), and the
+            # verify file carries the verdict. Parsing the whole console
+            # would pick up the driver's early polling -- which legitimately
+            # reads "Proposals Received : 0" before the guest has booted.
+            status_file = os.path.join(on_target_dir, "%s-status.txt" % fam)
+            verify_file = os.path.join(on_target_dir, "%s-verify.txt" % fam)
+            if os.path.isfile(status_file):
+                with io.open(status_file, encoding="utf-8", errors="replace") as f:
+                    sc = summarise_console(f.read())
+                for k in ("proposals_received", "wire_faults", "envelope_vetoes",
+                          "ring_drops", "last_proposed", "latched_faults",
+                          "decision_latency", "backlog", "manifest_sha"):
+                    if sc.get(k) is not None:
+                        c[k] = sc[k]
+            if os.path.isfile(verify_file):
+                with io.open(verify_file, encoding="utf-8", errors="replace") as f:
+                    vc = summarise_console(f.read())
+                # Only the VERDICT comes from the verify file: its telemetry
+                # block is the POST-verification state, which includes the
+                # harness's own injected faults.
+                c["verify_rc"] = vc.get("verify_rc")
+                c["all_pass"] = vc.get("all_pass")
+            current.append((fam, c))
+
     # The comparison table: the whole bring-up in one view.
     L = [banner("LATCH on-target run index -- the bring-up in one table", [
         "Each run differs from the one before it by exactly one fix, so the",
         "counters form a monotone story. Every number below is parsed out of",
         "the archived console next to it.",
     ])]
+    if current:
+        L.append("  CURRENT canonical session (the run the quotable numbers come from):")
+        for fam, c in current:
+            seq = "-"
+            if c.get("last_proposed"):
+                m = re.search(r"seq=(\d+)", c["last_proposed"])
+                if m:
+                    seq = m.group(1)
+            L.append("    %-42s %7s %6s %6s %6s %6s  %s"
+                     % (fam + "-console.txt",
+                        c.get("proposals_received") or "-",
+                        c.get("wire_faults") or "-",
+                        c.get("envelope_vetoes") or "-",
+                        c.get("ring_drops") or "-",
+                        seq,
+                        c.get("verify_rc") or "-"))
+        L.append("")
     L.append("  %-42s %7s %6s %6s %6s %6s  %s"
              % ("file", "frames", "wire", "env", "drops", "seq", "VERIFY_RC"))
     L.append("  " + "-" * 92)
@@ -612,14 +683,42 @@ def scenario_index(args):
     run_index = read(os.path.join(derived, "on-target-run-index.txt"))
     host_sig = read(os.path.join(derived, "host-sim-signature.txt"))
 
-    # The on-target quotable numbers, parsed from the canonical session.
+    # The CURRENT canonical session. The claim table below must quote it, not
+    # a historical capture: the previous revision quoted the numbered 09
+    # session while the archive's own quotable-numbers file was generated
+    # from a different (and failing) run.
+    on_target_dir = os.path.join(out, "on-target")
+    fams = sorted({m.group(1) for m in
+                   (re.match(r"^(\d{8}-\d{6})-", fn) for fn in os.listdir(on_target_dir))
+                   if m}) if os.path.isdir(on_target_dir) else []
     final = {}
-    for name in ("09-canonical-session.txt", "06-run6-suite-correct-verify-race.txt"):
-        p = os.path.join(out, "on-target", name)
-        if os.path.isfile(p):
-            final = summarise_console(read(p))
-            if final.get("proposals_received"):
-                break
+    final_src = "CURRENT-SESSION.txt"
+    if fams:
+        fam = fams[-1]
+        final_src = "%s-console.txt" % fam
+        sp = os.path.join(on_target_dir, final_src)
+        if os.path.isfile(sp):
+            final = summarise_console(read(sp))
+        stp = os.path.join(on_target_dir, "%s-status.txt" % fam)
+        if os.path.isfile(stp):
+            sc = summarise_console(read(stp))
+            for k in ("proposals_received", "wire_faults", "envelope_vetoes",
+                      "ring_drops", "last_proposed", "latched_faults",
+                      "decision_latency", "backlog", "manifest_sha"):
+                if sc.get(k) is not None:
+                    final[k] = sc[k]
+        vtp = os.path.join(on_target_dir, "%s-verify.txt" % fam)
+        if os.path.isfile(vtp):
+            vc = summarise_console(read(vtp))
+            final["verify_rc"] = vc.get("verify_rc")
+    if not final.get("proposals_received"):
+        for name in ("09-canonical-session.txt", "06-run6-suite-correct-verify-race.txt"):
+            p = os.path.join(on_target_dir, name)
+            if os.path.isfile(p):
+                final = summarise_console(read(p))
+                final_src = name
+                if final.get("proposals_received"):
+                    break
 
     # ---------------------------------------------------------------- README
     L = []
@@ -638,78 +737,62 @@ def scenario_index(args):
     L.append("")
     L.append("## 1. The headline numbers, and where each one comes from")
     L.append("")
+    src_label = "on-target/" + final_src
     L.append("| Claim | Value | Source file |")
     L.append("|---|---|---|")
-    L.append("| Guest suite frames delivered | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("proposals_received")))
-    L.append("| Wire faults caught | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("wire_faults")))
-    L.append("| Envelope vetoes | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("envelope_vetoes")))
-    L.append("| Ring drops | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("ring_drops")))
-    L.append("| Last accepted proposal | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("last_proposed")))
-    L.append("| Latched fault bits | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("latched_faults")))
-    L.append("| Decision latency | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("decision_latency")))
-    L.append("| Proposal backlog | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("backlog")))
-    L.append("| Manifest digest (attestation) | `%s` | `on-target/09-canonical-session.txt` |"
-             % md_cell(final.get("manifest_sha")))
-    L.append("| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=%s` | `on-target/09-canonical-session.txt` |"
-             % (final.get("verify_rc") or "-"))
-    L.append("| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `on-target/09-canonical-session.txt` (the `pidin -p qvm threads` section) |")
+    for claim, key in [
+        ("Guest suite frames delivered", "proposals_received"),
+        ("Wire faults caught", "wire_faults"),
+        ("Envelope vetoes", "envelope_vetoes"),
+        ("Ring drops", "ring_drops"),
+    ]:
+        L.append("| %s | `%s` | `%s` |"
+                 % (claim, md_cell(final.get(key)), src_label))
+    for claim, key in [
+        ("Last accepted proposal", "last_proposed"),
+        ("Latched fault bits", "latched_faults"),
+        ("Decision latency", "decision_latency"),
+        ("Proposal backlog", "backlog"),
+        ("Manifest digest (attestation)", "manifest_sha"),
+    ]:
+        L.append("| %s | `%s` | `%s` |"
+                 % (claim, md_cell(final.get(key)), src_label))
+    L.append("| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=%s` | `%s` |"
+             % (final.get("verify_rc") or "-", src_label))
+    L.append("| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `%s` (the `pidin -p qvm threads` section) |" % src_label)
     L.append("| Host-sim signature | `wire=12 · envelope=7 · last_seq=80` | `derived/host-sim-signature.txt` |")
     L.append("| Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |")
     L.append("| HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |")
-    L.append("")
     L.append("---")
     L.append("")
     L.append("## 2. What is in here")
     L.append("")
     L.append("```")
     L.append("docs/evidence/")
-    L.append("├── README.md                     THIS FILE")
-    L.append("├── on-target/                    the raw QNX console of every QEMU boot")
-    L.append("│   ├── 01-guest-boot-console.txt     the Linux 6.12 guest booting to /init")
-    L.append("│   ├── 02-run1-51-envelope-vetoes.txt")
-    L.append("│   ├── 03-run2-48-envelope-vetoes.txt")
-    L.append("│   ├── 04-run3-no-guest-pacing.txt")
-    L.append("│   ├── 05-run4-27-envelope-vetoes.txt")
-    L.append("│   ├── 06-run6-suite-correct-verify-race.txt")
-    L.append("│   ├── 07-run7-verify-all-pass.txt")
-    L.append("│   ├── 08-rejected-2nd-virtio-console.txt")
-    L.append("│   └── 09-canonical-session.txt     ★ THE CANONICAL SESSION")
-    L.append("├── tape/                         the evidence tape, windowed")
-    L.append("│   ├── latch_tape.txt  + -metrics.txt   the 51-veto run")
-    L.append("│   ├── latch_tape2.txt + -metrics.txt")
-    L.append("│   ├── latch_tape4.txt + -metrics.txt")
-    L.append("│   ├── latch_tape5.txt + -metrics.txt")
-    L.append("│   └── latch_tape6.txt + -metrics.txt   ★ THE CORRECT TAPE")
-    L.append("├── resolution/                   the four defects, each with its proof")
-    L.append("│   ├── SUMMARY.md")
-    L.append("│   ├── 01-guest-stall-psci.txt")
-    L.append("│   ├── 02-vcpu-pin-syntax.txt")
-    L.append("│   ├── 03-qvm-runmask.txt")
-    L.append("│   ├── 04-transport-starvation.txt")
-    L.append("│   └── 05-rejected-2nd-virtio-console.txt")
-    L.append("├── host-sim/                    the workstation pipeline (no QNX needed)")
-    L.append("│   ├── <ts>-host-sim.txt          self-tests, manifest verify, pipe sim")
-    L.append("│   └── <ts>-consistency.txt        all the cross-file invariant checks")
-    L.append("├── build/                        what is INSIDE the bootable image")
-    L.append("│   ├── <ts>-ifs.txt               the full mkifs -v listing")
-    L.append("│   └── <ts>-initrd.txt            the initramfs forensics")
-    L.append("└── derived/                      machine-readable summaries")
-    L.append("    ├── on-target-run-index.txt    the whole bring-up in one table")
-    L.append("    ├── on-target-metrics.txt      the canonical tape, distilled")
-    L.append("    ├── on-target-numbers.txt      the quotable numbers")
-    L.append("    ├── host-sim-signature.txt     the host-sim signature")
-    L.append("    ├── tape-signatures.csv        one row per tape")
-    L.append("    └── RUN-OUTPUT-MANIFEST.md     what each run produces")
+    # The tree is generated from what is ACTUALLY in the archive, not from a
+    # hand-written picture of it. The previous revision listed a `build/`
+    # subtree that .gitignore silently excluded from the repository, and
+    # omitted the timestamped capture family entirely -- so the index
+    # described an archive that was not there.
+    def tree_lines(rel_dir, prefix):
+        d = os.path.join(out, rel_dir) if rel_dir else out
+        if not os.path.isdir(d):
+            return []
+        lines = []
+        names = sorted(os.listdir(d))
+        dirs = [n for n in names if os.path.isdir(os.path.join(d, n))]
+        files = [n for n in names if not os.path.isdir(os.path.join(d, n))]
+        for n in dirs:
+            lines.append("%s%s/" % (prefix, n))
+            lines.extend(tree_lines(os.path.join(rel_dir, n) if rel_dir else n,
+                                    prefix + "    "))
+        for n in files:
+            lines.append("%s%s" % (prefix, n))
+        return lines
+
+    for ln in tree_lines("", "  "):
+        L.append(ln)
     L.append("```")
-    L.append("")
     L.append("---")
     L.append("")
     L.append("## 3. How to regenerate each one")
@@ -796,12 +879,18 @@ def scenario_index(args):
     L.append("  the guest's phase markers may be missing from the guest console")
     L.append("  log. The **host's** evidence tape is complete, and it is what the")
     L.append("  claims rest on.")
-    L.append("- **The secpol boot graph is not exercised.** `qnx/latch.secpol` is")
-    L.append("  checked for grammar and least-privilege by")
-    L.append("  `tools/consistency_check.py`, but an enforced `secpollaunch -e`")
-    L.append("  boot has not been run. The `latch/actuator` ability's fail-closed")
-    L.append("  behaviour *is* proven on target — that is `latch_verify` steps")
-    L.append("  5a/5b/5c.")
+    L.append("- **The security policy IS enforced on every boot — but it has not been")
+    L.append("  audited against the running system.** `qnx/latch_qemu.build` pushes the")
+    L.append("  compiled policy with `secpolpush` at boot, and pushing the policy is")
+    L.append("  what *triggers* enforcement (QNX SDP 8.0: *\"Pushing the security policy")
+    L.append("  (using secpolpush) triggers policy enforcement\"*). So the")
+    L.append("  `latch/actuator` ability's fail-closed behaviour is demonstrated")
+    L.append("  **under an enforced policy** — that is `latch_verify` steps 5a/5b/5c.")
+    L.append("  What has NOT been done is an `secpolgenerate` audit of the rule")
+    L.append("  graph against the running image, which is the only way to know that")
+    L.append("  the rules stated in `qnx/latch.secpol` are the rules the system")
+    L.append("  actually needs. (`secpollaunch` is a different utility entirely — a")
+    L.append("  setuid-root launcher — and is not the enforcement mechanism.)")
     L.append("- **One platform, one architecture.** Everything here is AArch64")
     L.append("  on QEMU `virt`. Nothing here is a claim about x86_64 QSTI, about")
     L.append("  the Pi's real I²C bus, or about any other guest OS.")
@@ -815,6 +904,47 @@ def scenario_index(args):
     L.append("every push: if the code drifts away from the archived evidence, the")
     L.append("build fails rather than the submission quietly becoming false.")
     L.append("")
+    # A STABLE pointer to the current canonical session.
+    #
+    # The capture families are timestamped, so a document that names one of
+    # them directly has to be rewritten every time a capture is re-run. This
+    # pointer file has a fixed name, so the README, the video script and the
+    # Devpost page can all cite it and stay correct.
+    on_target_dir = os.path.join(out, "on-target")
+    fams = sorted({m.group(1) for m in
+                   (re.match(r"^(\d{8}-\d{6})-", fn) for fn in os.listdir(on_target_dir))
+                   if m})
+    if fams:
+        fam = fams[-1]
+        ptr = ["=" * 78,
+               "LATCH -- the current canonical on-target session",
+               "=" * 78,
+               "",
+               "The capture family below is the CURRENT canonical session: it was",
+               "produced by the current code, it is the run the archive's quotable",
+               "numbers were derived from, and it is the session the",
+               "consistency gate checks.",
+               "",
+               "  Family         : %s" % fam,
+               "  Console        : docs/evidence/on-target/%s-console.txt" % fam,
+               "  Status         : docs/evidence/on-target/%s-status.txt" % fam,
+               "  Verification   : docs/evidence/on-target/%s-verify.txt" % fam,
+               "  Guest console  : docs/evidence/on-target/%s-guest-console.txt" % fam,
+               "  Evidence tape  : docs/evidence/on-target/%s-tape-dump.txt" % fam,
+               "  Threads        : docs/evidence/on-target/%s-threads.txt" % fam,
+               "",
+               "  The numbered files 01-..09 in the same directory are the BRING-UP",
+               "  HISTORY: each of them differs from the one before it by exactly",
+               "  one fix, and they end at the same signature the current session",
+               "  reproduces. See derived/on-target-run-index.txt for the table.",
+               ""]
+        write(os.path.join(on_target_dir, "CURRENT-SESSION.txt"), "\n".join(ptr))
+        L.append("> **The current canonical session is "
+                 "`docs/evidence/on-target/CURRENT-SESSION.txt`** -- a stable pointer "
+                 "to the timestamped capture family, so this file never has to be "
+                 "rewritten when a capture is re-run.")
+        L.append("")
+
     write(os.path.join(out, "README.md"), "\n".join(L))
     print("[INDEX] %s" % os.path.relpath(os.path.join(out, "README.md"), REPO_ROOT))
 
@@ -888,8 +1018,9 @@ def scenario_index(args):
     M.append("| 6 | `on-target/06-run6-suite-correct-verify-race.txt` | Run 6 — the suite is exactly right; `latch_verify`'s step 1 lost a race with the watchdog |")
     M.append("| 7 | `on-target/07-run7-verify-all-pass.txt` | Run 7 — `latch_verify` paced; all five invariants PASS, `VERIFY_RC=0` |")
     M.append("| 8 | `on-target/08-rejected-2nd-virtio-console.txt` | The **rejected** experiment: a 2nd virtio-console corrupted the frame channel |")
-    M.append("| 9 | `on-target/09-canonical-session.txt` | **THE CANONICAL SESSION** — one continuous boot with every fix in place |")
-    M.append("| 10 | `derived/on-target-run-index.txt` | The whole bring-up in one table, with each run's parsed counters |")
+    M.append("| 9 | `on-target/` + final_src | **THE CANONICAL SESSION** — one continuous boot with every fix in place |")
+    M.append("| 10 | `derived/on-target-run-index.txt` | The whole bring-up in one table, with each run's parsed counters, and the CURRENT canonical session at the top |")
+    M.append("| 11 | `on-target/CURRENT-SESSION.txt` | A **stable pointer** to the current canonical capture family, so the README, the video script and the Devpost page can cite it without being rewritten on every capture |")
     M.append("")
     M.append("---")
     M.append("")
@@ -917,6 +1048,7 @@ def scenario_index(args):
     M.append("| 4 | `resolution/03-qvm-runmask.txt` | Defect 3: `on -C`/`-R` cannot express \"CPUs 2+3\" |")
     M.append("| 5 | `resolution/04-transport-starvation.txt` | Defect 4: the four compounding transport causes, and how they produced 51 vetoes |")
     M.append("| 6 | `resolution/05-rejected-2nd-virtio-console.txt` | The rejected experiment, measured, and why it was reverted |")
+    M.append("| 7 | `resolution/06-session-reset-defect.txt` | The defect that made the archive contradict itself: opening the proposal node reset the supervisor's sequence baseline and teleported its plant state |")
     M.append("")
     M.append("---")
     M.append("")
@@ -951,8 +1083,13 @@ running the built IFS under QEMU AArch64 `virt` and reading the supervisor's
 own counters and the evidence tape, and each fix was proven by the same
 counters moving.
 
-The four defects were INDEPENDENT. Fixing any one of them alone still left
-the on-target signature wrong, which is why the bring-up needed eight runs.
+The defects were INDEPENDENT. Fixing any one of them alone still left the
+on-target signature wrong, which is why the bring-up needed nine runs.
+
+Defect 6 is the one that mattered most: it was not a tooling bug but a
+LIVE SAFETY DEFECT in the supervisor, and it is the reason the archive came
+to contain two contradictory sessions. See
+`resolution/06-session-reset-defect.txt`.
 
 """
 
@@ -1013,6 +1150,15 @@ def scenario_resolution(args):
              "the guest produces 4 frames / 200 us in 128-byte writes; the guest's "
              "markers go to `/dev/kmsg` | 51 -> 27 -> **7** vetoes, seq 25 -> 35 "
              "-> 57 -> **80** |")
+    L.append("| 5 | A second `vdev virtio-console` for the guest's markers | "
+             "**REJECTED**: it corrupted the frame channel | the single-virtio-console "
+             "design was restored; the markers go to `/dev/kmsg` | 26 of 84 frames "
+             "-> **84 of 84** |")
+    L.append("| 6 | Opening the proposal node reset the supervisor | 15 envelope "
+             "vetoes, last_seq frozen at 4, `VERIFY_RC=1` | a session reset is a "
+             "SESSION event, not an OPEN event; the harness joins the session "
+             "instead of resetting it | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / "
+             "`VERIFY_RC=0`** |")
     L.append("")
     L.append("The measured progression")
     L.append("------------------------")
@@ -1251,6 +1397,76 @@ def scenario_resolution(args):
             "  envelope vetoes, 0 ring drops, last accepted seq 80, latched bits",
             "  0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG).",
         ],
+        "06-session-reset-defect.txt": [
+            "DEFECT 6 -- OPENING THE PROPOSAL NODE RESET THE SUPERVISOR",
+            "",
+            "SYMPTOM",
+            "  The verification harness failed on target: step 1 reported",
+            "  'Nominal HP tracking not observed', the envelope-veto count was 15",
+            "  instead of 7, and the evidence tape showed the frame sequence",
+            "  frozen at seq=4 with the WATCHDOG fault latched.",
+            "",
+            "  The same defect is a SAFETY defect, not only a tooling one.",
+            "",
+            "MECHANISM",
+            "  `latch_verify` opens /dev/latch/proposal for writing to inject its",
+            "  frames. The proposal node's open handler armed a supervisor",
+            "  SESSION RESET on EVERY open, and that reset:",
+            "",
+            "    - FLUSHED the frame ring, discarding the guest's queued frames;",
+            "    - RE-BASED the sequence baseline to 0, so the first frame after",
+            "      any open was exempt from the sequence check and ANY sequence",
+            "      was thereafter accepted -- REPLAY DETECTION DEFEATED;",
+            "    - TELEPORTED theta to home with zero velocity, so the next frame",
+            "      was judged against a fictitious plant state and vetoed as a",
+            "      spurious RATE fault.",
+            "",
+            "  The proposal node is world-writable (0666) and the guest's",
+            "  latch-ingest holds it open for the whole run, so ANY second",
+            "  process on the target could do this to the supervisor.",
+            "",
+            "FIX",
+            "  qnx/latchd.c, latch_io_open():",
+            "    - The reset is armed only on the 0 -> 1 WRITER TRANSITION. A",
+            "      second writer JOINS the live session: it does not reset it",
+            "      and it does not discard the queued frames.",
+            "    - The discarded frames (on a genuine new session) are COUNTED",
+            "      as ring drops instead of vanishing silently.",
+            "    - The writer count is rolled back if the OCB cannot be",
+            "      allocated, so the EOF/retraction path cannot be lost.",
+            "",
+            "  qnx/latchd.c, the tick:",
+            "    - A session change no longer re-bases the sequence baseline; a",
+            "      NEW SEQUENCE EPOCH is recorded instead, so replay detection",
+            "      survives a session change.",
+            "    - A session change no longer TELEPORTS theta. If the plant is",
+            "      already at rest at home, the reset is a no-op and the session",
+            "      starts in HP. If it is not, the supervisor enters the existing",
+            "      jerk-bounded retraction (WATCHDOG -> HA-HOLD -> HA-HOME).",
+            "",
+            "  qnx/latch_verify.c:",
+            "    - The harness now CONTINUES the supervisor's sequence instead of",
+            "      starting its own at 1.",
+            "    - The ramp is derived from the OBSERVED plant angle, and the",
+            "      result is read from the EVIDENCE TAPE rather than from an",
+            "      instantaneous status read (which had to catch a 2-tick window).",
+            "    - The ramp is sent as a BURST: the supervisor consumes one",
+            "      proposal per tick, so a burst is applied at the same rate as a",
+            "      paced stream, but the ring holds the frames, so the watchdog",
+            "      cannot fire while a measurement is being taken.",
+            "    - RECOVERY frames restore HP before the ramp: the supervisor",
+            "      returns to HP only after `recovery.hysteresis_clean_frames`",
+            "      consecutive clean frames, and in HOLD the plant is frozen, so a",
+            "      ramp would be consumed but not applied.",
+            "    - The step-4 replay is now a REAL replay (the supervisor's own",
+            "      last_seq, re-sent) and the harness ASSERTS that the SEQ fault",
+            "      was latched -- which the previous revision never did.",
+            "",
+            "PROOF",
+            "  Before: 15 envelope vetoes, last_seq frozen at 4, VERIFY_RC=1.",
+            "  After : 84 frames, 12 wire faults, 7 envelope vetoes, 0 ring drops,",
+            "          last accepted seq 80, latched 0x01AE, VERIFY_RC=0.",
+        ],
         "05-rejected-2nd-virtio-console.txt": [
             "REJECTED EXPERIMENT -- a second virtio-console for the guest markers",
             "",
@@ -1313,16 +1529,20 @@ def scenario_host_sim(args):
         ("manifest-verify",
          "./build/host-sim/latchctl manifest-verify latch.manifest && "
          "./build/host-sim/latchctl manifest-verify contracts/syringe_pump_bolus.manifest"),
+        # The regenerated tape goes to the BUILD directory: the committed
+        # host/suite_tape.csv carries wall-clock cycle numbers, so writing
+        # it here left the tree dirty on every capture -- and a capture must
+        # never silently change a committed artefact. `make tape` is the
+        # explicit regeneration path.
         ("pipe-sim",
-         "python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | "
-         "./build/host-sim/latch-ingest -m latch.manifest -o - | "
-         "./build/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv"),
-        # The pipe-sim regenerates host/suite_tape.csv, so the offline
-        # viewer's embedded copy must be re-synced from it before the
-        # consistency gate is run -- otherwise the gate correctly reports
-        # that host/tape.html is stale.
-        ("embed-default-tape",
-         "python3 ../tools/embed_default_tape.py"),
+         "mkdir -p build/host-sim && python3 ../guest/liar.py suite --raw-stdout "
+         "--manifest latch.manifest | ./build/host-sim/latch-ingest -m latch.manifest "
+         "-o - | ./build/host-sim/latchd -m latch.manifest --pipe-in "
+         "--csv build/host-sim/suite_tape.csv"),
+        # PROVE the committed pair (the tape and the viewer's embedded copy)
+        # is in sync, rather than rewriting it.
+        ("embed-default-tape-check",
+         "python3 ../tools/embed_default_tape.py --check"),
         ("demo-syringe",
          "./build/host-sim/latchd -m contracts/syringe_pump_bolus.manifest"),
     ]
@@ -1336,7 +1556,19 @@ def scenario_host_sim(args):
         combined.append("")
 
     # The exact signature table, read back out of the regenerated tape.
+    #
+    # The EXPECTATIONS are derived from the manifest and from the guest
+    # policy's declared suite -- never written as literals. The previous
+    # revision hardcoded the keep-out box [250, 650] and the signature
+    # 12/7/80, so the file that the README calls "the source of truth" was
+    # plant-specific: it would have reported breaches=0 and PASS for a
+    # completely different plant.
     sig = []
+    with io.open(os.path.join(REPO_ROOT, "qnx", "latch.manifest"), encoding="utf-8") as f:
+        mfst = json.load(f)
+    ko_list = mfst["envelope"]["keepout"]
+    ko_lo = ko_list[0]["lo_mrad"] if ko_list else None
+    ko_hi = ko_list[0]["hi_mrad"] if ko_list else None
     with io.open(os.path.join(REPO_ROOT, "host", "suite_tape.csv"), encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
@@ -1347,8 +1579,10 @@ def scenario_host_sim(args):
     env = count(0x0020 | 0x0040 | 0x0080)
     last_seq = max(int(r["seq"]) for r in rows)
     home = sum(1 for r in rows if int(r["mode"]) == 2)
-    breaches = sum(1 for r in rows
-                   if 250 <= int(r["theta_applied"]) <= 650)
+    breaches = 0
+    if ko_lo is not None and ko_hi is not None:
+        breaches = sum(1 for r in rows
+                       if ko_lo <= int(r["theta_applied"]) <= ko_hi)
 
     sig.append(banner("LATCH host-sim exact signature", [
         "This is the ONLY place the numbers in the README, the video script and",
@@ -1461,43 +1695,97 @@ def scenario_build(args):
 # scenario: on-target
 # --------------------------------------------------------------------------
 
-GUEST_DRIVE = """#!/bin/sh
-# THIS SCRIPT RUNS ON THE HOST, NOT IN THE GUEST.
-#
-# Its stdout is piped into QEMU's stdin, so the QNX operator shell receives
-# only the COMMAND TEXT this script echoes. The QNX IFS is minimal and has
-# NO `sleep` binary, so the sleeps must happen here, on the host.
-#
-# TIMING (total {total} s): the TCG boot takes ~3 min, then the Linux guest
-# needs ~150 s to reach /init and emit its suite, so the first command is
-# sent after {warmup} s. Each later command is separated by a sleep long
-# enough for it to complete and for the console to drain.
-sleep {warmup}
-echo ""
-echo "############ EVIDENCE: pidin -p latchd threads ############"
-echo "pidin -p latchd threads"
-sleep 4
-echo "############ EVIDENCE: pidin -p qvm threads (static vCPU pins) ############"
-echo "pidin -p qvm threads"
-sleep 4
-echo "############ EVIDENCE: latchctl status ############"
-echo "latchctl status"
-sleep 5
-echo "############ EVIDENCE: latch_verify ############"
-echo "latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=\\$?"
-sleep 30
-echo "############ EVIDENCE: guest console ############"
-echo "latchctl console"
-sleep 12
-echo "############ EVIDENCE: evidence tape ############"
-echo "latchctl dump"
-sleep 8
-sleep {tail}
-"""
 
-# The sleeps baked into GUEST_DRIVE, so the total can be checked against the
-# QEMU timeout instead of discovering the mismatch the slow way.
-DRIVE_FIXED_SECONDS = 4 + 4 + 5 + 30 + 12 + 8
+class _Console:
+    """A live, state-synchronized view of the QEMU serial console.
+
+    QEMU's stdout is streamed to a file; this class tails that file so the
+    driver can WAIT for a state instead of sleeping for a guessed interval.
+
+    That distinction is the difference between a reproducible capture and a
+    flaky one. The previous revision drove the target from a fixed-timer
+    script (`sleep 150`, then `latch_verify` five seconds later), which had
+    no idea whether the guest had finished its suite. When the timing was
+    wrong -- and under QEMU TCG it usually was -- the capture recorded a
+    FAILED run, and the tool then published that failure's numbers as "the
+    only numbers the submission may quote".
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.offset = 0
+        self.text = ""
+
+    def pump(self):
+        """Read whatever is new on the console; return the new text."""
+        try:
+            with io.open(self.path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(self.offset)
+                data = f.read()
+                self.offset = f.tell()
+        except OSError:
+            return ""
+        self.text += data
+        return data
+
+    def wait_for(self, pattern, timeout_s, poll_s=0.5):
+        """Wait until a regex appears anywhere on the console."""
+        rx = re.compile(pattern)
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            self.pump()
+            if rx.search(self.text):
+                return True
+            time.sleep(poll_s)
+        return False
+
+    def wait_for_count(self, pattern, timeout_s, poll_s=0.5):
+        """Wait for a regex carrying an integer; return the FRESHEST value.
+
+        Only values found in newly-arrived text are accepted, so a stale
+        reading can never be mistaken for a fresh one.
+        """
+        rx = re.compile(pattern)
+        deadline = time.time() + timeout_s
+        last = None
+        while time.time() < deadline:
+            new = self.pump()
+            for m in rx.finditer(new):
+                try:
+                    last = int(m.group(1))
+                except (TypeError, ValueError):
+                    pass
+            if last is not None:
+                return last
+            time.sleep(poll_s)
+        return last
+
+
+def guest_suite_frames():
+    """The in-guest policy's declared suite size, read from its source.
+
+    The capture tool must never hardcode it: the guest's frame count is a
+    property of the guest policy, and a tool that assumed a number would
+    quietly stop being correct the moment the policy changed.
+    """
+    src = os.path.join(REPO_ROOT, "guest", "latch_guest_init.c")
+    with io.open(src, encoding="utf-8") as f:
+        txt = f.read()
+    m = re.search(r"#define\s+LATCH_GUEST_SUITE_FRAMES\s+(\d+)u", txt)
+    if not m:
+        raise RuntimeError("cannot determine the guest suite size from %s "
+                           "(LATCH_GUEST_SUITE_FRAMES not found)" % src)
+    return int(m.group(1))
+
+
+def _read_section(path, start, end):
+    """Extract the byte range [start, end) of the captured console."""
+    if start is None:
+        return ""
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        f.seek(start)
+        data = f.read(max(0, (end if end is not None else 0) - start))
+    return data
 
 
 def scenario_on_target(args):
@@ -1513,20 +1801,7 @@ def scenario_on_target(args):
     if not os.path.isfile(ifs):
         raise RuntimeError("IFS not built: %s\nRun `make -C qnx ifs-qemu-aarch64 GUEST_IMAGE=...` first." % ifs)
 
-    drive = "/tmp/latch_capture_drive.sh"
-    drive_total = args.warmup + DRIVE_FIXED_SECONDS + args.tail
-    if args.timeout <= drive_total:
-        raise RuntimeError(
-            "the QEMU timeout (%d s) is not longer than the drive script's own "
-            "duration (%d s = warmup %d + %d fixed + tail %d). The capture "
-            "would be cut short."
-            % (args.timeout, drive_total, args.warmup,
-               DRIVE_FIXED_SECONDS, args.tail))
-    print("[ON-TARGET] drive script runs for %d s; QEMU timeout is %d s."
-          % (drive_total, args.timeout))
-    with io.open(drive, "w", encoding="utf-8") as f:
-        f.write(GUEST_DRIVE.format(warmup=args.warmup, tail=args.tail,
-                                   total=drive_total))
+    suite_frames = guest_suite_frames()
 
     cmd = [
         "qemu-system-aarch64",
@@ -1539,59 +1814,127 @@ def scenario_on_target(args):
         "-serial", "stdio",
         "-kernel", ifs,
     ]
+
+    raw_capture = os.path.join("/tmp", "latch_capture_raw_%s.txt" % ts)
     print("[ON-TARGET] booting (this takes a few minutes under TCG)...")
-    # The QEMU process is expected to be KILLED by the timeout: the console
-    # capture is complete long before the timeout, because the drive script
-    # ends with a short tail. So the timeout is a backstop, not the plan.
-    #
+
     # The console is streamed straight to a FILE, not through a pipe. That
-    # matters: with subprocess.run and a PIPE, a timeout raises
+    # matters twice over: with subprocess.run and a PIPE, a timeout raises
     # TimeoutExpired and the captured output is LOST -- which is exactly what
     # a previous revision of this tool did, throwing away a ten-minute boot.
     # With a file, whatever was printed is on disk the instant the process
-    # dies.
-    raw_capture = os.path.join("/tmp", "latch_capture_raw_%s.txt" % ts)
-    timed_out = False
-    # The drive script runs on the HOST and its stdout is piped into QEMU's
-    # stdin, so the QNX shell receives only the command text.
-    #
-    # It CANNOT be fed to the guest directly: the QNX IFS is minimal and has
-    # no `sleep` binary, so a script sent as text makes the shell answer
-    # "sleep: cannot execute - No such file or directory" for every pause --
-    # and the commands then all run at once, before the guest has booted.
-    #
-    # The whole pipeline is run under `sh -c` so that the host's `sleep`
-    # provides the pacing.
-    qemu_cmd = " ".join("'%s'" % a for a in cmd)
-    pipeline = "sh '%s' | %s" % (drive, qemu_cmd)
-    print("[ON-TARGET] running: sh <drive-script> | qemu-system-aarch64 ...")
-    with io.open(raw_capture, "w", encoding="utf-8", errors="replace") as out_f:
-        # start_new_session puts the whole pipeline (the host drive script and
-        # QEMU) in its own process group, so a timeout can kill BOTH. Killing
-        # only the `sh -c` would leave QEMU running and holding the port.
-        proc = subprocess.Popen(["sh", "-c", pipeline], stdin=subprocess.DEVNULL,
-                                stdout=out_f, stderr=subprocess.STDOUT,
-                                start_new_session=True)
-        try:
-            proc.wait(timeout=args.timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.wait()
-    with io.open(raw_capture, encoding="utf-8", errors="replace") as f:
-        console = f.read()
-    if timed_out:
-        print("[ON-TARGET] the QEMU timeout fired; keeping the console captured "
-              "so far (%d bytes)." % len(console))
-    if not console.strip():
-        raise RuntimeError("the QEMU run produced no console output -- the boot "
-                           "probably failed. Check the IFS and the qvmconf.")
+    # dies. And the driver TAILS that file, so it can wait for a state.
+    console = _Console(raw_capture)
+    marks = {}
 
-    path = os.path.join(out, "%s-console.txt" % ts)
-    write(path, banner("LATCH on-target raw console -- QEMU AArch64 `virt`", [
+    with io.open(raw_capture, "w", encoding="utf-8", errors="replace") as out_f:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out_f,
+                                stderr=subprocess.STDOUT,
+                                start_new_session=True)
+
+        def send(line):
+            try:
+                proc.stdin.write((line + "\n").encode())
+                proc.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
+
+        def mark(name):
+            console.pump()
+            marks[name] = console.offset
+
+        try:
+            # --- 1. Wait for the QNX host to come up --------------------
+            if not console.wait_for(r"LATCH . Last Authority for Trusted Control Handoff",
+                                    args.boot_timeout):
+                raise RuntimeError("the QNX host never printed the LATCH banner "
+                                   "within %d s -- the boot failed" % args.boot_timeout)
+            print("[ON-TARGET] the QNX host is up; waiting for the guest's suite...")
+
+            # --- 2. Wait for the GUEST's suite, by state, not by clock ---
+            # The guest emits a declared number of frames. We POLL the
+            # supervisor until it has received them. A fixed sleep cannot
+            # know when the guest finished, and the difference between "the
+            # guest's suite arrived" and "we guessed" is the difference
+            # between a reproducible capture and a flaky one.
+            deadline = time.time() + args.suite_timeout
+            received = 0
+            while time.time() < deadline:
+                send("latchctl status")
+                new = console.pump()
+                for m in re.finditer(r"Proposals Received\s*:\s*(\d+)", new):
+                    received = int(m.group(1))
+                if received >= suite_frames:
+                    break
+                time.sleep(4)
+            if received < suite_frames:
+                raise RuntimeError("the guest's suite did not arrive: %d of %d frames "
+                                   "within %d s" % (received, suite_frames, args.suite_timeout))
+            print("[ON-TARGET] the guest's suite arrived (%d/%d frames)." % (received, suite_frames))
+
+            # --- 3. Wait for the supervisor to settle --------------------
+            # The guest's last phase is REAL SILENCE, which is what trips the
+            # watchdog. Wait for the supervisor to leave HP -- that is the
+            # signal that the guest has genuinely finished and the
+            # supervisor has genuinely failed closed.
+            deadline = time.time() + args.settle_timeout
+            mode = None
+            while time.time() < deadline:
+                send("latchctl status")
+                new = console.pump()
+                for m in re.finditer(r"Current Mode\s*:\s*(\w+)", new):
+                    mode = m.group(1)
+                if mode is not None and mode != "HP":
+                    break
+                time.sleep(3)
+            print("[ON-TARGET] the supervisor has settled (mode = %s)." % mode)
+
+            # --- 4. Capture the evidence, in order ----------------------
+            mark("threads")
+            send("pidin -p latchd threads")
+            time.sleep(2)
+            send("pidin -p qvm threads")
+            time.sleep(2)
+            mark("status")
+            send("latchctl status")
+            time.sleep(3)
+            mark("verify")
+            send("latch_verify -m /proc/boot/latch.manifest; echo VERIFY_RC=$?")
+            # latch_verify injects frames, waits for the supervisor to consume
+            # them, and exercises the watchdog retraction. Give it room.
+            console.wait_for(r"VERIFY_RC=\d", 120)
+            time.sleep(3)
+            mark("guest_console")
+            send("latchctl console")
+            console.wait_for(r"guest console", 30)
+            time.sleep(8)
+            mark("tape")
+            send("latchctl dump")
+            time.sleep(8)
+            mark("end")
+
+            console.pump()
+        finally:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
+            # The capture is complete long before the timeout: the timeout is
+            # a backstop, not the plan.
+            try:
+                proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
+                proc.wait()
+
+    # --- Split the console into the individual artefacts ---------------
+    console_path = os.path.join(out, "%s-console.txt" % ts)
+    with io.open(raw_capture, encoding="utf-8", errors="replace") as f:
+        raw_text = f.read()
+    write(console_path, banner("LATCH on-target raw console -- QEMU AArch64 `virt`", [
         "Command : %s" % " ".join(cmd),
         "Captured: %s" % ts,
         "",
@@ -1599,84 +1942,98 @@ def scenario_on_target(args):
         "latchd runs with -n (mock I2C): there is NO PCA9685 on this target and",
         "the horn does not move. The Raspberry Pi 4B build is the same latchd",
         "binary with the real i2c-bcm2711 bus.",
-    ]) + "\n" + console)
+    ]) + "\n" + raw_text)
 
-    # Split the console into the individual artefacts.
-    def section(start_marker, end_marker=None):
-        lines = console.splitlines()
-        try:
-            i = next(k for k, l in enumerate(lines) if start_marker in l)
-        except StopIteration:
-            return ""
-        out_lines = []
-        for l in lines[i:]:
-            if end_marker and end_marker in l and out_lines:
-                break
-            out_lines.append(l)
-        return "\n".join(out_lines) + "\n"
+    def section(a, b):
+        return _read_section(raw_capture, marks.get(a), marks.get(b))
 
     write(os.path.join(out, "%s-threads.txt" % ts),
-          section("############ EVIDENCE: pidin -p latchd threads",
-                  "############ EVIDENCE: latchctl status"))
+          section("threads", "status"))
     write(os.path.join(out, "%s-status.txt" % ts),
-          section("############ EVIDENCE: latchctl status",
-                  "############ EVIDENCE: latch_verify"))
+          section("status", "verify"))
     write(os.path.join(out, "%s-verify.txt" % ts),
-          section("############ EVIDENCE: latch_verify",
-                  "############ EVIDENCE: guest console"))
+          section("verify", "guest_console"))
     write(os.path.join(out, "%s-guest-console.txt" % ts),
-          section("############ EVIDENCE: guest console",
-                  "############ EVIDENCE: evidence tape"))
+          section("guest_console", "tape"))
     write(os.path.join(out, "%s-tape-dump.txt" % ts),
-          section("############ EVIDENCE: evidence tape"))
+          section("tape", "end"))
 
-    # The guest-suite tape window + metrics, from the console's own tape dump.
-    header, rows = parse_tape_csv(console)
+    # --- VERDICT -------------------------------------------------------
+    verify_text = section("verify", "guest_console")
+    m_rc = re.search(r"VERIFY_RC=(\d+)", verify_text)
+    verify_rc = int(m_rc.group(1)) if m_rc else None
+
+    if verify_rc != 0:
+        # QUARANTINE. A failed capture must never become the archive's
+        # quotable numbers, and it must never be silently replaced by the
+        # next run's index. It is kept, clearly labelled, so the failure is
+        # visible rather than lost.
+        failed_dir = os.path.join(out, "FAILED")
+        os.makedirs(failed_dir, exist_ok=True)
+        for fn in sorted(os.listdir(out)):
+            if fn.startswith(ts + "-"):
+                shutil.move(os.path.join(out, fn), os.path.join(failed_dir, fn))
+        shutil.copy2(console_path, os.path.join(failed_dir, "%s-console.txt" % ts))
+        os.remove(console_path)
+        print("[ON-TARGET] FAILED (VERIFY_RC=%s). The capture is quarantined under "
+              "docs/evidence/on-target/FAILED/ and the archive's quotable numbers "
+              "were NOT regenerated." % verify_rc)
+        return 1
+
+    # --- Derived summaries (only for a PASSING capture) ------------------
+    status_text = section("status", "verify")
+    verify_text = section("verify", "guest_console")
+
+    with io.open(os.path.join(REPO_ROOT, "qnx", "latch.manifest"), encoding="utf-8") as f:
+        mfst = json.load(f)
+    ko = mfst["envelope"]["keepout"][0]
+    lo, hi = ko["lo_mrad"], ko["hi_mrad"]
+
+    header, rows = parse_tape_csv(section("tape", "end"))
     metrics = ""
     if rows:
-        with io.open(os.path.join(REPO_ROOT, "qnx", "latch.manifest"), encoding="utf-8") as f:
-            mfst = json.load(f)
-        ko = mfst["envelope"]["keepout"][0]
-        a = analyse_tape(rows, ko["lo_mrad"], ko["hi_mrad"])
-        metrics = format_tape_metrics("%s" % ts, a, ko["lo_mrad"], ko["hi_mrad"],
-                                      "on-target console")
+        a = analyse_tape(rows, lo, hi)
+        metrics = format_tape_metrics("%s" % ts, a, lo, hi, "on-target tape dump")
     write(os.path.join(args.out, "derived", "on-target-metrics.txt"),
-          metrics or banner("LATCH on-target metrics", ["(no tape rows captured)"]))
+          metrics or banner("LATCH on-target metrics", [("(no tape rows captured)")]))
 
-    # The quotable-numbers table.
-    status = section("############ EVIDENCE: latchctl status",
-                     "############ EVIDENCE: latch_verify")
-    verify = section("############ EVIDENCE: latch_verify",
-                     "############ EVIDENCE: guest console")
-    m = re.search(r"Proposals Received\s*:\s*(\d+)", status)
-    e = re.search(r"Envelope Vetoes\s*:\s*(\d+)", status)
-    w = re.search(r"Wire Faults Caught\s*:\s*(\d+)", status)
-    d = re.search(r"Ring Drops / WCET\s*:\s*(\d+) drops", status)
-    s = re.search(r"Last Proposed Angle\s*:\s*(.+)", status)
-    b = re.search(r"Latched Fault Bits\s*:\s*(.+)", status)
-    v = re.search(r"VERIFY_RC=(\d+)", verify)
-    lat = re.search(r"Decision Latency\s*:\s*(.+)", status)
-    man = re.search(r"Manifest SHA-256\s*:\s*([0-9a-f]{64})", status)
-    bl = re.search(r"Proposal Backlog\s*:\s*(.+)", status)
+    def grab(pat, txt, default="(not captured)"):
+        m = re.search(pat, txt)
+        return m.group(1).strip() if m else default
 
     t = ["=" * 78, "LATCH on-target quotable numbers", "=" * 78,
          "Source: %s-console.txt" % ts,
          "",
          "These are the ONLY numbers the submission may quote for the QEMU",
          "AArch64 `virt` target. Every one of them is reproducible from the",
-         "archived console next to this file.", ""]
-    for label, val in (("Proposals received", m), ("Wire faults caught", w),
-                       ("Envelope vetoes", e), ("Ring drops", d),
-                       ("Last proposed angle", s), ("Latched fault bits", b),
-                       ("Decision latency", lat), ("Proposal backlog", bl),
-                       ("Manifest SHA-256", man), ("VERIFY_RC", v)):
-        t.append("  %-22s %s" % (label + ":", val.group(1).strip() if val else "(not captured)"))
-    t.append("")
+         "archived console next to this file.",
+         "",
+         "  Proposals received:    %s" % grab(r"Proposals Received\s*:\s*(\d+)", status_text),
+         "  Wire faults caught:    %s" % grab(r"Wire Faults Caught\s*:\s*(\d+)", status_text),
+         "  Envelope vetoes:       %s" % grab(r"Envelope Vetoes\s*:\s*(\d+)", status_text),
+         "  Ring drops:            %s" % grab(r"Ring Drops / WCET\s*:\s*(\d+) drops", status_text),
+         "  Last proposed angle:   %s" % grab(r"Last Proposed Angle\s*:\s*(.+)", status_text),
+         "  Latched fault bits:    %s" % grab(r"Latched Fault Bits\s*:\s*(.+)", status_text),
+         "  Decision latency:      %s" % grab(r"Decision Latency\s*:\s*(.+)", status_text),
+         "  Proposal backlog:      %s" % grab(r"Proposal Backlog\s*:\s*(.+)", status_text),
+         "  Manifest SHA-256:      %s" % grab(r"Manifest SHA-256\s*:\s*([0-9a-f]{64})", status_text),
+         "  VERIFY_RC:             %s" % (verify_rc if verify_rc is not None else "(not captured)"),
+         ""]
     write(os.path.join(args.out, "derived", "on-target-numbers.txt"), "\n".join(t))
 
-    print("[ON-TARGET] %s" % os.path.relpath(path, REPO_ROOT))
+    # PRUNE the older capture families. The archive must contain exactly ONE
+    # canonical session: a second family is how the archive came to contain a
+    # failed run beside a passing one, with the derived "only numbers" file
+    # pointing at the failure.
+    for fn in sorted(os.listdir(out)):
+        m = re.match(r"^(\d{8}-\d{6})-", fn)
+        if m and m.group(1) != ts:
+            os.remove(os.path.join(out, fn))
+            print("[ON-TARGET] pruned the superseded capture family %s" % m.group(1))
+
+    print("[ON-TARGET] %s" % os.path.relpath(console_path, REPO_ROOT))
     print("[ON-TARGET] derived/on-target-numbers.txt, derived/on-target-metrics.txt")
-    return 0 if (v and v.group(1) == "0") else 1
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -1686,36 +2043,50 @@ def scenario_on_target(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scenario", nargs="?", default="--all",
+    ap.add_argument("scenario", nargs="?", default=None,
                      choices=["on-target", "tape", "host-sim", "build", "history",
-                              "resolution", "index", "--all"])
+                              "resolution", "index"],
+                     help="which capture to produce; default is --all")
+    ap.add_argument("--all", action="store_true",
+                    help="run every scenario except on-target (which needs QEMU "
+                         "and takes ~5 minutes)")
     ap.add_argument("--out", default=DEFAULT_OUT, help="evidence output directory")
     ap.add_argument("--raw-dir", default="/tmp", help="directory holding the raw tape logs")
     ap.add_argument("--guest-image", default=os.environ.get("GUEST_IMAGE", DEFAULT_GUEST_IMAGE))
-    ap.add_argument("--warmup", type=int, default=170,
-                    help="seconds to wait for the Linux guest to boot before driving the shell")
-    ap.add_argument("--tail", type=int, default=20, help="seconds to keep the console open at the end")
-    ap.add_argument("--timeout", type=int, default=600,
-                    help="overall QEMU timeout, seconds. Must exceed warmup + the "
-                         "drive script + tail, with room for the TCG boot.")
+    ap.add_argument("--boot-timeout", type=int, default=420,
+                    help="seconds to wait for the QNX host to print its banner")
+    ap.add_argument("--suite-timeout", type=int, default=420,
+                    help="seconds to wait for the guest's declared suite to arrive")
+    ap.add_argument("--settle-timeout", type=int, default=90,
+                    help="seconds to wait for the supervisor to leave HP after the "
+                         "guest's designed silence trips the watchdog")
+    ap.add_argument("--timeout", type=int, default=900,
+                    help="overall QEMU timeout, seconds (a backstop, not the plan)")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
+    # `--all` is a FLAG, not a positional value: argparse would otherwise
+    # read the literal string "--all" as an option and reject it. The
+    # previous revision listed "--all" in the positional's `choices`, so
+    # `capture_evidence.py --all` never actually ran.
+    run_all = args.all or args.scenario is None
+    scenario = args.scenario
+
     rc = 0
     try:
-        if args.scenario in ("host-sim", "--all"):
+        if scenario == "host-sim" or (run_all and scenario is None):
             rc |= scenario_host_sim(args)
-        if args.scenario in ("build", "--all"):
+        if scenario == "build" or (run_all and scenario is None):
             rc |= scenario_build(args)
-        if args.scenario in ("tape", "--all"):
+        if scenario == "tape" or (run_all and scenario is None):
             rc |= scenario_tape(args)
-        if args.scenario in ("history", "--all"):
+        if scenario == "history" or (run_all and scenario is None):
             rc |= scenario_history(args)
-        if args.scenario in ("resolution", "--all"):
+        if scenario == "resolution" or (run_all and scenario is None):
             rc |= scenario_resolution(args)
-        if args.scenario in ("index", "--all"):
+        if scenario == "index" or (run_all and scenario is None):
             rc |= scenario_index(args)
-        if args.scenario == "on-target":
+        if scenario == "on-target":
             rc |= scenario_on_target(args)
             # A fresh on-target capture changes the quotable numbers, so the
             # index is regenerated from it rather than left pointing at the

@@ -5,6 +5,9 @@ Each run differs from the one before it by exactly one fix, so the
 counters form a monotone story. Every number below is parsed out of
 the archived console next to it.
 
+  CURRENT canonical session (the run the quotable numbers come from):
+    20261113-001157-console.txt                     84     12      7      0     80  0
+
   file                                        frames   wire    env  drops    seq  VERIFY_RC
   --------------------------------------------------------------------------------------------
   01-guest-boot-console.txt                        -      -      -      -      -  -

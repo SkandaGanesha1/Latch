@@ -237,7 +237,42 @@ def verify_evidence_archive():
         if os.path.getsize(p) == 0:
             fail(f"docs/evidence/{rel} is empty")
 
-    # The canonical session must carry the exact on-target signature.
+    # The CURRENT canonical session -- the timestamped family the archive's
+    # quotable numbers were derived from -- must carry the exact signature.
+    # The numbered 09 session is the historical endpoint of the bring-up and
+    # is checked too, but the file a judge reads FIRST is the current one.
+    on_target_dir = os.path.join(ev, "on-target")
+    current_families = sorted({
+        m.group(1) for m in
+        (re.match(r"^(\d{8}-\d{6})-", fn) for fn in os.listdir(on_target_dir))
+        if m})
+    if not current_families:
+        fail("docs/evidence/on-target/ has no timestamped capture family -- the "
+             "archive has no current canonical session. Run "
+             "`make -C qnx evidence-on-target`.")
+    current_console = os.path.join(on_target_dir, "%s-console.txt" % current_families[-1])
+    if not os.path.isfile(current_console):
+        fail("docs/evidence/on-target/%s-console.txt is missing." % current_families[-1])
+    with io.open(current_console, encoding="utf-8", errors="replace") as f:
+        cur_sess = f.read()
+    for label, pat in [
+        ("84 frames received", r"Proposals Received\s*:\s*84"),
+        ("12 wire faults", r"Wire Faults Caught\s*:\s*12"),
+        ("7 envelope vetoes", r"Envelope Vetoes\s*:\s*7"),
+        ("0 ring drops", r"Ring Drops / WCET\s*:\s*0 drops"),
+        ("last accepted seq 80", r"Last Proposed Angle\s*:\s*-180 mrad \(seq=80\)"),
+        ("latched bits 0x01AE", r"Latched Fault Bits\s*:\s*0x01AE"),
+        ("VERIFY_RC=0", r"VERIFY_RC=0"),
+        ("all five invariants pass", r"ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED"),
+        ("static vCPU pin 0", r"cy-guest-qemu-virt/0"),
+        ("static vCPU pin 1", r"cy-guest-qemu-virt/1"),
+    ]:
+        if not re.search(pat, cur_sess):
+            fail("the current canonical session (%s) no longer shows the %s. "
+                 "The archive has drifted -- re-run `make -C qnx evidence-on-target`."
+                 % (os.path.basename(current_console), label))
+
+    # The historical endpoint of the bring-up must carry it too.
     with io.open(os.path.join(ev, "on-target", "09-canonical-session.txt"),
                  encoding="utf-8", errors="replace") as f:
         sess = f.read()
@@ -280,8 +315,157 @@ def verify_evidence_archive():
             fail(f"docs/evidence/derived/on-target-run-index.txt no longer shows the "
                  f"{label}. Re-run `make -C qnx evidence`.")
 
-    pass_check("Evidence archive complete; the canonical session, the host-sim "
-               "signature and the run index all match the expected on-target story")
+    # --- The archive must contain EXACTLY ONE on-target family ----------
+    #
+    # A timestamped family that disagrees with the numbered canonical
+    # session is how the archive became self-contradicting: a FAILED capture
+    # was committed beside a passing one, and the file that declares itself
+    # "the ONLY numbers the submission may quote" was generated from the
+    # failure. The gate must not be able to see a second family.
+    on_target_dir = os.path.join(ev, "on-target")
+    families = {}
+    for fn in sorted(os.listdir(on_target_dir)):
+        m = re.match(r"^(\d{8}-\d{6})-", fn)
+        if m:
+            families.setdefault(m.group(1), []).append(fn)
+    # Exactly ONE timestamped family is REQUIRED (it is the current canonical
+    # session, and it is what the archive's quotable numbers are derived
+    # from). MORE than one is the defect: a second family is how the archive
+    # came to contain a failed run beside a passing one, with the derived
+    # "only numbers" file pointing at the failure.
+    if len(families) > 1:
+        fail("docs/evidence/on-target/ contains %d timestamped capture families "
+             "(%s). The archive must contain exactly ONE canonical session: a second "
+             "family is how the archive came to contain a failed run beside a passing "
+             "one. Remove the stale family, or quarantine it under "
+             "docs/evidence/on-target/FAILED/."
+             % (len(families), ", ".join(sorted(families))))
+
+    failed_dir = os.path.join(on_target_dir, "FAILED")
+    if os.path.isdir(failed_dir):
+        for fn in sorted(os.listdir(failed_dir)):
+            with io.open(os.path.join(failed_dir, fn), encoding="utf-8", errors="replace") as f:
+                txt = f.read()
+            if re.search(r"VERIFY_RC=0", txt):
+                fail("docs/evidence/on-target/FAILED/%s reports VERIFY_RC=0 -- a "
+                     "passing capture must not be quarantined as a failure." % fn)
+
+    # --- The README's quoted numbers must match the archive -------------
+    # The README is hand-written, so its reproducibility card can drift from
+    # the archive it cites. That drift is exactly the failure mode this
+    # project cannot afford: a submission that quotes a number the evidence
+    # does not support.
+    with io.open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8") as f:
+        readme_txt = f.read()
+    with io.open(os.path.join(ev, "derived", "on-target-numbers.txt"),
+                 encoding="utf-8", errors="replace") as f:
+        nums = f.read()
+
+    def _num(label):
+        m = re.search(r"^\s*%s:\s*(\S.*)$" % re.escape(label), nums, re.M)
+        return m.group(1).strip() if m else None
+
+    for label, needle in [
+        ("Proposals received", "Proposals Received: 84"),
+        ("Wire faults caught", "Wire Faults Caught: 12"),
+        ("Envelope vetoes", "Envelope Vetoes: 7"),
+        ("Ring drops", "Ring Drops: 0"),
+        ("Last proposed angle", "Last Proposed: -180 mrad (seq=80)"),
+        ("Latched fault bits", "Latched: 0x01AE"),
+    ]:
+        val = _num(label)
+        if val is None:
+            fail("docs/evidence/derived/on-target-numbers.txt has no '%s' entry" % label)
+        elif needle not in readme_txt:
+            fail("README.md no longer quotes the archived %s ('%s'); the archive says %r. "
+                 "The README's reproducibility card has drifted from the evidence."
+                 % (label, needle, val))
+    pass_check("README.md's reproducibility card still quotes the archived on-target "
+               "signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)")
+
+    # --- The derived files must agree with the session they name ---------
+    with io.open(os.path.join(ev, "derived", "on-target-numbers.txt"),
+                 encoding="utf-8", errors="replace") as f:
+        numbers = f.read()
+    m_src = re.search(r"Source:\s*(\S+)", numbers)
+    if not m_src:
+        fail("docs/evidence/derived/on-target-numbers.txt does not name the console "
+             "it was derived from -- the archive cannot be traced.")
+    else:
+        src_name = m_src.group(1)
+        src_path = os.path.join(on_target_dir, src_name)
+        if not os.path.isfile(src_path):
+            fail("docs/evidence/derived/on-target-numbers.txt was derived from '%s', "
+                 "which is not in the archive." % src_name)
+        else:
+            with io.open(src_path, encoding="utf-8", errors="replace") as f:
+                src = f.read()
+            m_rc = re.search(r"VERIFY_RC=(\d+)", numbers)
+            m_rc_src = re.search(r"VERIFY_RC=(\d+)", src)
+            if m_rc and m_rc_src and m_rc.group(1) != m_rc_src.group(1):
+                fail("the archive's quotable numbers say VERIFY_RC=%s but the session "
+                     "they were derived from (%s) says VERIFY_RC=%s. The archive "
+                     "contradicts itself."
+                     % (m_rc.group(1), src_name, m_rc_src.group(1)))
+            if m_rc and m_rc.group(1) != "0":
+                fail("docs/evidence/derived/on-target-numbers.txt reports VERIFY_RC=%s. "
+                     "A capture that did not verify must never be the archive's "
+                     "quotable numbers." % m_rc.group(1))
+
+    # --- Nothing under docs/evidence/ may be silently git-ignored --------
+    # The bare `build/` pattern in .gitignore matches ANY directory of that
+    # name at any depth, so docs/evidence/build/ was on disk but NOT in the
+    # repository -- and the index listed it as if it were.
+    try:
+        out = subprocess.run(["git", "check-ignore", "--stdin"],
+                             input="\n".join(sorted(
+                                 os.path.relpath(os.path.join(dp, fn), REPO_ROOT)
+                                 for dp, _dn, fns in os.walk(ev) for fn in fns)),
+                             capture_output=True, text=True, cwd=REPO_ROOT)
+        ignored = [l for l in out.stdout.splitlines() if l.strip()]
+        if ignored:
+            fail("%d file(s) under docs/evidence/ are excluded by .gitignore and would "
+                 "not be published: %s. Root the pattern (e.g. `/build/`) or move the "
+                 "directory." % (len(ignored), ", ".join(ignored[:6])))
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    # The COMMITTED evidence tape must carry the exact signature. The
+    # host-sim pipeline regenerates the tape into the build directory now
+    # (so `make check` leaves the tree clean), which means the committed
+    # tape is only updated deliberately -- and this check is what proves it
+    # still describes the current code.
+    tape_path = os.path.join(REPO_ROOT, "host", "suite_tape.csv")
+    if not os.path.isfile(tape_path):
+        fail("host/suite_tape.csv is missing -- the committed evidence tape is gone.")
+    else:
+        import csv as _csv
+        with io.open(tape_path, encoding="utf-8") as f:
+            trows = list(_csv.DictReader(f))
+        if len(trows) != 200:
+            fail("host/suite_tape.csv has %d rows, expected 200" % len(trows))
+
+        def _tcount(mask):
+            return sum(1 for r in trows if int(r["fault_bits"], 16) & mask)
+
+        twire = _tcount(0x0002 | 0x0004 | 0x0008)
+        tenv = _tcount(0x0020 | 0x0040 | 0x0080)
+        tseq = max(int(r["seq"]) for r in trows)
+        thome = sum(1 for r in trows if int(r["mode"]) == 2)
+        if twire != 12:
+            fail("the committed evidence tape has %d wire faults, expected exactly 12" % twire)
+        if tenv != 7:
+            fail("the committed evidence tape has %d envelope vetoes, expected exactly 7" % tenv)
+        if tseq != 80:
+            fail("the committed evidence tape's last accepted seq is %d, expected 80" % tseq)
+        if thome < 10:
+            fail("the committed evidence tape has only %d HA-HOME retraction rows, expected >= 10" % thome)
+        pass_check("The committed evidence tape carries the exact signature "
+                   "(wire=12, envelope=7, last_seq=80, %d HA-HOME rows)" % thome)
+
+    pass_check("Evidence archive complete and self-consistent; exactly one canonical "
+               "on-target family, the derived numbers agree with the session they name, "
+               "and nothing in the archive is git-ignored")
 
 
 def main():

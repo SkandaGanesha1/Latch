@@ -1,22 +1,21 @@
-# ############ EVIDENCE: latchctl status ############
-
-# latchctl status
+latchctl status
 
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 177650 ticks
+Tick Counter         : 30980 ticks
 Current Mode         : HOLD (High Assurance 1)
 Actuator Angle       : 0 mrad
 Velocity / Omega     : 0 mrad/tick | 0 mrad/s
 Last Proposed Angle  : -180 mrad (seq=80)
-Decision Latency     : last = 87 cyc (1392 ns) | max = 30615 cyc (489840 ns)
+Decision Latency     : last = 212 cyc (3392 ns) | max = 40374 cyc (645984 ns)
 Proposals Received   : 84
 Wire Faults Caught   : 12
 Envelope Vetoes      : 7
-Ring Drops / WCET    : 0 drops | 3 overruns
-Proposal Backlog     : peak 29 frames | 0 over limit
+Ring Drops / WCET    : 0 drops | 5 overruns
+Proposal Backlog     : peak 14 frames | 0 over limit
 EPERM Rejections     : 0
 Operator Hold Locked : NO
 Active Fault Bits    : 0x0100 (WATCHDOG)
 Latched Fault Bits   : 0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG)
 Clean Streak         : 0 frames
 Manifest SHA-256     : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+# latch_verify -m /pr

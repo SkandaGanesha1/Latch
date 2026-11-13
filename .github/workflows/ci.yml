@@ -149,6 +149,22 @@ jobs:
           test -f docs/evidence/derived/host-sim-signature.txt
           test -f docs/evidence/on-target/09-canonical-session.txt
           test -f docs/evidence/resolution/SUMMARY.md
+          test -f docs/evidence/resolution/06-session-reset-defect.txt
+
+          # EXACTLY ONE timestamped capture family -- it is the CURRENT
+          # canonical session, and it is what the archive's quotable numbers
+          # are derived from. A second family is how the archive came to
+          # contain a failed run beside a passing one.
+          # `grep -oE` extracts the timestamp itself; a `sed 's/-.*//'` would
+          # cut at the dash INSIDE the timestamp and yield "20261113".
+          FAMILIES=$(ls docs/evidence/on-target/ 2>/dev/null | grep -oE '^[0-9]{8}-[0-9]{6}' | sort -u || true)
+          NFAM=$(printf '%s' "$FAMILIES" | grep -c . || true)
+          if [ "$NFAM" -ne 1 ]; then
+            echo "Error: expected exactly 1 timestamped capture family, found $NFAM ($FAMILIES)"
+            exit 1
+          fi
+          CURRENT="docs/evidence/on-target/$(printf '%s' "$FAMILIES" | head -1)-console.txt"
+          echo "Current canonical session: $CURRENT"
 
           # The archived host-sim signature must still hold.
           grep -q "RESULT: PASS" docs/evidence/derived/host-sim-signature.txt
@@ -157,8 +173,16 @@ jobs:
           # signature. These are the numbers the README, the video script and
           # the Devpost page quote.
           python3 - <<'PYEOF'
-          import re, sys
-          txt = open("docs/evidence/on-target/09-canonical-session.txt").read()
+          import glob, os, re, sys
+          import re as _re
+          on_dir = "docs/evidence/on-target"
+          fams = sorted({m.group(1) for m in
+                         (_re.match(r"^(\d{8}-\d{6})-console\.txt$", fn) for fn in os.listdir(on_dir))
+                         if m})
+          if len(fams) != 1:
+              print("[CI EVIDENCE FAIL] expected exactly one canonical capture family, got %r" % fams)
+              sys.exit(1)
+          txt = open(os.path.join("docs/evidence/on-target", fams[0] + "-console.txt")).read()
           checks = [
               ("Proposals Received", r"Proposals Received\s*:\s*84"),
               ("Wire Faults Caught",  r"Wire Faults Caught\s*:\s*12"),
@@ -185,10 +209,25 @@ jobs:
                 "seq 80, 0x01AE, VERIFY_RC=0, both vCPU pins).")
           PYEOF
 
-          # The archived run index must show the monotone progression.
+          # The archived run index must show the monotone progression AND the
+          # current canonical session.
           python3 - <<'PYEOF'
           import re, sys
           txt = open("docs/evidence/derived/on-target-run-index.txt").read()
+          if "CURRENT canonical session" not in txt:
+              print("[CI EVIDENCE FAIL] the run index does not list the current "
+                    "canonical session")
+              sys.exit(1)
+          m = re.search(r"CURRENT canonical session.*?\n\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)",
+                        txt, re.S)
+          if not m:
+              print("[CI EVIDENCE FAIL] the run index has no parsable current session row")
+              sys.exit(1)
+          frames, wire, env, drops, seq, rc = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6), m.group(7)
+          if (frames, wire, env, drops, seq, rc) != ("84", "12", "7", "0", "80", "0"):
+              print("[CI EVIDENCE FAIL] the current canonical session's row is %r, "
+                    "expected (84, 12, 7, 0, 80, 0)" % ((frames, wire, env, drops, seq, rc),))
+              sys.exit(1)
           for name, pat in [("run1 51 vetoes", r"02-run1-51-envelope-vetoes\.txt\s+84\s+8\s+51"),
                             ("run3 48 vetoes", r"04-run3-no-guest-pacing\.txt\s+84\s+8\s+48"),
                             ("run4 27 vetoes", r"05-run4-27-envelope-vetoes\.txt\s+84\s+8\s+27"),

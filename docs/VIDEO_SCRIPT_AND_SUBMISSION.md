@@ -14,7 +14,7 @@
 | *(cut)* | *Guest phase 9 is the real one: the guest stops writing bytes entirely. PID 1 in the guest IS the policy, so say "the guest stopped talking", never "we killed the policy process".* | |
 | **1:30–2:05** | Highlight `EPERM` from `[5a/5]–[5c/5]` (`PROBE_ABILITY`, `FORCE_HOLD`, `open(O_WRONLY)`) and `pidin -p qvm threads` (vCPU threads `cy-guest-qemu-virt/0` and `/1`) | *"Root is not the credential — `latch/actuator` (`flags = 0`) is. `latchd` runs `SCHED_FIFO 63` on CPU 0 while the guest vCPUs are statically pinned to CPUs 2 and 3."* |
 | **2:05–2:35** | Open `latch/host/tape.html` offline in browser, show the tape + the `ClockCycles()` latency line from `latchctl status` | *"Every tick is stamped with `ClockCycles()` in a 4096-entry `.bss` ring. The last-sample and max latency are both printed, in cycles and in nanoseconds, against the 100 µs budget."* |
-| **2:35–3:00** | Run `sha256sum latch/qnx/latch.manifest` (`135aadeb...`) + `make -C latch/qnx demo-syringe` | *"Zero-hardcoding manifest verified via FIPS 180-2 SHA-256 — same `latchd` binary enforces both a 1-DoF servo and a medical syringe pump."* |
+| **2:35–3:00** | Run `sha256sum latch/qnx/latch.manifest` (`1a8e1023...27f823`) + `make -C latch/qnx demo-syringe` | *"Zero-hardcoding manifest verified via FIPS 180-2 SHA-256 — same `latchd` binary enforces both a 1-DoF servo and a medical syringe pump."* |
 
 ---
 
@@ -24,7 +24,7 @@
 that proves it, lists the commands that regenerate each file, and states what is
 **not** proven.
 
-The canonical artefact is `docs/evidence/on-target/09-canonical-session.txt` — the
+The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt` — the
 raw QNX host console of **one continuous boot** of the QEMU AArch64 `virt` image:
 the EL2-VHE hypervisor banner, `pidin -p latchd threads`, `pidin -p qvm threads`
 (the guest vCPU threads named `cy-guest-qemu-virt/0` and `/1`, i.e. the static

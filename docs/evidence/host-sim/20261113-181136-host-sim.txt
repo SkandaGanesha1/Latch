@@ -23,21 +23,21 @@ exit status: 0
 ==============================================================================
 host-sim: pipe-sim
 ==============================================================================
-$ python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./build/host-sim/latch-ingest -m latch.manifest -o - | ./build/host-sim/latchd -m latch.manifest --pipe-in --csv ../host/suite_tape.csv
+$ mkdir -p build/host-sim && python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./build/host-sim/latch-ingest -m latch.manifest -o - | ./build/host-sim/latchd -m latch.manifest --pipe-in --csv build/host-sim/suite_tape.csv
 
 exit status: 0
 
-[LATCH_PIPE_SIM] Completed 200 ticks | rx=200 | wire_faults=12 | env_faults=7 | eperm_rejects=1 | max_latency=1422 ns
+[LATCH_PIPE_SIM] Completed 200 ticks | rx=200 | wire_faults=12 | env_faults=7 | eperm_rejects=1 | max_latency=1413 ns
 
 
 ==============================================================================
-host-sim: embed-default-tape
+host-sim: embed-default-tape-check
 ==============================================================================
-$ python3 ../tools/embed_default_tape.py
+$ python3 ../tools/embed_default_tape.py --check
 
 exit status: 0
 
-[TAPE] embedded 200 rows from host/suite_tape.csv into host/tape.html
+[TAPE PASS] host/tape.html DEFAULT_TAPE is in sync with host/suite_tape.csv (200 rows)
 
 
 ==============================================================================

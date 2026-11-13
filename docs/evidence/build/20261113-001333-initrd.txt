@@ -1,0 +1,18 @@
+==============================================================================
+LATCH guest initramfs forensics
+==============================================================================
+Path : /home/skanda/Downloads/latch-qnx800/latch/guest/linux-guest.initrd
+Size : 3292 bytes
+
+Uncompressed cpio archive: 68608 bytes
+
+Entries:
+  .                    mode=040755 size=0
+  dev                  mode=040755 size=0
+  init                 mode=100755 size=67568
+  proc                 mode=040755 size=0
+  sys                  mode=040755 size=0
+  TRAILER!!!           mode=000000 size=0
+
+(the extracted /init is a freestanding static AArch64 ELF --
+ no libc, no shell and no Python inside the guest)

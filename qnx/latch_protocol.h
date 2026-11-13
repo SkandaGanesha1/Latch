@@ -252,6 +252,55 @@ typedef struct latch_tape_dump {
     __DIOF(_DCMD_MISC, 0x41, latch_status_reply_t)
 #define DCMD_LATCH_DUMP_TAPE \
     __DIOTF(_DCMD_MISC, 0x42, latch_tape_dump_t)
+
+/* ==========================================================================
+ * Cross-Process Payload Layout Asserts
+ *
+ * `latch_status_reply_t` and `latch_tape_dump_t` are devctl payloads: the
+ * supervisor builds one and another process reads it. Their SIZE and their
+ * FIELD OFFSETS are therefore part of the ABI, exactly as the wire frame and
+ * the IPC proposal are -- and those two already carry static asserts.
+ *
+ * Without these, adding a field to the status struct silently changes the
+ * payload layout, and a mismatch between the supervisor and a client built
+ * from a different revision is diagnosed as "random garbage" rather than as
+ * a layout error. `latch_tape_dump_t` is additionally padding-sensitive: it
+ * carries a uint64_t after two uint32_t, so its offsets depend on the
+ * alignment rules of the compiler.
+ * ========================================================================== */
+
+_Static_assert(sizeof(latch_status_reply_t) % 8u == 0u,
+               "latch_status_reply_t must be a multiple of its 8-byte alignment");
+_Static_assert(offsetof(latch_status_reply_t, tick) == 0u,
+               "latch_status_reply_t: tick must be the first field");
+_Static_assert(offsetof(latch_status_reply_t, last_seq) >=
+                   offsetof(latch_status_reply_t, max_latency_cycles),
+               "latch_status_reply_t: field order changed");
+/* The digest is the last FIELD. Trailing padding up to the struct's
+ * alignment is expected and carries no meaning -- but the field's END must
+ * still lie inside the struct, or the layout is broken. */
+_Static_assert(offsetof(latch_status_reply_t, manifest_sha256) +
+                   sizeof(((latch_status_reply_t *)0)->manifest_sha256) <=
+               sizeof(latch_status_reply_t),
+               "latch_status_reply_t: manifest_sha256 must be the last field");
+
+_Static_assert(sizeof(latch_tape_dump_t) % 8u == 0u,
+               "latch_tape_dump_t must be a multiple of its 8-byte alignment");
+_Static_assert(offsetof(latch_tape_dump_t, start_index) == 0u,
+               "latch_tape_dump_t: start_index must be the first field");
+_Static_assert(offsetof(latch_tape_dump_t, latest_tick) % 8u == 0u,
+               "latch_tape_dump_t: latest_tick must be 8-byte aligned");
+_Static_assert(offsetof(latch_tape_dump_t, entries) ==
+                   offsetof(latch_tape_dump_t, manifest_sha256) +
+                   sizeof(((latch_tape_dump_t *)0)->manifest_sha256),
+               "latch_tape_dump_t: entries must follow the manifest digest");
+_Static_assert(offsetof(latch_tape_dump_t, entries) +
+                   sizeof(((latch_tape_dump_t *)0)->entries) <=
+               sizeof(latch_tape_dump_t),
+               "latch_tape_dump_t: entries must be the last field");
+
+_Static_assert(sizeof(latch_force_hold_cmd_t) == 8u,
+               "latch_force_hold_cmd_t must be 8 bytes");
 #define DCMD_LATCH_PROBE_ABILITY \
     __DION(_DCMD_MISC, 0x43)
 

@@ -4,7 +4,12 @@
 
 # Build artifacts
 qnx/build/
-build/
+# ROOTED at the repository root on purpose. A bare `build/` pattern matches
+# ANY directory of that name at ANY depth -- which silently excluded
+# `docs/evidence/build/` (the mkifs listing and the initramfs forensics)
+# from the published archive while the index listed it as if it were there.
+# The evidence archive must be published.
+/build/
 *.o
 *.so
 *.so.*

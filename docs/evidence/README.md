@@ -15,66 +15,77 @@ summary written for you.
 
 | Claim | Value | Source file |
 |---|---|---|
-| Guest suite frames delivered | `84` | `on-target/09-canonical-session.txt` |
-| Wire faults caught | `12` | `on-target/09-canonical-session.txt` |
-| Envelope vetoes | `7` | `on-target/09-canonical-session.txt` |
-| Ring drops | `0` | `on-target/09-canonical-session.txt` |
-| Last accepted proposal | `-180 mrad (seq=80)` | `on-target/09-canonical-session.txt` |
-| Latched fault bits | `0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `on-target/09-canonical-session.txt` |
-| Decision latency | `last = 77 cyc (1232 ns) \| max = 27243 cyc (435888 ns)` | `on-target/09-canonical-session.txt` |
-| Proposal backlog | `peak 28 frames \| 0 over limit` | `on-target/09-canonical-session.txt` |
-| Manifest digest (attestation) | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` | `on-target/09-canonical-session.txt` |
-| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` | `on-target/09-canonical-session.txt` |
-| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `on-target/09-canonical-session.txt` (the `pidin -p qvm threads` section) |
+| Guest suite frames delivered | `84` | `on-target/20261113-001157-console.txt` |
+| Wire faults caught | `12` | `on-target/20261113-001157-console.txt` |
+| Envelope vetoes | `7` | `on-target/20261113-001157-console.txt` |
+| Ring drops | `0` | `on-target/20261113-001157-console.txt` |
+| Last accepted proposal | `-180 mrad (seq=80)` | `on-target/20261113-001157-console.txt` |
+| Latched fault bits | `0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `on-target/20261113-001157-console.txt` |
+| Decision latency | `last = 212 cyc (3392 ns) \| max = 40374 cyc (645984 ns)` | `on-target/20261113-001157-console.txt` |
+| Proposal backlog | `peak 14 frames \| 0 over limit` | `on-target/20261113-001157-console.txt` |
+| Manifest digest (attestation) | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` | `on-target/20261113-001157-console.txt` |
+| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` | `on-target/20261113-001157-console.txt` |
+| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `on-target/20261113-001157-console.txt` (the `pidin -p qvm threads` section) |
 | Host-sim signature | `wire=12 · envelope=7 · last_seq=80` | `derived/host-sim-signature.txt` |
 | Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
-
 ---
 
 ## 2. What is in here
 
 ```
 docs/evidence/
-├── README.md                     THIS FILE
-├── on-target/                    the raw QNX console of every QEMU boot
-│   ├── 01-guest-boot-console.txt     the Linux 6.12 guest booting to /init
-│   ├── 02-run1-51-envelope-vetoes.txt
-│   ├── 03-run2-48-envelope-vetoes.txt
-│   ├── 04-run3-no-guest-pacing.txt
-│   ├── 05-run4-27-envelope-vetoes.txt
-│   ├── 06-run6-suite-correct-verify-race.txt
-│   ├── 07-run7-verify-all-pass.txt
-│   ├── 08-rejected-2nd-virtio-console.txt
-│   └── 09-canonical-session.txt     ★ THE CANONICAL SESSION
-├── tape/                         the evidence tape, windowed
-│   ├── latch_tape.txt  + -metrics.txt   the 51-veto run
-│   ├── latch_tape2.txt + -metrics.txt
-│   ├── latch_tape4.txt + -metrics.txt
-│   ├── latch_tape5.txt + -metrics.txt
-│   └── latch_tape6.txt + -metrics.txt   ★ THE CORRECT TAPE
-├── resolution/                   the four defects, each with its proof
-│   ├── SUMMARY.md
-│   ├── 01-guest-stall-psci.txt
-│   ├── 02-vcpu-pin-syntax.txt
-│   ├── 03-qvm-runmask.txt
-│   ├── 04-transport-starvation.txt
-│   └── 05-rejected-2nd-virtio-console.txt
-├── host-sim/                    the workstation pipeline (no QNX needed)
-│   ├── <ts>-host-sim.txt          self-tests, manifest verify, pipe sim
-│   └── <ts>-consistency.txt        all the cross-file invariant checks
-├── build/                        what is INSIDE the bootable image
-│   ├── <ts>-ifs.txt               the full mkifs -v listing
-│   └── <ts>-initrd.txt            the initramfs forensics
-└── derived/                      machine-readable summaries
-    ├── on-target-run-index.txt    the whole bring-up in one table
-    ├── on-target-metrics.txt      the canonical tape, distilled
-    ├── on-target-numbers.txt      the quotable numbers
-    ├── host-sim-signature.txt     the host-sim signature
-    ├── tape-signatures.csv        one row per tape
-    └── RUN-OUTPUT-MANIFEST.md     what each run produces
+  build/
+      20261113-001333-ifs.txt
+      20261113-001333-initrd.txt
+  derived/
+      RUN-OUTPUT-MANIFEST.md
+      host-sim-signature.txt
+      on-target-metrics.txt
+      on-target-numbers.txt
+      on-target-run-index.txt
+      tape-signatures.csv
+  host-sim/
+      20261113-181136-consistency.txt
+      20261113-181136-host-sim.txt
+  on-target/
+      01-guest-boot-console.txt
+      02-run1-51-envelope-vetoes.txt
+      03-run2-48-envelope-vetoes.txt
+      04-run3-no-guest-pacing.txt
+      05-run4-27-envelope-vetoes.txt
+      06-run6-suite-correct-verify-race.txt
+      07-run7-verify-all-pass.txt
+      08-rejected-2nd-virtio-console.txt
+      09-canonical-session.txt
+      20261113-001157-console.txt
+      20261113-001157-guest-console.txt
+      20261113-001157-status.txt
+      20261113-001157-tape-dump.txt
+      20261113-001157-threads.txt
+      20261113-001157-verify.txt
+      CURRENT-SESSION.txt
+  resolution/
+      01-guest-stall-psci.txt
+      02-vcpu-pin-syntax.txt
+      03-qvm-runmask.txt
+      04-transport-starvation.txt
+      05-rejected-2nd-virtio-console.txt
+      06-session-reset-defect.txt
+      SUMMARY.md
+  tape/
+      latch_tape-metrics.txt
+      latch_tape.txt
+      latch_tape2-metrics.txt
+      latch_tape2.txt
+      latch_tape4-metrics.txt
+      latch_tape4.txt
+      latch_tape5-metrics.txt
+      latch_tape5.txt
+      latch_tape6-metrics.txt
+      latch_tape6.txt
+  README.md
 ```
-
 ---
 
 ## 3. How to regenerate each one
@@ -117,6 +128,9 @@ LATCH on-target run index -- the bring-up in one table
 Each run differs from the one before it by exactly one fix, so the
 counters form a monotone story. Every number below is parsed out of
 the archived console next to it.
+
+  CURRENT canonical session (the run the quotable numbers come from):
+    20261113-001157-console.txt                     84     12      7      0     80  0
 
   file                                        frames   wire    env  drops    seq  VERIFY_RC
   --------------------------------------------------------------------------------------------
@@ -198,12 +212,18 @@ than no claim at all.
   the guest's phase markers may be missing from the guest console
   log. The **host's** evidence tape is complete, and it is what the
   claims rest on.
-- **The secpol boot graph is not exercised.** `qnx/latch.secpol` is
-  checked for grammar and least-privilege by
-  `tools/consistency_check.py`, but an enforced `secpollaunch -e`
-  boot has not been run. The `latch/actuator` ability's fail-closed
-  behaviour *is* proven on target — that is `latch_verify` steps
-  5a/5b/5c.
+- **The security policy IS enforced on every boot — but it has not been
+  audited against the running system.** `qnx/latch_qemu.build` pushes the
+  compiled policy with `secpolpush` at boot, and pushing the policy is
+  what *triggers* enforcement (QNX SDP 8.0: *"Pushing the security policy
+  (using secpolpush) triggers policy enforcement"*). So the
+  `latch/actuator` ability's fail-closed behaviour is demonstrated
+  **under an enforced policy** — that is `latch_verify` steps 5a/5b/5c.
+  What has NOT been done is an `secpolgenerate` audit of the rule
+  graph against the running image, which is the only way to know that
+  the rules stated in `qnx/latch.secpol` are the rules the system
+  actually needs. (`secpollaunch` is a different utility entirely — a
+  setuid-root launcher — and is not the enforcement mechanism.)
 - **One platform, one architecture.** Everything here is AArch64
   on QEMU `virt`. Nothing here is a claim about x86_64 QSTI, about
   the Pi's real I²C bus, or about any other guest OS.
@@ -216,3 +236,5 @@ than no claim at all.
 compares the signature against the archived one. CI runs it on
 every push: if the code drifts away from the archived evidence, the
 build fails rather than the submission quietly becoming false.
+
+> **The current canonical session is `docs/evidence/on-target/CURRENT-SESSION.txt`** -- a stable pointer to the timestamped capture family, so this file never has to be rewritten when a capture is re-run.

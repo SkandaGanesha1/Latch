@@ -1,12 +1,28 @@
-# ############ EVIDENCE: pidin -p latchd threads ############
+latchctl status
 
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 26995 ticks
+Current Mode         : HOLD (High Assurance 1)
+Actuator Angle       : 0 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : -180 mrad (seq=80)
+Decision Latency     : last = 829 cyc (13264 ns) | max = 40374 cyc (645984 ns)
+Proposals Received   : 84
+Wire Faults Caught   : 12
+Envelope Vetoes      : 7
+Ring Drops / WCET    : 0 drops | 4 overruns
+Proposal Backlog     : peak 14 frames | 0 over limit
+EPERM Rejections     : 0
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0100 (WATCHDOG)
+Latched Fault Bits   : 0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG)
+Clean Streak         : 0 frames
+Manifest SHA-256     : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
 # pidin -p latchd threads
 
      pid tid name                         thread name          STATE          Blocked                     
    12293   1 proc/boot/latchd             1                    RECEIVE        1                           
    12293   2 proc/boot/latchd             2                    RECEIVE        2                           
-# ############ EVIDENCE: pidin -p qvm threads (static vCPU pins) ############
-
 # pidin -p qvm threads
 
      pid tid name                         thread name          STATE          Blocked                     
@@ -15,3 +31,6 @@
    16391   3 proc/boot/qvm                cy-guest-qemu-virt/1 SEM            0                           
    16391   4 proc/boot/qvm                4                    RECEIVE        2                           
    16391   5 proc/boot/qvm                5                    SIGWAITINFO                                
+# latchctl status
+
+=== LATCH Sim
