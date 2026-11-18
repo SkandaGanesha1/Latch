@@ -29,6 +29,8 @@ summary written for you.
 | Host-sim signature | `wire=12 · envelope=7 · last_seq=80` | `derived/host-sim-signature.txt` |
 | Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
+| GOVERNOR on-target verify | `[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held…; final lease expiry reached LATCH` | `governor/governor-qemu-verify.txt` (verbatim `make verify-governor-qemu` output) |
+| GOVERNOR attack scorecard | `105 ticks · 0 intrusions · 5/5 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
 ---
 
 ## 2. What is in here
@@ -45,6 +47,14 @@ docs/evidence/
       on-target-numbers.txt
       on-target-run-index.txt
       tape-signatures.csv
+  governor/
+      governor-host-sim.txt
+      governor-manifest-verify.txt
+      governor-metrics.txt
+      governor-qemu-console.txt
+      governor-qemu-verify.txt
+      governor-status-transition.txt
+      governor-tape.csv
   host-sim/
       20261113-181136-consistency.txt
       20261113-181136-host-sim.txt
@@ -90,8 +100,9 @@ docs/evidence/
 
 ## 3. How to regenerate each one
 
-Everything in this archive is produced by one tool:
-`tools/capture_evidence.py`. Nothing here is hand-edited.
+The **legacy archive** (`build/`, `derived/`, `host-sim/`, `on-target/`,
+`resolution/`, `tape/`) is produced by one tool:
+`tools/capture_evidence.py`. Nothing there is hand-edited.
 
 ```bash
 source ~/qnx800/qnxsdp-env.sh
@@ -108,6 +119,27 @@ python3 tools/capture_evidence.py on-target
 make -C qnx evidence          # --all
 make -C qnx evidence-on-target # the QEMU run
 ```
+
+The **GOVERNOR captures** (`governor/`) are raw outputs of their named
+tools, each with its own regeneration command:
+
+```bash
+# governor-qemu-verify.txt -- verbatim make-target output, ends in
+#   [GOVERNOR_QEMU PASS] ... (cross-build + on-target ladder run, ~5 min TCG)
+GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image \
+  make -C qnx verify-governor-qemu
+
+# governor-metrics.txt -- the 105-tick attack scorecard (host-sim build)
+python3 tools/governor_metrics.py --out docs/evidence/governor/governor-metrics.txt
+```
+
+`governor-qemu-console.txt` is the full serial console of a GOVERNOR QEMU
+session, `governor-status-transition.txt` the `latchctl status` snapshots
+from it, `governor-tape.csv` the evidence-tape rows it produced,
+`governor-host-sim.txt` the host-sim run log, and
+`governor-manifest-verify.txt` the `latchctl manifest-verify` output for
+the signed contract. They are raw captures, not summaries; the two
+regeneration commands above are the ones with dedicated tooling.
 
 The `history`, `tape` and `resolution` scenarios read the raw console
 logs of the bring-up from `/tmp` (override with `--raw-dir`). If those
@@ -224,6 +256,14 @@ than no claim at all.
   the rules stated in `qnx/latch.secpol` are the rules the system
   actually needs. (`secpollaunch` is a different utility entirely — a
   setuid-root launcher — and is not the enforcement mechanism.)
+- **The 105-tick attack scorecard is not an on-target run.**
+  `governor/governor-metrics.txt` is produced by
+  `tools/governor_metrics.py`, which drives the **host-sim build** of the
+  same C sources (`qnx/build/host-sim/latchd`) on the x86_64 build host.
+  The on-target GOVERNOR proof is `governor/governor-qemu-verify.txt`
+  (the archived `make verify-governor-qemu` PASS log) and
+  `governor/governor-qemu-console.txt`. Do not cite the scorecard as a
+  QEMU measurement.
 - **One platform, one architecture.** Everything here is AArch64
   on QEMU `virt`. Nothing here is a claim about x86_64 QSTI, about
   the Pi's real I²C bus, or about any other guest OS.

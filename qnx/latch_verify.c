@@ -64,7 +64,12 @@ static qtime_dummy_t g_qtime_dummy = { 1000000000ULL };
 #include "latch_manifest.h"
 
 static const char *mode_name(uint16_t m) {
-    return (m == LATCH_MODE_HP) ? "HP" : (m == LATCH_MODE_HOLD) ? "HOLD" : "HOME";
+    switch (m) {
+        case LATCH_MODE_HP:   return "HP";
+        case LATCH_MODE_HOLD: return "HOLD";
+        case LATCH_MODE_HOME: return "HOME";
+        default:              return "UNKNOWN";
+    }
 }
 
 /*

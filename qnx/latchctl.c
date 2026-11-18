@@ -56,6 +56,10 @@ static void format_fault_bits(uint16_t bits, char *buf, size_t buflen) {
     if (bits & LATCH_FAULT_I2C)      strcat(names, "I2C|");
     if (bits & LATCH_FAULT_OPERATOR) strcat(names, "OPERATOR|");
     if (bits & LATCH_FAULT_EPERM)    strcat(names, "EPERM|");
+    if (bits & LATCH_FAULT_UNIT)     strcat(names, "UNIT|");
+    if (bits & LATCH_FAULT_HEARTBEAT) strcat(names, "HEARTBEAT|");
+    if (bits & LATCH_FAULT_WIDEN)    strcat(names, "WIDEN|");
+    if (bits & LATCH_FAULT_DOSE)     strcat(names, "DOSE|");
 
     size_t len = strlen(names);
     if (len > 0 && names[len - 1] == '|') {
@@ -72,6 +76,8 @@ static void print_usage(const char *prog) {
             "  grant-check                        Verify whether caller holds 'latch/actuator' ability\n"
             "  hold <1|0> [reason]                Set (1) or release (0) operator emergency HA-HOLD\n"
             "  dump <output.csv>                  Dump evidence tape records to CSV\n"
+            "  events [-n count] [-s start]       Dump GOVERNOR circular event ring\n"
+            "         [--json] [--csv]\n"
             "  manifest-verify <path> [sha256]    Verify manifest integrity, admissibility & sidecar\n"
             "  console [path] [-f]                Mirror the guest kernel console (default\n"
             "                                      /dev/shmem/guest_console.log); -f follows\n",
@@ -123,7 +129,16 @@ static int do_status(int fd) {
     latch_status_reply_t rep;
     memset(&rep, 0, sizeof(rep));
 
-    int rc = devctl(fd, DCMD_LATCH_GET_STATUS, &rep, sizeof(rep), NULL);
+    latch_governor_status_reply_t gov;
+    memset(&gov, 0, sizeof(gov));
+    bool has_governor_status = false;
+    int rc = devctl(fd, DCMD_LATCH_GET_GOV_STATUS, &gov, sizeof(gov), NULL);
+    if (rc == EOK && gov.extension_version >= 1u) {
+        rep = gov.latch;
+        has_governor_status = true;
+    } else {
+        rc = devctl(fd, DCMD_LATCH_GET_STATUS, &rep, sizeof(rep), NULL);
+    }
     if (rc != EOK) {
         fprintf(stderr, "latchctl: devctl(GET_STATUS) failed: %s (%d)\n", strerror(rc), rc);
         return (rc == EPERM) ? 2 : 1;
@@ -157,6 +172,28 @@ static int do_status(int fd) {
     printf("Active Fault Bits    : %s\n", active_str);
     printf("Latched Fault Bits   : %s\n", latched_str);
     printf("Clean Streak         : %u frames\n", rep.clean_streak);
+    if (has_governor_status) {
+        static const char *const rung_names[] = {
+            "HP", "ADVISE", "CLAMP", "SLOW", "SAFE_STOP", "LATCH"
+        };
+        const char *rung_name = gov.rung < (sizeof(rung_names) / sizeof(rung_names[0]))
+                                    ? rung_names[gov.rung] : "INVALID";
+        printf("GOVERNOR             : %s | rung=%s (%u)\n",
+               gov.enabled ? "enabled" : "disabled", rung_name, gov.rung);
+        printf("V2 Session / Lease   : %s | %u ticks left | lease age %u ticks\n",
+               gov.v2_session ? "active" : "inactive", gov.lease_ticks_remaining,
+               gov.lease_age_ticks);
+        printf("Warm-up / Agent      : %u heartbeats | state %u\n",
+               gov.warmup_heartbeats_seen, gov.agent_state);
+        if (gov.extension_version >= 2u) {
+            printf("Recovery Clean       : %u accepted commands\n", gov.clean_command_streak);
+        }
+        printf("Rate / Shrink        : %u tokens | active=%u v_max=%u scale_q8=%u\n",
+               gov.rate_tokens_remaining, gov.shrink_active,
+               gov.shrink_v_max, gov.shrink_scale_q8);
+        printf("Coherence            : %s | counter=%u\n",
+               gov.coherence_valid ? "valid" : "unset", gov.coherence_ctr);
+    }
 
     char sha_hex[65];
     for (int i = 0; i < 32; ++i) {
@@ -270,6 +307,178 @@ static int do_dump(int fd, const char *out_csv) {
     return 0;
 }
 
+static void bytes_to_hex(const uint8_t *bytes, size_t len, char *hex_out) {
+    for (size_t i = 0; i < len; ++i) {
+        sprintf(&hex_out[i * 2], "%02x", bytes[i]);
+    }
+    hex_out[len * 2] = '\0';
+}
+
+static const char *rung_str(uint8_t r) {
+    switch (r) {
+        case 0: return "HP";
+        case 1: return "ADVISE";
+        case 2: return "CLAMP";
+        case 3: return "SLOW";
+        case 4: return "SAFE_STOP";
+        case 5: return "LATCH";
+        default: return "UNK";
+    }
+}
+
+static const char *kind_str(uint8_t k) {
+    switch (k) {
+        case 0: return "CMD";
+        case 1: return "HEARTBEAT";
+        case 2: return "CMD_V2";
+        case 3: return "SHRINK_REQ";
+        default: return "UNK";
+    }
+}
+
+static const char *verdict_str(uint8_t v) {
+    switch (v) {
+        case 0: return "NONE";
+        case 1: return "ACCEPT";
+        case 2: return "HEARTBEAT";
+        case 3: return "SHRINK";
+        case 4: return "REJECT";
+        default: return "UNK";
+    }
+}
+
+static const char *mode_short_name(uint8_t m) {
+    switch (m) {
+        case LATCH_MODE_HP:   return "HP";
+        case LATCH_MODE_HOLD: return "HOLD";
+        case LATCH_MODE_HOME: return "HOME";
+        default:              return "UNK";
+    }
+}
+
+static int do_events(int fd, int argc, char *argv[]) {
+    uint32_t count = LATCH_GOV_EVENT_DUMP_MAX;
+    uint64_t start_index = UINT64_MAX;
+    bool json_out = false;
+    bool csv_out = false;
+
+    for (int i = 0; i < argc; ++i) {
+        if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
+            count = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (count == 0u || count > LATCH_GOV_EVENT_DUMP_MAX) {
+                count = LATCH_GOV_EVENT_DUMP_MAX;
+            }
+        } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            start_index = (uint64_t)strtoull(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--json") == 0) {
+            json_out = true;
+        } else if (strcmp(argv[i], "--csv") == 0) {
+            csv_out = true;
+        }
+    }
+
+    latch_gov_event_dump_t dump;
+    memset(&dump, 0, sizeof(dump));
+    dump.start_index = start_index;
+    dump.count = count;
+
+    int rc = devctl(fd, DCMD_LATCH_DUMP_GOV_EVENTS, &dump, sizeof(dump), NULL);
+    if (rc != EOK) {
+        fprintf(stderr, "latchctl: devctl(DUMP_GOV_EVENTS) failed: %s (%d)\n", strerror(rc), rc);
+        return (rc == EPERM) ? 2 : 1;
+    }
+
+    char sha_hex[65];
+    bytes_to_hex(dump.manifest_sha256, 32, sha_hex);
+
+    if (json_out) {
+        printf("{\n");
+        printf("  \"start_index\": %" PRIu64 ",\n", dump.start_index);
+        printf("  \"latest_index\": %" PRIu64 ",\n", dump.latest_index);
+        printf("  \"count\": %u,\n", dump.count);
+        printf("  \"dropped\": %u,\n", dump.dropped);
+        printf("  \"overflow\": %u,\n", dump.overflow);
+        printf("  \"record_version\": %u,\n", dump.record_version);
+        printf("  \"manifest_sha256\": \"%s\",\n", sha_hex);
+        printf("  \"events\": [\n");
+        for (uint32_t i = 0; i < dump.count; ++i) {
+            const latch_gov_event_t *e = &dump.entries[i];
+            char fault_str[160];
+            format_fault_bits(e->fault_bits, fault_str, sizeof(fault_str));
+            char ev_hex[125];
+            bytes_to_hex((const uint8_t *)e, sizeof(*e), ev_hex);
+
+            printf("    {\n");
+            printf("      \"event_index\": %" PRIu64 ",\n", e->event_index);
+            printf("      \"tick\": %" PRIu64 ",\n", e->tick);
+            printf("      \"cycles\": %" PRIu64 ",\n", e->cycles);
+            printf("      \"seq\": %u,\n", e->seq);
+            printf("      \"raw_u_mrad\": %d,\n", e->raw_u_mrad);
+            printf("      \"normalized_u_mrad\": %d,\n", e->normalized_u_mrad);
+            printf("      \"theta_applied_mrad\": %d,\n", e->theta_applied_mrad);
+            printf("      \"unit_id\": %u,\n", e->unit_id);
+            printf("      \"coherence_ctr\": %u,\n", e->coherence_ctr);
+            printf("      \"lease_remaining\": %u,\n", e->lease_remaining);
+            printf("      \"fault_bits\": %u,\n", (unsigned int)e->fault_bits);
+            printf("      \"fault_names\": \"%s\",\n", fault_str);
+            printf("      \"mode\": %u,\n", (unsigned int)e->mode);
+            printf("      \"mode_name\": \"%s\",\n", mode_short_name(e->mode));
+            printf("      \"rung_before\": %u,\n", (unsigned int)e->rung_before);
+            printf("      \"rung_after\": %u,\n", (unsigned int)e->rung_after);
+            printf("      \"rung_before_name\": \"%s\",\n", rung_str(e->rung_before));
+            printf("      \"rung_after_name\": \"%s\",\n", rung_str(e->rung_after));
+            printf("      \"kind\": %u,\n", (unsigned int)e->kind);
+            printf("      \"kind_name\": \"%s\",\n", kind_str(e->kind));
+            printf("      \"verdict\": %u,\n", (unsigned int)e->verdict);
+            printf("      \"verdict_name\": \"%s\",\n", verdict_str(e->verdict));
+            printf("      \"agent_state\": %u,\n", (unsigned int)e->agent_state);
+            printf("      \"confidence_q8\": %u,\n", (unsigned int)e->confidence_q8);
+            printf("      \"coherence_valid\": %u,\n", (unsigned int)e->coherence_valid);
+            printf("      \"bytes_hex\": \"%s\"\n", ev_hex);
+            printf("    }%s\n", (i + 1 < dump.count) ? "," : "");
+        }
+        printf("  ]\n");
+        printf("}\n");
+        return 0;
+    }
+
+    if (csv_out) {
+        printf("event_index,tick,cycles,seq,raw_u,norm_u,theta_applied,unit_id,coherence_ctr,lease_rem,fault_bits,rung_before,rung_after,kind,verdict,agent_state,confidence,coh_valid\n");
+        for (uint32_t i = 0; i < dump.count; ++i) {
+            const latch_gov_event_t *e = &dump.entries[i];
+            printf("%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%d,%u,%u,%u,0x%04X,%u,%u,%u,%u,%u,%u,%u\n",
+                   e->event_index, e->tick, e->cycles, e->seq,
+                   e->raw_u_mrad, e->normalized_u_mrad, e->theta_applied_mrad,
+                   e->unit_id, e->coherence_ctr, e->lease_remaining,
+                   e->fault_bits, e->rung_before, e->rung_after,
+                   e->kind, e->verdict, e->agent_state, e->confidence_q8, e->coherence_valid);
+        }
+        return 0;
+    }
+
+    /* Human-readable text format */
+    printf("=== LATCH Governor Event Ring Dump ===\n");
+    printf("Events Returned  : %u (requested start=%" PRIu64 ")\n", dump.count, dump.start_index);
+    printf("Latest Write Idx : %" PRIu64 "\n", dump.latest_index);
+    printf("Overflow / Drops : %s | %u dropped\n", dump.overflow ? "YES" : "NO", dump.dropped);
+    printf("Manifest SHA-256 : %s\n\n", sha_hex);
+
+    for (uint32_t i = 0; i < dump.count; ++i) {
+        const latch_gov_event_t *e = &dump.entries[i];
+        char fault_str[160];
+        format_fault_bits(e->fault_bits, fault_str, sizeof(fault_str));
+        printf("#%04" PRIu64 ": tick=%" PRIu64 " seq=%u u=%d->%d->%d unit=%u coh=%u(%s) lease=%u faults=%s rung=%s->%s kind=%s verdict=%s state=%u conf=%u\n",
+               e->event_index, e->tick, e->seq,
+               e->raw_u_mrad, e->normalized_u_mrad, e->theta_applied_mrad,
+               e->unit_id, e->coherence_ctr, e->coherence_valid ? "valid" : "invalid",
+               e->lease_remaining, fault_str,
+               rung_str(e->rung_before), rung_str(e->rung_after),
+               kind_str(e->kind), verdict_str(e->verdict),
+               e->agent_state, e->confidence_q8);
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     const char *dev_path = LATCH_DEV_ACTUATOR;
     int opt;
@@ -332,6 +541,8 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(cmd, "dump") == 0) {
         const char *csv_file = (optind < argc) ? argv[optind] : "-";
         ret = do_dump(fd, csv_file);
+    } else if (strcmp(cmd, "events") == 0) {
+        ret = do_events(fd, argc - optind, &argv[optind]);
     } else {
         fprintf(stderr, "latchctl: Unknown command '%s'\n", cmd);
         print_usage(argv[0]);

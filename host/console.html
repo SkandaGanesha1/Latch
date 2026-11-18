@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LATCH GOVERNOR — QNX 8.0 Safety Interlock &amp; Operator Console</title>
+  <style>
+    /* 100% Offline Self-Contained Stylesheet — Zero External CDN / Web Font Dependencies */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0b0f19;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      padding: 16px;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .container { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    
+    /* Header & Status Banner */
+    header {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo-badge {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: white;
+      font-weight: 800;
+      font-size: 1.25rem;
+      padding: 6px 12px;
+      border-radius: 8px;
+      letter-spacing: 1px;
+    }
+    .title-group h1 { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
+    .title-group p { font-size: 0.825rem; color: #94a3b8; }
+    
+    /* Rung Indicator & Lease Bar */
+    .banner-metrics { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+    .metric-box { display: flex; flex-direction: column; gap: 4px; }
+    .metric-label { font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.5px; }
+    .rung-badge {
+      font-size: 1.1rem;
+      font-weight: 700;
+      padding: 4px 14px;
+      border-radius: 9999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: uppercase;
+    }
+    /* Rung colors */
+    .rung-hp { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
+    .rung-advise { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+    .rung-clamp { background: rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid #eab308; }
+    .rung-slow { background: rgba(249, 115, 22, 0.2); color: #f97316; border: 1px solid #f97316; }
+    .rung-safe-stop { background: rgba(168, 85, 247, 0.2); color: #a855f7; border: 1px solid #a855f7; }
+    .rung-latch { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
+
+    .lease-bar-container { width: 140px; height: 12px; background: #1e293b; border-radius: 6px; overflow: hidden; border: 1px solid #334155; }
+    .lease-bar-fill { height: 100%; width: 100%; background: #10b981; transition: width 0.1s linear, background 0.3s; }
+
+    /* Grid Layout */
+    .grid-main {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 1024px) {
+      .grid-main { grid-template-columns: 3fr 2fr; }
+    }
+
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 10px;
+    }
+    .card-header h2 { font-size: 1rem; font-weight: 600; color: #f1f5f9; display: flex; align-items: center; gap: 8px; }
+    .badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: #1e293b; color: #94a3b8; }
+
+    /* Radar Canvas */
+    .radar-wrapper {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+    }
+    canvas#radarCanvas {
+      background: #030712;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      max-width: 100%;
+    }
+    .radar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 16px;
+      font-size: 0.8rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    /* Fault Matrix */
+    .fault-matrix {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    @media (min-width: 640px) {
+      .fault-matrix { grid-template-columns: repeat(8, 1fr); }
+    }
+    .fault-led-cell {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 8px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+    .led-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #334155;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+      transition: all 0.2s;
+    }
+    .led-dot.active {
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444, inset 0 1px 1px #fff;
+    }
+    .led-name { font-size: 0.65rem; font-weight: 600; color: #cbd5e1; text-align: center; }
+    .led-bit { font-size: 0.6rem; color: #64748b; }
+
+    /* Attack Pad */
+    .attack-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    @media (min-width: 640px) {
+      .attack-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .attack-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      padding: 10px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+      transition: all 0.15s ease-in-out;
+    }
+    .attack-btn:hover { background: #334155; border-color: #64748b; transform: translateY(-1px); }
+    .attack-btn:active { transform: translateY(0); }
+    .attack-title { font-size: 0.85rem; font-weight: 700; color: #f8fafc; }
+    .attack-desc { font-size: 0.725rem; color: #94a3b8; }
+    .attack-verdict { font-size: 0.7rem; font-weight: 600; margin-top: 4px; }
+    .verdict-pass { color: #10b981; }
+    .verdict-tripped { color: #f59e0b; }
+
+    /* HITL Controls */
+    .hitl-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-approve { background: #059669; color: white; }
+    .btn-approve:hover { background: #10b981; }
+    .btn-edit { background: #d97706; color: white; }
+    .btn-edit:hover { background: #f59e0b; }
+    .btn-reject { background: #dc2626; color: white; }
+    .btn-reject:hover { background: #ef4444; }
+    .btn-estop { background: #b91c1c; color: white; font-weight: 800; border: 2px solid #ef4444; }
+    .btn-estop:hover { background: #dc2626; }
+    .btn-release { background: #2563eb; color: white; }
+    .btn-release:hover { background: #3b82f6; }
+
+    /* Blackbox Timeline Scrubber */
+    .timeline-container { display: flex; flex-direction: column; gap: 8px; }
+    .timeline-controls { display: flex; align-items: center; gap: 12px; }
+    input[type=range] {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: #334155;
+      outline: none;
+    }
+    .hash-badge {
+      font-size: 0.75rem;
+      padding: 4px 8px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 4px;
+      color: #38bdf8;
+    }
+    .hash-valid { border-color: #10b981; color: #10b981; }
+
+    /* Telemetry Table */
+    .telemetry-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      font-size: 0.8rem;
+    }
+    @media (min-width: 640px) {
+      .telemetry-row { grid-template-columns: repeat(4, 1fr); }
+    }
+    .telemetry-item { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; }
+    .telemetry-val { font-size: 1.1rem; font-weight: 700; color: #f8fafc; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header & Status Banner -->
+    <header>
+      <div class="brand">
+        <div class="logo-badge mono">QNX 8.0</div>
+        <div class="title-group">
+          <h1>LATCH GOVERNOR Operator Console</h1>
+          <p>Deterministic Safety Interlock &amp; Dead Man's Switch for Physical AI</p>
+        </div>
+      </div>
+      
+      <div class="banner-metrics">
+        <div class="metric-box">
+          <span class="metric-label">Supervisor Rung</span>
+          <div id="rungBadge" class="rung-badge rung-hp">
+            <span id="rungName">HP</span> (RUNG 0)
+          </div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">Deadman Lease (<span id="leaseVal">100</span> ticks)</span>
+          <div class="lease-bar-container">
+            <div id="leaseBar" class="lease-bar-fill"></div>
+          </div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">24-Bit Coherence</span>
+          <div id="coherenceDisplay" class="mono" style="font-weight: 700; color: #38bdf8; font-size: 1.1rem;">
+            0x000000
+          </div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">Simulation Mode</span>
+          <button id="simToggleBtn" class="btn btn-release" onclick="toggleSim()">Live Sim: ON</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <div class="grid-main">
+      <!-- Left Column: Radar & Blackbox Timeline -->
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <!-- Kinematic Radar Canvas -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Kinematic Radar &amp; Envelope Safety Gate</h2>
+            <span class="badge mono">Range: [-1000, 1000] mrad | Keepout: [250, 650]</span>
+          </div>
+          <div class="radar-wrapper">
+            <canvas id="radarCanvas" width="700" height="260"></canvas>
+            <div class="radar-legend">
+              <div class="legend-item">
+                <div class="legend-dot" style="background: #10b981;"></div>
+                <span>Current &theta; (Plant)</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-dot" style="background: #38bdf8;"></div>
+                <span>Proposed u (AI)</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-dot" style="background: #f59e0b;"></div>
+                <span>Clamped u_applied (QNX)</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-dot" style="background: rgba(239, 68, 68, 0.4); border: 1px dashed #ef4444;"></div>
+                <span>Keep-Out Zone [250, 650]</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Realtime Kinematic Telemetry -->
+          <div class="telemetry-row mono">
+            <div class="telemetry-item">
+              <div class="metric-label">&theta; Applied</div>
+              <div id="telemTheta" class="telemetry-val">0 mrad</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="metric-label">Proposed u</div>
+              <div id="telemProposed" class="telemetry-val">0 mrad</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="metric-label">Sequence (Seq)</div>
+              <div id="telemSeq" class="telemetry-val">#0</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="metric-label">Clean Streak</div>
+              <div id="telemStreak" class="telemetry-val">0 / 25</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Forensic Blackbox Timeline & Hash Chain -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Forensic Blackbox &amp; Hash Chain Replay <span style="font-size:0.8em;color:#94a3b8;">(in-browser demo)</span></h2>
+            <div id="chainStatus" class="hash-badge hash-valid mono" title="Simulated chain over simulated rows. Real SHA-256 sealing of real dumps: tools/gov_replay.py">&#10004; CHAIN INTACT (demo)</div>
+          </div>
+          <div class="timeline-container">
+            <div class="timeline-controls mono">
+              <button class="btn" style="background:#1e293b; color:#cbd5e1;" onclick="stepTimeline(-1)">&#9664;</button>
+              <button class="btn" style="background:#1e293b; color:#cbd5e1;" onclick="stepTimeline(1)">&#9654;</button>
+              <input type="range" id="timelineSlider" min="0" max="100" value="0" oninput="onTimelineScrub(this.value)">
+              <span id="timelineTickDisplay" style="min-width: 90px; text-align: right;">Tick: 0</span>
+            </div>
+            <div class="mono" style="font-size: 0.725rem; color: #94a3b8; word-break: break-all; background: #0a0e17; padding: 6px 10px; border-radius: 4px; border: 1px solid #1e293b;">
+              Demo Block Hash (not SHA-256 &mdash; real sealing runs offline in <code>gov_replay.py</code>): <span id="currentHash" style="color: #38bdf8;">0000000000000000000000000000000000000000000000000000000000000000</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Fault Matrix, HITL & Attack Trigger Pad -->
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <!-- 16-Bit Real-time Microkernel Fault Matrix -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Microkernel 16-Bit Fault Matrix</h2>
+            <span id="faultBitsHex" class="badge mono">0x0000</span>
+          </div>
+          <div class="fault-matrix mono">
+            <!-- Bits 0-7 -->
+            <div class="fault-led-cell" id="ledCell0"><div class="led-dot" id="led0"></div><span class="led-name">MAGIC</span><span class="led-bit">B0</span></div>
+            <div class="fault-led-cell" id="ledCell1"><div class="led-dot" id="led1"></div><span class="led-name">CRC</span><span class="led-bit">B1</span></div>
+            <div class="fault-led-cell" id="ledCell2"><div class="led-dot" id="led2"></div><span class="led-name">SEQ</span><span class="led-bit">B2</span></div>
+            <div class="fault-led-cell" id="ledCell3"><div class="led-dot" id="led3"></div><span class="led-name">NAN</span><span class="led-bit">B3</span></div>
+            <div class="fault-led-cell" id="ledCell4"><div class="led-dot" id="led4"></div><span class="led-name">RSVD</span><span class="led-bit">B4</span></div>
+            <div class="fault-led-cell" id="ledCell5"><div class="led-dot" id="led5"></div><span class="led-name">KEEPOUT</span><span class="led-bit">B5</span></div>
+            <div class="fault-led-cell" id="ledCell6"><div class="led-dot" id="led6"></div><span class="led-name">BOUNDS</span><span class="led-bit">B6</span></div>
+            <div class="fault-led-cell" id="ledCell7"><div class="led-dot" id="led7"></div><span class="led-name">RATE</span><span class="led-bit">B7</span></div>
+            <!-- Bits 8-15 -->
+            <div class="fault-led-cell" id="ledCell8"><div class="led-dot" id="led8"></div><span class="led-name">WDOG</span><span class="led-bit">B8</span></div>
+            <div class="fault-led-cell" id="ledCell9"><div class="led-dot" id="led9"></div><span class="led-name">I2C</span><span class="led-bit">B9</span></div>
+            <div class="fault-led-cell" id="ledCell10"><div class="led-dot" id="led10"></div><span class="led-name">OPR</span><span class="led-bit">B10</span></div>
+            <div class="fault-led-cell" id="ledCell11"><div class="led-dot" id="led11"></div><span class="led-name">EPERM</span><span class="led-bit">B11</span></div>
+            <div class="fault-led-cell" id="ledCell12"><div class="led-dot" id="led12"></div><span class="led-name">UNIT</span><span class="led-bit">B12</span></div>
+            <div class="fault-led-cell" id="ledCell13"><div class="led-dot" id="led13"></div><span class="led-name">HB</span><span class="led-bit">B13</span></div>
+            <div class="fault-led-cell" id="ledCell14"><div class="led-dot" id="led14"></div><span class="led-name">WIDEN</span><span class="led-bit">B14</span></div>
+            <div class="fault-led-cell" id="ledCell15"><div class="led-dot" id="led15"></div><span class="led-name">DOSE</span><span class="led-bit">B15</span></div>
+          </div>
+        </div>
+
+        <!-- Human-In-The-Loop (HITL) Console (EU AI Act Art. 14) -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Human-In-The-Loop Oversight Console</h2>
+            <span class="badge">EU AI Act Art. 14</span>
+          </div>
+          <div class="hitl-bar">
+            <button class="btn btn-approve" onclick="hitlAction('APPROVE')">&#10004; APPROVE</button>
+            <button class="btn btn-edit" onclick="hitlAction('EDIT')">&#9998; EDIT</button>
+            <button class="btn btn-reject" onclick="hitlAction('REJECT')">&#10006; REJECT</button>
+            <button class="btn btn-estop" onclick="hitlAction('FORCE_LATCH')">&#9888; FORCE LATCH</button>
+            <button class="btn btn-release" onclick="hitlAction('RELEASE')">&#128275; RELEASE</button>
+          </div>
+          <div id="hitlFeedback" class="mono" style="font-size: 0.75rem; color: #94a3b8; min-height: 18px;">
+            Operator oversight active. Awaiting input.
+          </div>
+        </div>
+
+        <!-- Adversarial Attack Trigger Pad -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Adversarial Attack Trigger Pad</h2>
+            <span class="badge">Attacks A1 &ndash; A6</span>
+          </div>
+          <div class="attack-grid">
+            <button class="attack-btn" onclick="triggerAttack('A1')">
+              <span class="attack-title">A1: Rogue Unit Injection</span>
+              <span class="attack-desc">u=370000 mrad, unit=999. Injects unmapped scale.</span>
+              <span id="badgeA1" class="attack-verdict verdict-pass">&#10004; Gate Target: UNIT (B12) &rarr; CLAMP</span>
+            </button>
+
+            <button class="attack-btn" onclick="triggerAttack('A2')">
+              <span class="attack-title">A2: Rate Flood Attack</span>
+              <span class="attack-desc">&Delta;u=500 mrad burst. Exhausts token bucket.</span>
+              <span id="badgeA2" class="attack-verdict verdict-pass">&#10004; Gate Target: RATE (B7) &rarr; Clamped</span>
+            </button>
+
+            <button class="attack-btn" onclick="triggerAttack('A4')">
+              <span class="attack-title">A4: Deadman Lease Trip</span>
+              <span class="attack-desc">110 ms delay (&gt; 100ms lease) &rarr; ADVISE.</span>
+              <span id="badgeA4" class="attack-verdict verdict-pass">&#10004; Gate Target: HEARTBEAT (B13)</span>
+            </button>
+
+            <button class="attack-btn" onclick="triggerAttack('A5')">
+              <span class="attack-title">A5: Coherence Spoof</span>
+              <span class="attack-desc">Frozen counter (&Delta;=0) or forward gap &gt; 3.</span>
+              <span id="badgeA5" class="attack-verdict verdict-pass">&#10004; Gate Target: Lease Revoked &rarr; Demote</span>
+            </button>
+
+            <button class="attack-btn" onclick="triggerAttack('A6')">
+              <span class="attack-title">A6: Sequence Replay</span>
+              <span class="attack-desc">Duplicate/older seq replay from earlier tick.</span>
+              <span id="badgeA6" class="attack-verdict verdict-pass">&#10004; Gate Target: SEQ (B2) &rarr; Fail-Closed</span>
+            </button>
+
+            <button class="attack-btn" onclick="triggerReset()">
+              <span class="attack-title" style="color: #38bdf8;">Reset Nominal Baseline</span>
+              <span class="attack-desc">Recover ladder back to High Performance (HP).</span>
+              <span class="attack-verdict" style="color: #38bdf8;">25 Clean Recovery frames</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* =========================================================================
+     * Governor Client & Microkernel State Machine Simulation Engine
+     * ========================================================================= */
+    const RUNG_HP = 0;
+    const RUNG_ADVISE = 1;
+    const RUNG_CLAMP = 2;
+    const RUNG_SLOW = 3;
+    const RUNG_SAFE_STOP = 4;
+    const RUNG_LATCH = 5;
+
+    const RUNG_NAMES = ["HP", "ADVISE", "CLAMP", "SLOW", "SAFE_STOP", "LATCH"];
+    const RUNG_CLASSES = ["rung-hp", "rung-advise", "rung-clamp", "rung-slow", "rung-safe-stop", "rung-latch"];
+
+    // State Variables
+    let simRunning = true;
+    let tickCount = 0;
+    let currentRung = RUNG_HP;
+    let currentTheta = 0;
+    let proposedU = 0;
+    let appliedTheta = 0;
+    let leaseRemaining = 100;
+    let coherenceCounter = 0;
+    let sequenceNumber = 1;
+    let cleanStreak = 0;
+    let faultBits = 0;
+    let advisoryStreak = 0;
+    let activeAttack = null;
+
+    // History for blackbox replay
+    let history = [];
+    const MAX_HISTORY = 120;
+
+    // Demo digest only: a 32-bit FNV-style mix padded to 64 hex chars so the
+    // UI can show a chain-shaped value offline. This is NOT SHA-256. Real
+    // tamper-evident sealing runs offline in tools/gov_replay.py over real
+    // devctl 0x44 dumps.
+    function mockSha256(prev, text) {
+      let hash = 0x811c9dc5;
+      const combined = prev + text;
+      for (let i = 0; i < combined.length; i++) {
+        hash ^= combined.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      }
+      return ("00000000" + (hash >>> 0).toString(16)).slice(-8).repeat(8);
+    }
+    let currentRollingHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    // Radar Canvas
+    const canvas = document.getElementById("radarCanvas");
+    const ctx = canvas.getContext("2d");
+
+    function drawRadar() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Coordinate mapping: range [-1000, 1000] -> [40, w - 40]
+      const minVal = -1000;
+      const maxVal = 1000;
+      const xStart = 50;
+      const xEnd = w - 50;
+      const mapX = (val) => xStart + ((val - minVal) / (maxVal - minVal)) * (xEnd - xStart);
+
+      const yMid = h / 2;
+
+      // Draw Main Axis Bar
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(xStart, yMid);
+      ctx.lineTo(xEnd, yMid);
+      ctx.stroke();
+
+      // Draw Keep-Out Zone [250, 650]
+      const koX1 = mapX(250);
+      const koX2 = mapX(650);
+      ctx.fillStyle = "rgba(239, 68, 68, 0.15)";
+      ctx.fillRect(koX1, yMid - 60, koX2 - koX1, 120);
+
+      // Diagonal Hazard Stripes inside keepout
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(koX1, yMid - 60, koX2 - koX1, 120);
+      ctx.clip();
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.35)";
+      ctx.lineWidth = 3;
+      for (let x = koX1 - 100; x < koX2 + 100; x += 16) {
+        ctx.beginPath();
+        ctx.moveTo(x, yMid - 60);
+        ctx.lineTo(x + 50, yMid + 60);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // Keepout Border & Label
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(koX1, yMid - 60, koX2 - koX1, 120);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#ef4444";
+      ctx.font = "bold 11px ui-monospace, monospace";
+      ctx.fillText("FORBIDDEN KEEP-OUT ZONE [250, 650] mrad", koX1 + 10, yMid - 68);
+
+      // Draw Scale Ticks
+      ctx.fillStyle = "#64748b";
+      ctx.font = "10px ui-monospace, monospace";
+      for (let v = -1000; v <= 1000; v += 250) {
+        const x = mapX(v);
+        ctx.beginPath();
+        ctx.moveTo(x, yMid - 8);
+        ctx.lineTo(x, yMid + 8);
+        ctx.strokeStyle = "#475569";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillText(v.toString(), x - 14, yMid + 24);
+      }
+
+      // Draw Proposed u Needle (Blue)
+      const uX = mapX(Math.max(-1000, Math.min(1000, proposedU)));
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(uX, yMid - 45);
+      ctx.lineTo(uX, yMid + 45);
+      ctx.stroke();
+      ctx.fillStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.arc(uX, yMid - 45, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw Applied Theta Needle (Amber/Yellow)
+      const appX = mapX(Math.max(-1000, Math.min(1000, appliedTheta)));
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(appX, yMid - 35);
+      ctx.lineTo(appX, yMid + 35);
+      ctx.stroke();
+
+      // Draw Actual Theta Needle (Green dot & circle)
+      const curX = mapX(Math.max(-1000, Math.min(1000, currentTheta)));
+      ctx.fillStyle = "#10b981";
+      ctx.beginPath();
+      ctx.arc(curX, yMid, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function updateFaultMatrix() {
+      document.getElementById("faultBitsHex").textContent = "0x" + ("0000" + faultBits.toString(16).toUpperCase()).slice(-4);
+      for (let bit = 0; bit < 16; bit++) {
+        const led = document.getElementById("led" + bit);
+        const active = (faultBits & (1 << bit)) !== 0;
+        if (active) {
+          led.classList.add("active");
+        } else {
+          led.classList.remove("active");
+        }
+      }
+    }
+
+    function updateBanner() {
+      const badge = document.getElementById("rungBadge");
+      badge.className = "rung-badge " + RUNG_CLASSES[currentRung];
+      document.getElementById("rungName").textContent = RUNG_NAMES[currentRung];
+
+      const leasePercent = Math.max(0, Math.min(100, leaseRemaining));
+      const leaseBar = document.getElementById("leaseBar");
+      leaseBar.style.width = leasePercent + "%";
+      if (leasePercent > 50) leaseBar.style.background = "#10b981";
+      else if (leasePercent > 20) leaseBar.style.background = "#f59e0b";
+      else leaseBar.style.background = "#ef4444";
+      document.getElementById("leaseVal").textContent = leaseRemaining;
+
+      document.getElementById("coherenceDisplay").textContent = "0x" + ("000000" + coherenceCounter.toString(16).toUpperCase()).slice(-6);
+
+      document.getElementById("telemTheta").textContent = currentTheta + " mrad";
+      document.getElementById("telemProposed").textContent = proposedU + " mrad";
+      document.getElementById("telemSeq").textContent = "#" + sequenceNumber;
+      document.getElementById("telemStreak").textContent = cleanStreak + " / 25";
+    }
+
+    // Simulation Step Function
+    function stepSimulation() {
+      if (!simRunning) return;
+      tickCount++;
+      sequenceNumber++;
+
+      // Advance Coherence
+      coherenceCounter = (coherenceCounter + 1) & 0xFFFFFF;
+
+      // Handle Leases
+      if (activeAttack === "A4") {
+        // Deadman delay: lease drops to 0
+        leaseRemaining = Math.max(0, leaseRemaining - 25);
+        if (leaseRemaining === 0) {
+          faultBits |= (1 << 13); // HEARTBEAT fault
+          if (currentRung < RUNG_LATCH) currentRung = Math.min(RUNG_LATCH, currentRung + 1);
+        }
+      } else if (activeAttack === "A5") {
+        // Coherence spoof: freeze coherence
+        coherenceCounter = 0x424242;
+        leaseRemaining = Math.max(0, leaseRemaining - 15);
+        if (leaseRemaining === 0) {
+          faultBits |= (1 << 13);
+          if (currentRung < RUNG_LATCH) currentRung = Math.min(RUNG_LATCH, currentRung + 1);
+        }
+      } else {
+        // Healthy heartbeat
+        leaseRemaining = 100;
+        faultBits &= ~(1 << 13);
+      }
+
+      // Trajectory Planning & Attack Logic
+      if (activeAttack === "A1") {
+        // Rogue unit injection
+        proposedU = 370000;
+        faultBits |= (1 << 12); // UNIT fault
+        advisoryStreak++;
+        if (advisoryStreak >= 3 && currentRung < RUNG_CLAMP) {
+          currentRung = RUNG_CLAMP;
+        }
+        appliedTheta = currentTheta; // Clamped to hold
+      } else if (activeAttack === "A2") {
+        // Rate flood
+        proposedU = currentTheta + 500;
+        faultBits |= (1 << 7); // RATE fault
+        // Rate clamped to max step 5 mrad
+        appliedTheta = currentTheta + 5;
+        currentTheta = appliedTheta;
+      } else if (activeAttack === "A6") {
+        // Replay attack: replay seq
+        sequenceNumber -= 5;
+        faultBits |= (1 << 2); // SEQ fault
+        appliedTheta = currentTheta;
+      } else {
+        // Nominal sine motion outside keepout
+        faultBits = 0;
+        const target = Math.round(150 * Math.sin(tickCount * 0.1));
+        proposedU = target;
+
+        // Kinematic enforcement: Cannot move if in LATCH
+        if (currentRung === RUNG_LATCH) {
+          appliedTheta = currentTheta;
+        } else if (currentRung === RUNG_CLAMP) {
+          const delta = proposedU - currentTheta;
+          const step = Math.sign(delta) * Math.min(Math.abs(delta), 5);
+          appliedTheta = currentTheta + step;
+          currentTheta = appliedTheta;
+          cleanStreak++;
+        } else if (currentRung === RUNG_SLOW) {
+          const delta = proposedU - currentTheta;
+          const step = Math.sign(delta) * Math.min(Math.abs(delta), 2);
+          appliedTheta = currentTheta + step;
+          currentTheta = appliedTheta;
+          cleanStreak++;
+        } else {
+          // HP or ADVISE
+          const delta = proposedU - currentTheta;
+          const step = Math.sign(delta) * Math.min(Math.abs(delta), 15);
+          appliedTheta = currentTheta + step;
+          currentTheta = appliedTheta;
+          cleanStreak++;
+        }
+
+        // Check recovery ladder
+        if (cleanStreak >= 25 && currentRung > RUNG_HP && currentRung < RUNG_LATCH) {
+          currentRung--;
+          cleanStreak = 0;
+        }
+      }
+
+      // Record to history
+      const row = {
+        tick: tickCount,
+        seq: sequenceNumber,
+        theta: currentTheta,
+        proposed: proposedU,
+        applied: appliedTheta,
+        rung: currentRung,
+        faults: faultBits,
+        coherence: coherenceCounter
+      };
+      currentRollingHash = mockSha256(currentRollingHash, JSON.stringify(row));
+      row.hash = currentRollingHash;
+
+      history.push(row);
+      if (history.length > MAX_HISTORY) history.shift();
+
+      // Update UI
+      document.getElementById("timelineSlider").max = history.length - 1;
+      document.getElementById("timelineSlider").value = history.length - 1;
+      document.getElementById("timelineTickDisplay").textContent = "Tick: " + tickCount;
+      document.getElementById("currentHash").textContent = currentRollingHash;
+
+      updateBanner();
+      updateFaultMatrix();
+      drawRadar();
+    }
+
+    // HITL Oversight Actions
+    function hitlAction(action) {
+      const fb = document.getElementById("hitlFeedback");
+      if (action === "APPROVE") {
+        fb.innerHTML = "<span style='color:#10b981;'>&#10004; Operator APPROVED pending trajectory proposal. AI authority affirmed.</span>";
+      } else if (action === "EDIT") {
+        fb.innerHTML = "<span style='color:#f59e0b;'>&#9998; Operator EDITED proposal: Velocity limited to 5 mrad/tick.</span>";
+        currentRung = RUNG_CLAMP;
+      } else if (action === "REJECT") {
+        fb.innerHTML = "<span style='color:#ef4444;'>&#10006; Operator REJECTED proposal: Veto logged, plant held in place.</span>";
+        appliedTheta = currentTheta;
+      } else if (action === "FORCE_LATCH") {
+        currentRung = RUNG_LATCH;
+        faultBits |= (1 << 10); // OPERATOR fault
+        appliedTheta = currentTheta;
+        fb.innerHTML = "<span style='color:#ef4444; font-weight:bold;'>&#9888; EMERGENCY STOP: Forced LATCH (HOLD mode). Actuator locked.</span>";
+      } else if (action === "RELEASE") {
+        if (currentRung === RUNG_LATCH) {
+          currentRung = RUNG_CLAMP; // Demote release back to CLAMP
+          faultBits &= ~(1 << 10);
+          cleanStreak = 0;
+          fb.innerHTML = "<span style='color:#38bdf8;'>&#128275; Operator RELEASE acknowledged: Transitioned from LATCH &rarr; CLAMP.</span>";
+        } else {
+          fb.innerHTML = "<span style='color:#94a3b8;'>Operator release only required in LATCH state.</span>";
+        }
+      }
+      updateBanner();
+      updateFaultMatrix();
+      drawRadar();
+    }
+
+    // Attack Trigger Handlers
+    function triggerAttack(type) {
+      activeAttack = type;
+      const fb = document.getElementById("hitlFeedback");
+      fb.innerHTML = `<span style='color:#f59e0b;'>&#9888; ADVERSARIAL ATTACK ${type} INJECTED &mdash; Observing microkernel safety response...</span>`;
+      setTimeout(() => {
+        if (activeAttack === type) activeAttack = null;
+      }, 3500);
+    }
+
+    function triggerReset() {
+      activeAttack = null;
+      currentRung = RUNG_HP;
+      faultBits = 0;
+      leaseRemaining = 100;
+      cleanStreak = 0;
+      advisoryStreak = 0;
+      document.getElementById("hitlFeedback").innerHTML = "<span style='color:#10b981;'>System reset: Restored to nominal High Performance (HP) rung.</span>";
+      updateBanner();
+      updateFaultMatrix();
+      drawRadar();
+    }
+
+    function toggleSim() {
+      simRunning = !simRunning;
+      document.getElementById("simToggleBtn").textContent = simRunning ? "Live Sim: ON" : "Live Sim: PAUSED";
+      document.getElementById("simToggleBtn").className = simRunning ? "btn btn-release" : "btn btn-edit";
+    }
+
+    function onTimelineScrub(val) {
+      const idx = parseInt(val, 10);
+      if (idx >= 0 && idx < history.length) {
+        const item = history[idx];
+        currentTheta = item.theta;
+        proposedU = item.proposed;
+        appliedTheta = item.applied;
+        currentRung = item.rung;
+        faultBits = item.faults;
+        document.getElementById("timelineTickDisplay").textContent = "Tick: " + item.tick;
+        document.getElementById("currentHash").textContent = item.hash;
+        updateBanner();
+        updateFaultMatrix();
+        drawRadar();
+      }
+    }
+
+    function stepTimeline(delta) {
+      const slider = document.getElementById("timelineSlider");
+      slider.value = Math.max(0, Math.min(history.length - 1, parseInt(slider.value, 10) + delta));
+      onTimelineScrub(slider.value);
+    }
+
+    // Periodic Interval Timer (20 Hz = 50ms)
+    setInterval(stepSimulation, 50);
+    drawRadar();
+  </script>
+</body>
+</html>

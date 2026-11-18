@@ -430,6 +430,18 @@ static const char *json_find_key_bounded(const char *start, const char *end, con
     return json_find_key_depth(start, end, key, 1);
 }
 
+static const char *json_find_object_end(const char *brace, const char *limit);
+
+static const char *json_find_child_section(const char *parent, const char *parent_end,
+                                           const char *name, const char **child_end) {
+    const char *child = json_find_key_bounded(parent, parent_end, name);
+    if (child == NULL || *child != '{') return NULL;
+    const char *end = json_find_object_end(child, parent_end + 1);
+    if (end == NULL || end > parent_end) return NULL;
+    if (child_end != NULL) *child_end = end;
+    return child;
+}
+
 static const char *json_find_object_end(const char *brace, const char *limit) {
     if (!brace || brace >= limit || *brace != '{') return NULL;
     int depth = 1;
@@ -455,6 +467,166 @@ static const char *json_find_section(const char *json, const char *sec_name, con
     if (!sec_end) return NULL;
     if (out_sec_end) *out_sec_end = sec_end;
     return val;
+}
+
+static bool json_object_has_only_uint_keys(const char *obj, const char *obj_end,
+                                           const char *const *allowed, size_t allowed_count) {
+    if (obj == NULL || obj_end == NULL || obj >= obj_end || *obj != '{' ||
+        allowed == NULL || allowed_count == 0u) {
+        return false;
+    }
+    bool seen[16] = { false };
+    if (allowed_count > sizeof(seen) / sizeof(seen[0])) return false;
+
+    const char *p = skip_pure_ws(obj + 1, obj_end);
+    if (p == obj_end || *p == '}') return false;
+
+    for (;;) {
+        if (p >= obj_end || *p != '"') return false;
+        const char *key_end = json_skip_string(p, obj_end + 1);
+        if (key_end <= p + 1 || key_end > obj_end + 1 || *(key_end - 1) != '"') return false;
+        const char *key_start = p + 1;
+        size_t key_len = (size_t)((key_end - 1) - key_start);
+        size_t match = allowed_count;
+        for (size_t i = 0; i < allowed_count; ++i) {
+            if (strlen(allowed[i]) == key_len && strncmp(key_start, allowed[i], key_len) == 0) {
+                match = i;
+                break;
+            }
+        }
+        if (match == allowed_count || seen[match]) return false;
+        seen[match] = true;
+
+        p = skip_pure_ws(key_end, obj_end + 1);
+        if (p >= obj_end || *p != ':') return false;
+        p = skip_pure_ws(p + 1, obj_end + 1);
+        if (p >= obj_end || !isdigit((unsigned char)*p)) return false;
+        while (p < obj_end && isdigit((unsigned char)*p)) p++;
+        p = skip_pure_ws(p, obj_end + 1);
+        if (p < obj_end && *p == ',') {
+            p = skip_pure_ws(p + 1, obj_end + 1);
+            continue;
+        }
+        if (p == obj_end && *p == '}') {
+            for (size_t i = 0; i < allowed_count; ++i) {
+                if (!seen[i]) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+}
+
+static bool json_object_has_only_keys(const char *obj, const char *obj_end,
+                                      const char *const *allowed, size_t allowed_count) {
+    if (obj == NULL || obj_end == NULL || obj >= obj_end || *obj != '{' ||
+        allowed == NULL || allowed_count == 0u || allowed_count > 16u) return false;
+    bool seen[16] = { false };
+    const char *p = skip_pure_ws(obj + 1, obj_end);
+    if (p == obj_end || *p == '}') return false;
+
+    for (;;) {
+        if (p >= obj_end || *p != '"') return false;
+        const char *key_end = json_skip_string(p, obj_end + 1);
+        if (key_end <= p + 1 || key_end > obj_end + 1 || *(key_end - 1) != '"') return false;
+        const char *key_start = p + 1;
+        size_t key_len = (size_t)((key_end - 1) - key_start);
+        size_t match = allowed_count;
+        for (size_t i = 0; i < allowed_count; ++i) {
+            if (strlen(allowed[i]) == key_len && strncmp(key_start, allowed[i], key_len) == 0) {
+                match = i;
+                break;
+            }
+        }
+        if (match == allowed_count || seen[match]) return false;
+        seen[match] = true;
+        p = skip_pure_ws(key_end, obj_end + 1);
+        if (p >= obj_end || *p++ != ':') return false;
+        p = skip_pure_ws(p, obj_end + 1);
+        if (p >= obj_end) return false;
+
+        if (*p == '{' || *p == '[') {
+            char open = *p;
+            char close = open == '{' ? '}' : ']';
+            unsigned int depth = 0u;
+            do {
+                if (*p == '"') {
+                    p = json_skip_string(p, obj_end + 1);
+                    if (p > obj_end + 1) return false;
+                    continue;
+                }
+                if (*p == open) depth++;
+                else if (*p == close) {
+                    if (depth == 0u) return false;
+                    depth--;
+                }
+                p++;
+            } while (p <= obj_end && depth != 0u);
+            if (depth != 0u) return false;
+        } else if (*p == '"') {
+            p = json_skip_string(p, obj_end + 1);
+            if (p > obj_end + 1) return false;
+        } else {
+            while (p < obj_end && *p != ',' && *p != '}') p++;
+        }
+
+        p = skip_pure_ws(p, obj_end + 1);
+        if (p < obj_end && *p == ',') {
+            p = skip_pure_ws(p + 1, obj_end + 1);
+            continue;
+        }
+        if (p == obj_end && *p == '}') {
+            for (size_t i = 0; i < allowed_count; ++i) {
+                if (!seen[i]) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+}
+
+static bool json_match_uint_array(const char **src, const char *limit,
+                                  uint32_t *values, size_t capacity,
+                                  uint32_t *count_out) {
+    if (src == NULL || *src == NULL || values == NULL || count_out == NULL) return false;
+    const char *p = skip_pure_ws(*src, limit);
+    if (p >= limit || *p++ != '[') return false;
+    p = skip_pure_ws(p, limit);
+    uint32_t count = 0u;
+    if (p < limit && *p == ']') {
+        *src = p + 1;
+        *count_out = 0u;
+        return true;
+    }
+    for (;;) {
+        uint32_t value;
+        const char *num = p;
+        if (count >= capacity || !json_match_uint32(&num, &value) || num > limit) return false;
+        values[count++] = value;
+        p = skip_pure_ws(num, limit);
+        if (p >= limit) return false;
+        if (*p == ']') {
+            *src = p + 1;
+            *count_out = count;
+            return true;
+        }
+        if (*p++ != ',') return false;
+        p = skip_pure_ws(p, limit);
+    }
+}
+
+static bool json_get_uint(const char *obj, const char *obj_end,
+                          const char *key, uint32_t *out) {
+    const char *value = json_find_key_bounded(obj, obj_end, key);
+    return value != NULL && json_match_uint32(&value, out);
+}
+
+static bool json_get_uint_array(const char *obj, const char *obj_end,
+                                const char *key, uint32_t *values,
+                                size_t capacity, uint32_t *count) {
+    const char *value = json_find_key_bounded(obj, obj_end, key);
+    return value != NULL && json_match_uint_array(&value, obj_end + 1,
+                                                 values, capacity, count);
 }
 
 int latch_manifest_verify_sidecar(const char *manifest_path, const char *computed_hex,
@@ -570,6 +742,7 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     const char *dec_end = NULL, *ing_end = NULL, *paths_end = NULL;
     const char *act_end = NULL, *proto_end = NULL, *tape_end = NULL;
     const char *plant_end = NULL;
+    const char *gov_end = NULL;
 
     const char *env_sec   = json_find_section(buf, "envelope", &env_end);
     const char *tim_sec   = json_find_section(buf, "timing", &tim_end);
@@ -581,6 +754,7 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     const char *proto_sec = json_find_section(buf, "protocol", &proto_end);
     const char *tape_sec  = json_find_section(buf, "tape", &tape_end);
     const char *plant_sec = json_find_section(buf, "plant", &plant_end);
+    const char *gov_sec   = json_find_section(buf, "governor", &gov_end);
 
     if (!plant_sec || !env_sec || !tim_sec || !rec_sec || !dec_sec ||
         !ing_sec || !paths_sec || !act_sec || !tape_sec || !proto_sec) {
@@ -612,7 +786,9 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     /* 1. Parse schema_version */
     if ((p = json_find_key_depth(buf, buf_end, "schema_version", 1)) != NULL) {
         if (json_match_uint32(&p, &out_m->schema_version) &&
-            (out_m->schema_version == 1u || out_m->schema_version == LATCH_MANIFEST_SCHEMA_VERSION)) {
+            (out_m->schema_version == 1u ||
+             out_m->schema_version == LATCH_MANIFEST_SCHEMA_VERSION ||
+             out_m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION)) {
             has_schema = true;
         }
     }
@@ -863,6 +1039,98 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
         if (cov_p && json_match_uint32(&cov_p, &out_m->protocol.coverage)) has_proto_cov = true;
     }
 
+    bool has_gov_enabled = false;
+    bool has_gov_ladder = false, has_gov_deadman = false;
+    bool has_gov_units = false, has_gov_rate = false;
+    if (out_m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
+        static const char *const governor_keys[] = { "enabled", "ladder", "deadman", "units", "rate" };
+        static const char *const ladder_keys[] = {
+            "advise_fault_mask", "clamp_max_step", "slow_scale_pct", "safe_stop_decel",
+            "demote_faults_per_rung", "promote_clean_frames", "min_confidence_q8"
+        };
+        static const char *const deadman_keys[] = {
+            "lease_ticks", "coherence_max_gap", "warmup_heartbeats"
+        };
+        static const char *const unit_keys[] = {
+            "enabled", "canonical_unit_id", "alternate_unit_ids",
+            "conversion_numerators", "conversion_denominators"
+        };
+        static const char *const rate_keys[] = {
+            "enabled", "burst_tokens", "refill_per_tick", "sustain_per_tick"
+        };
+        const char *ladder_end = NULL, *deadman_end = NULL;
+        const char *units_end = NULL, *rate_end = NULL;
+        const char *ladder_sec = json_find_child_section(gov_sec, gov_end, "ladder", &ladder_end);
+        const char *deadman_sec = json_find_child_section(gov_sec, gov_end, "deadman", &deadman_end);
+        const char *units_sec = json_find_child_section(gov_sec, gov_end, "units", &units_end);
+        const char *rate_sec = json_find_child_section(gov_sec, gov_end, "rate", &rate_end);
+        if (gov_sec == NULL ||
+            !json_object_has_only_keys(gov_sec, gov_end, governor_keys,
+                                       sizeof(governor_keys) / sizeof(governor_keys[0])) ||
+            ladder_sec == NULL || deadman_sec == NULL || units_sec == NULL || rate_sec == NULL ||
+            !json_object_has_only_uint_keys(ladder_sec, ladder_end, ladder_keys,
+                                            sizeof(ladder_keys) / sizeof(ladder_keys[0])) ||
+            !json_object_has_only_uint_keys(deadman_sec, deadman_end, deadman_keys,
+                                            sizeof(deadman_keys) / sizeof(deadman_keys[0])) ||
+            !json_object_has_only_keys(units_sec, units_end, unit_keys,
+                                       sizeof(unit_keys) / sizeof(unit_keys[0])) ||
+            !json_object_has_only_uint_keys(rate_sec, rate_end, rate_keys,
+                                            sizeof(rate_keys) / sizeof(rate_keys[0]))) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 requires known, unique GOVERNOR sections with valid field types");
+            return -EINVAL;
+        }
+
+        uint32_t numerator_count = 0u, denominator_count = 0u;
+        has_gov_enabled = json_get_uint(gov_sec, gov_end, "enabled", &out_m->governor.enabled);
+        bool gov_values_ok =
+            json_get_uint(ladder_sec, ladder_end, "advise_fault_mask", &out_m->governor.advise_fault_mask) &&
+            json_get_uint(ladder_sec, ladder_end, "clamp_max_step", &out_m->governor.clamp_max_step) &&
+            json_get_uint(ladder_sec, ladder_end, "slow_scale_pct", &out_m->governor.slow_scale_pct) &&
+            json_get_uint(ladder_sec, ladder_end, "safe_stop_decel", &out_m->governor.safe_stop_decel) &&
+            json_get_uint(ladder_sec, ladder_end, "demote_faults_per_rung", &out_m->governor.demote_faults_per_rung) &&
+            json_get_uint(ladder_sec, ladder_end, "promote_clean_frames", &out_m->governor.promote_clean_frames) &&
+            json_get_uint(ladder_sec, ladder_end, "min_confidence_q8", &out_m->governor.min_confidence_q8) &&
+            json_get_uint(deadman_sec, deadman_end, "lease_ticks", &out_m->governor.lease_ticks) &&
+            json_get_uint(deadman_sec, deadman_end, "coherence_max_gap", &out_m->governor.coherence_max_gap) &&
+            json_get_uint(deadman_sec, deadman_end, "warmup_heartbeats", &out_m->governor.warmup_heartbeats) &&
+            json_get_uint(units_sec, units_end, "enabled", &out_m->governor.units_enabled) &&
+            json_get_uint(units_sec, units_end, "canonical_unit_id", &out_m->governor.canonical_unit_id) &&
+            json_get_uint_array(units_sec, units_end, "alternate_unit_ids",
+                                out_m->governor.alternate_unit_ids,
+                                sizeof(out_m->governor.alternate_unit_ids) /
+                                    sizeof(out_m->governor.alternate_unit_ids[0]),
+                                &out_m->governor.unit_scale_count) &&
+            json_get_uint_array(units_sec, units_end, "conversion_numerators",
+                                out_m->governor.conversion_numerators,
+                                sizeof(out_m->governor.conversion_numerators) /
+                                    sizeof(out_m->governor.conversion_numerators[0]),
+                                &numerator_count) &&
+            json_get_uint_array(units_sec, units_end, "conversion_denominators",
+                                out_m->governor.conversion_denominators,
+                                sizeof(out_m->governor.conversion_denominators) /
+                                    sizeof(out_m->governor.conversion_denominators[0]),
+                                &denominator_count) &&
+            out_m->governor.unit_scale_count == numerator_count &&
+            numerator_count == denominator_count && numerator_count > 0u &&
+            json_get_uint(rate_sec, rate_end, "enabled", &out_m->governor.rate_enabled) &&
+            json_get_uint(rate_sec, rate_end, "burst_tokens", &out_m->governor.rate_burst_tokens) &&
+            json_get_uint(rate_sec, rate_end, "refill_per_tick", &out_m->governor.rate_refill_per_tick) &&
+            json_get_uint(rate_sec, rate_end, "sustain_per_tick", &out_m->governor.rate_sustain_per_tick);
+        if (!has_gov_enabled || !gov_values_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 GOVERNOR settings are missing or are not unsigned integers");
+            return -EINVAL;
+        }
+        has_gov_ladder = true;
+        has_gov_deadman = true;
+        has_gov_units = true;
+        has_gov_rate = true;
+        out_m->governor_present = true;
+    }
+
     free(buf);
 
     /* Enforce strict Anti-Silent-Defaults: all required safety & binding keys must be present */
@@ -884,6 +1152,13 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
         return -EINVAL;
     }
 
+    if (out_m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+        (!has_gov_enabled || !has_gov_ladder || !has_gov_deadman || !has_gov_units || !has_gov_rate)) {
+        if (err_buf) snprintf(err_buf, err_len,
+                              "Schema 3 governor object is missing one or more required settings");
+        return -EINVAL;
+    }
+
     latch_admissibility_t admit = latch_manifest_validate(out_m, err_buf, err_len);
     if (admit != LATCH_ADMIT_SATISFIED) {
         return -EINVAL;
@@ -899,7 +1174,8 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
     }
 
     /* 1. Completeness of Prerequisites (Ak(m) in {0,1}) */
-    if (m->schema_version != 1u && m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION) {
+    if (m->schema_version != 1u && m->schema_version != LATCH_MANIFEST_SCHEMA_VERSION &&
+        m->schema_version != LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
         if (err_buf) snprintf(err_buf, err_len, "Unsupported manifest schema_version (%u)",
                               m->schema_version);
         return LATCH_ADMIT_UNRESOLVED;
@@ -951,12 +1227,73 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
         return LATCH_ADMIT_VIOLATED;
     }
     if (m->protocol.magic[0] != '\0') {
-        if (strcmp(m->protocol.magic, "LATH") != 0 ||
-            m->protocol.version != 1u ||
-            (strcmp(m->protocol.crc, "ieee32") != 0 && strcmp(m->protocol.crc, "crc32-ieee") != 0) ||
-            m->protocol.coverage != 16u) {
+        bool protocol_v1_ok = m->protocol.version == 1u &&
+            (strcmp(m->protocol.crc, "ieee32") == 0 || strcmp(m->protocol.crc, "crc32-ieee") == 0) &&
+            m->protocol.coverage == 16u;
+        bool protocol_v2_ok = m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+            m->protocol.version == 2u && strcmp(m->protocol.crc, "ieee32-v2") == 0 &&
+            m->protocol.coverage == 28u;
+        if (strcmp(m->protocol.magic, "LATH") != 0 || (!protocol_v1_ok && !protocol_v2_ok)) {
             if (err_buf) snprintf(err_buf, err_len, "Protocol metadata mismatch (magic='%s', ver=%u, crc='%s', cov=%u)",
                                   m->protocol.magic, m->protocol.version, m->protocol.crc, m->protocol.coverage);
+            return LATCH_ADMIT_VIOLATED;
+        }
+    }
+    if (m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
+        const uint32_t advisory_allowed = (1u << 7) | (1u << 12) | (1u << 15);
+        if (!m->governor_present || m->governor.enabled > 1u ||
+            m->governor.clamp_max_step == 0u ||
+            m->governor.clamp_max_step > (uint32_t)m->envelope.v_max ||
+            m->governor.slow_scale_pct == 0u || m->governor.slow_scale_pct > 100u ||
+            m->governor.safe_stop_decel == 0u ||
+            m->governor.safe_stop_decel > (uint32_t)m->envelope.a_max ||
+            m->governor.demote_faults_per_rung == 0u ||
+            m->governor.demote_faults_per_rung > 1000000u ||
+            m->governor.promote_clean_frames == 0u ||
+            m->governor.promote_clean_frames > 1000000u ||
+            m->governor.min_confidence_q8 == 0u ||
+            m->governor.min_confidence_q8 > 255u ||
+            m->governor.lease_ticks < 2u || m->governor.lease_ticks > 100u ||
+            m->governor.coherence_max_gap == 0u || m->governor.coherence_max_gap > 0x7FFFFFu ||
+            m->governor.warmup_heartbeats == 0u ||
+            (m->governor.advise_fault_mask & ~advisory_allowed) != 0u ||
+            m->governor.units_enabled > 1u || m->governor.rate_enabled > 1u ||
+            (m->governor.units_enabled != 0u &&
+             (m->governor.canonical_unit_id == 0u || m->governor.unit_scale_count == 0u)) ||
+            m->governor.unit_scale_count > 4u ||
+            (m->governor.rate_enabled != 0u &&
+             (m->governor.rate_burst_tokens == 0u || m->governor.rate_refill_per_tick == 0u ||
+              m->governor.rate_refill_per_tick > m->governor.rate_burst_tokens ||
+              m->governor.rate_sustain_per_tick == 0u ||
+              m->governor.rate_sustain_per_tick > (uint32_t)m->envelope.v_max))) {
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 governor values are invalid or outside the supported range");
+            return LATCH_ADMIT_VIOLATED;
+        }
+        for (uint32_t i = 0u; i < m->governor.unit_scale_count; ++i) {
+            if (m->governor.alternate_unit_ids[i] == 0u ||
+                m->governor.conversion_numerators[i] == 0u ||
+                m->governor.conversion_denominators[i] == 0u) {
+                if (err_buf) snprintf(err_buf, err_len,
+                                      "GOVERNOR unit IDs and rational conversion terms must be non-zero");
+                return LATCH_ADMIT_VIOLATED;
+            }
+            if (m->governor.alternate_unit_ids[i] == m->governor.canonical_unit_id) {
+                if (err_buf) snprintf(err_buf, err_len,
+                                      "GOVERNOR alternate unit IDs cannot equal the canonical unit ID");
+                return LATCH_ADMIT_VIOLATED;
+            }
+            for (uint32_t j = 0u; j < i; ++j) {
+                if (m->governor.alternate_unit_ids[i] == m->governor.alternate_unit_ids[j]) {
+                    if (err_buf) snprintf(err_buf, err_len, "GOVERNOR alternate unit IDs must be unique");
+                    return LATCH_ADMIT_VIOLATED;
+                }
+            }
+        }
+        if ((m->governor.enabled == 0u && m->protocol.version != 1u) ||
+            (m->governor.enabled != 0u && m->protocol.version != 2u)) {
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "GOVERNOR enabled state and protocol version must agree");
             return LATCH_ADMIT_VIOLATED;
         }
     }
@@ -968,6 +1305,18 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
                                   m->envelope.keepout[i].lo_mrad, m->envelope.keepout[i].hi_mrad,
                                   m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
             return LATCH_ADMIT_VIOLATED;
+        }
+        for (uint32_t j = i + 1; j < m->envelope.num_keepouts; ++j) {
+            int32_t lo_i = m->envelope.keepout[i].lo_mrad;
+            int32_t hi_i = m->envelope.keepout[i].hi_mrad;
+            int32_t lo_j = m->envelope.keepout[j].lo_mrad;
+            int32_t hi_j = m->envelope.keepout[j].hi_mrad;
+            if (lo_i <= hi_j && lo_j <= hi_i) {
+                if (err_buf) snprintf(err_buf, err_len,
+                                      "Keep-out intervals overlap: [%d, %d] and [%d, %d]",
+                                      lo_i, hi_i, lo_j, hi_j);
+                return LATCH_ADMIT_VIOLATED;
+            }
         }
     }
     if (m->envelope.v_home > m->envelope.v_max) {

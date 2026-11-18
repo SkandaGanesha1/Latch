@@ -45,6 +45,7 @@
 
 #include "latch_protocol.h"
 #include "latch_manifest.h"
+#include "governor_wire.h"
 
 /*
  * There is deliberately no prefill constant here any more. A previous
@@ -191,6 +192,30 @@ static void latch_parse_wire_frame(const latch_wire_frame_t *frame,
     }
 }
 
+static void latch_parse_wire_v2_frame(const uint8_t frame[32],
+                                      latch_ipc_proposal_v2_t *out_prop) {
+    governor_wire_message_t message;
+    uint16_t faults = governor_wire_v2_parse(frame, 32u, &message);
+    memset(out_prop, 0, sizeof(*out_prop));
+    out_prop->ipc_magic = LATCH_IPC_PROPOSAL_V2_MAGIC;
+    out_prop->ipc_version = 2u;
+    out_prop->wire_version = 2u;
+    out_prop->ingest_cycles = latch_ingest_cycles();
+    out_prop->pre_fault_bits = (uint16_t)(faults & LATCH_FAULT_WIRE_MASK);
+    if (faults == LATCH_FAULT_NONE) {
+        out_prop->seq = message.seq;
+        out_prop->u_mrad = message.u_mrad;
+        out_prop->wire_flags = (uint16_t)message.kind;
+        out_prop->kind = (uint8_t)message.kind;
+        out_prop->confidence_q8 = message.confidence_q8;
+        out_prop->agent_state = message.agent_state;
+        out_prop->coherence_ctr = message.coherence_ctr;
+        out_prop->shrink_v = message.shrink_v;
+        out_prop->shrink_scale_q8 = message.shrink_scale_q8;
+        out_prop->unit_id = message.unit_id;
+    }
+}
+
 int main(int argc, char *argv[]) {
     const char *input_path    = NULL;
     const char *proposal_path = LATCH_DEV_PROPOSAL;
@@ -296,26 +321,39 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    latch_wire_frame_t   wire_frame;
+    uint8_t              wire_bytes[32];
     latch_ipc_proposal_t ipc_prop;
+    latch_ipc_proposal_v2_t ipc_prop_v2;
     uint32_t total_frames   = 0u;
     uint32_t wire_faults    = 0u;
     uint32_t silence_ticks  = 0u;
 
     while (g_ingest_running) {
-        int r = latch_read_exact(in_fd, &wire_frame, sizeof(wire_frame));
+        int r = latch_read_exact(in_fd, wire_bytes, sizeof(wire_bytes));
         if (r <= 0) {
             break;
         }
 
-        latch_parse_wire_frame(&wire_frame, &ipc_prop);
+        uint16_t wire_version = (uint16_t)((uint16_t)wire_bytes[4] |
+                                           ((uint16_t)wire_bytes[5] << 8u));
+        const void *ipc_data = &ipc_prop;
+        size_t ipc_size = sizeof(ipc_prop);
+        if (wire_version == 2u && manifest.schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+            manifest.protocol.version == 2u && manifest.governor.enabled != 0u) {
+            latch_parse_wire_v2_frame(wire_bytes, &ipc_prop_v2);
+            ipc_data = &ipc_prop_v2;
+            ipc_size = sizeof(ipc_prop_v2);
+            if (ipc_prop_v2.pre_fault_bits != 0u) wire_faults++;
+        } else {
+            latch_wire_frame_t wire_frame;
+            memcpy(&wire_frame, wire_bytes, sizeof(wire_frame));
+            latch_parse_wire_frame(&wire_frame, &ipc_prop);
+            if (ipc_prop.pre_fault_bits != 0u) wire_faults++;
+            if (wire_version == 1u && (wire_frame.flags & LATCH_WIRE_FLAG_SILENCE) != 0u) {
+                silence_ticks++;
+            }
+        }
         total_frames++;
-        if (ipc_prop.pre_fault_bits != 0u) {
-            wire_faults++;
-        }
-        if ((wire_frame.flags & LATCH_WIRE_FLAG_SILENCE) != 0u) {
-            silence_ticks++;
-        }
 
         /* Deferred open: open proposal node only when first wire frame is ready */
         if (out_fd < 0) {
@@ -330,7 +368,11 @@ int main(int argc, char *argv[]) {
         }
 
         if (verbose) {
-            if (ipc_prop.pre_fault_bits == 0u) {
+            if (ipc_size == sizeof(ipc_prop_v2)) {
+                fprintf(stderr, "[latch-ingest] v2 frame #%-3u kind=%u seq=%u faults=0x%04X\n",
+                        total_frames, (unsigned int)ipc_prop_v2.kind,
+                        ipc_prop_v2.seq, ipc_prop_v2.pre_fault_bits);
+            } else if (ipc_prop.pre_fault_bits == 0u) {
                 fprintf(stderr, "[latch-ingest] Frame #%-3u: seq=%-3u u=%+5d mrad -> FORWARDED\n",
                         total_frames, ipc_prop.seq, ipc_prop.u_mrad);
             } else {
@@ -339,7 +381,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (latch_write_exact(out_fd, &ipc_prop, sizeof(ipc_prop)) != 0) {
+        if (latch_write_exact(out_fd, ipc_data, ipc_size) != 0) {
             break;
         }
 
@@ -360,7 +402,7 @@ int main(int argc, char *argv[]) {
          * RATE veto. Measured on QEMU AArch64 virt, a half-period sleep here
          * produced 16- and 28-tick stalls in the guest->host delivery (the
          * virtio-console vdev's forwarding pulse is priority-driven; see the
-         * `sched 40` on that vdev) and 48 envelope vetoes where 7 are
+         * `sched 60` on that vdev) and 48 envelope vetoes where 7 are
          * correct. The safety story is the ORDER of the frames, and order is
          * preserved by the ring.
          *

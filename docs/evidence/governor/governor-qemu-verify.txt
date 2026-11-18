@@ -1,0 +1,81 @@
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE -c latch_manifest.c -o build/nto-aarch64-le/latch_manifest.o
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchd.c governor_policy.c gov_gate_precheck.c build/nto-aarch64-le/latch_manifest.o build/nto-aarch64-le/latch_ipc.o -o build/nto-aarch64-le/latchd -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latch_ingest.c governor_wire.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latch-ingest -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchctl.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latchctl -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchlog.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latchlog -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
+qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latch_verify.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latch_verify -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
+secpolcompile -o build/secpol.bin latch.secpol
+aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror ../guest/latch_guest_init.c -o build/guest-governor-initramfs/init
+chmod +x build/guest-governor-initramfs/init
+(cd build/guest-governor-initramfs && find . -exec touch -h -d "@1700000000" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > /home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd
+-rw-r--r--. 1 skanda skanda 3.2K Nov 18 13:13 build/governor-linux-guest.initrd
+python3 ../tools/verify_guest_initrd.py build/governor-linux-guest.initrd
+[GUEST_INITRD PASS] build/governor-linux-guest.initrd: ELF64/AArch64 v2 guest policy embedded (67576 bytes)
+GUEST_IMAGE="/home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image" GOVERNOR_GUEST_INITRD="/home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd" mkifs -v latch_qemu_governor.build build/nto-aarch64-le/latch_qemu_governor.ifs
+  Offset     Size    Entry   Ramoff     Target=Host
+40080000      fa0        0     ----     *.boot=/home/skanda/qnx800/target/qnx/aarch64le/boot/sys/raw.boot
+40080fa0      100     ----     ----     Startup-header
+400810a0    2bfe8 40081da8     ----     startup.*=/tmp/mkxfs.hXyzLB
+400ac0e8       5c     ----     ----     Image-header
+400ac144      bf8     ----     ----     Image-directory
+    ----     ----     ----     ----     Root-dirent
+400acd3c       64     ----     ----     proc/boot/governor_servo.manifest.sha256=./contracts/governor_servo.manifest.sha256
+    ----     ----     ----     ----     bin/sh -> /proc/boot/ksh
+    ----     ----     ----     ----     dev/console -> /dev/ser1
+    ----     ----     ----     ----     tmp -> /dev/shmem
+    ----     ----     ----     ----         proc
+    ----     ----     ----     ----         proc/boot
+    ----     ----     ----     ----         bin
+    ----     ----     ----     ----         dev
+    ----     ----     ----     ----         lib
+    ----     ----     ----     ----         lib/dll
+    ----     ----     ----     ----         lib/dll/qvm
+400ad000    dd000 ffffff8060072c80     ----     proc/boot/procnto-smp-instr=/tmp/mkxfs.1oAEoC
+4018a000    3d000     5348     ----     proc/boot/ldqnx-64.so.2=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/ldqnx-64.so.2
+    ----     ----     ----     ----     proc/boot/ldqnx-64.so -> ldqnx-64.so.2
+401c7000    ad000        0     ----     proc/boot/libc.so.6=/home/skanda/qnx800/target/qnx/aarch64le/lib/libc.so
+    ----     ----     ----     ----     proc/boot/libc.so -> libc.so.6
+40274000    3f000        0     ----     proc/boot/libm.so.3=/home/skanda/qnx800/target/qnx/aarch64le/lib/libm.so
+    ----     ----     ----     ----     proc/boot/libm.so -> libm.so.3
+402b3000    15000        0     ----     proc/boot/libgcc_s.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libgcc_s.so.1
+    ----     ----     ----     ----     proc/boot/libgcc_s.so -> libgcc_s.so.1
+402c8000     6000        0     ----     proc/boot/libsecpol.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libsecpol.so.1
+    ----     ----     ----     ----     proc/boot/libsecpol.so -> libsecpol.so.1
+402ce000    14000        0     ----     proc/boot/libqh.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libqh.so.1
+    ----     ----     ----     ----     proc/boot/libqh.so -> libqh.so.1
+402e2000     6000        0     ----     proc/boot/libslog2.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2.so.1
+    ----     ----     ----     ----     proc/boot/libslog2.so -> libslog2.so.1
+402e8000     a000        0     ----     proc/boot/libslog2parse.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2parse.so.1
+    ----     ----     ----     ----     proc/boot/libslog2parse.so -> libslog2parse.so.1
+402f2000     a000        0     ----     proc/boot/libfdt.so.1=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/libfdt.so.1
+    ----     ----     ----     ----     proc/boot/libfdt.so -> libfdt.so.1
+402fc000     4000        0     ----     lib/dll/qvm/vdev-virtio-console.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-virtio-console.so
+40300000     7000        0     ----     lib/dll/qvm/vdev-shmem.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-shmem.so
+40307000     3000        0     ----     lib/dll/qvm/vdev-pl011.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-pl011.so
+4030a000     6000     1ee0     ----     proc/boot/secpolpush=/home/skanda/qnx800/target/qnx/aarch64le/bin/secpolpush
+40310000    14000     47f0     ----     proc/boot/slogger2=/home/skanda/qnx800/target/qnx/aarch64le/bin/slogger2
+40324000     9000     291c     ----     proc/boot/slog2info=/home/skanda/qnx800/target/qnx/aarch64le/bin/slog2info
+4032d000     7000     2750     ----     proc/boot/pipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe
+40334000    12000     3210     ----     proc/boot/devc-serpl011=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
+40346000    60000     cd0c     ----     proc/boot/qvm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm
+403a6000     9000     41b4     ----     proc/boot/on=/home/skanda/qnx800/target/qnx/aarch64le/bin/on
+403af000     9000     41b4     ----     proc/boot/ability=/home/skanda/qnx800/target/qnx/aarch64le/bin/ability
+403b8000    1a000     560c     ----     proc/boot/pidin=/home/skanda/qnx800/target/qnx/aarch64le/bin/pidin
+403d2000     5000     228c     ----     proc/boot/slay=/home/skanda/qnx800/target/qnx/aarch64le/bin/slay
+403d7000    40000     71a0     ----     proc/boot/ksh=/home/skanda/qnx800/target/qnx/aarch64le/bin/ksh
+40417000     9000     41b4     ----     proc/boot/waitfor=/home/skanda/qnx800/target/qnx/aarch64le/bin/waitfor
+40420000     e000     2334     ----     proc/boot/latchd=build/nto-aarch64-le/latchd
+4042e000     a000     20a4     ----     proc/boot/latch_verify=build/nto-aarch64-le/latch_verify
+40438000     a000     1cc0     ----     proc/boot/latch-ingest=build/nto-aarch64-le/latch-ingest
+40442000     c000     1a34     ----     proc/boot/latchctl=build/nto-aarch64-le/latchctl
+4044e000     9000     189c     ----     proc/boot/latchlog=build/nto-aarch64-le/latchlog
+40457000  2489200     ----     ----     proc/boot/linux-guest.Image=/home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image
+428e0200     1af2     ----     ----     proc/boot/latch_qemu_governor.qvmconf=./latch_qemu_governor.qvmconf
+428e1cf2      c7a     ----     ----     proc/boot/governor-linux-guest.initrd=/home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd
+428e296c      8c1     ----     ----     proc/boot/governor_servo.manifest=./contracts/governor_servo.manifest
+428e322d      7d4     ----     ----     proc/boot/startup-script=/tmp/mkxfs.L8M0X8
+428e3a01      770     ----     ----     proc/boot/secpol.bin=build/secpol.bin
+428e4174       44     ----     ----     Image-trailer
+python3 ../tools/verify_governor_qemu.py
+[GOVERNOR_QEMU] A4 observed: received=13 rung=ADVISE lease_age=5 coherence=13
+[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held through heartbeat-only traffic; clean-command recovery observed; final lease expiry reached LATCH

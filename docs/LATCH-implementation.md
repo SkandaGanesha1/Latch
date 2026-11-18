@@ -1,9 +1,10 @@
-# LATCH v3.0 Implementation Architecture & Target Verification Report
+# LATCH v3.0 & GOVERNOR Implementation Architecture & Target Verification Report
 
 **Author**: SkandaGanesha1 <skandaganesha16@gmail.com>  
 **Target Environment**: QNX Neutrino RTOS 8.0.0 (`x86_64`, `aarch64le`)  
 **Microkernel**: `procnto-smp-instr` (SMP Instrumented Kernel)  
 **Security Model**: Microkernel Custom Ability (`latch/actuator`) with Default-Deny Policy  
+**Flagship Safety Extension**: GOVERNOR Deterministic Safety Interlock & Dead Man's Switch for Physical AI  
 
 ---
 
@@ -14,8 +15,9 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 ```text
 +---------------------------------------------------------------------------------------+
 |  UNTRUSTED GUEST / AGENT                                                              |
-|  - Liar / Linux Control Policy (RL / DNN / Heuristic)                                 |
-|  - Generates 32-byte wire frames: [MAGIC:4][VER:2][JOINT:1][FLAGS:1][SEQ:4][U:4][CRC:4][RES:12] |
+|  - Autonomous AI Policy (RL / DNN / LLM Agent / Heuristic)                            |
+|  - Generates 32-byte wire frames (Protocol v2):                                       |
+|    [MAGIC:4][VER:2][JOINT:1][KIND:1][SEQ:4][U:4][CRC:4][CONF:4][STATE:1][COH:3][UNIT:4]|
 +---------------------------------------------------------------------------------------+
                                           |
                                           | (virtio-console / POSIX pipe)
@@ -23,14 +25,15 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 +---------------------------------------------------------------------------------------+
 |  QNX 8.0 INGESTION BRIDGE (`latch-ingest`)                                            |
 |  - Reads wire proposals from standard input                                           |
+|  - Validates wire framing, kind codes (0..3), and 28-byte CRC-32                      |
 |  - Performs zero-copy unbuffered writes to `/dev/latch/proposal`                      |
-|  - Hands frames to the supervisor as fast as the transport delivers them (no artificial delay) |
+|  - Translates 32-byte wire v2 into 48-byte LPR2 IPC proposal structure                |
 +---------------------------------------------------------------------------------------+
                                           |
                                           | (QNX Resource Manager `io_write`)
                                           v
 +---------------------------------------------------------------------------------------+
-|  LATCH SIMPLEX SUPERVISOR (`latchd`) - High-Criticality Domain                        |
+|  LATCH & GOVERNOR SIMPLEX SUPERVISOR (`latchd`) - High-Criticality Domain             |
 |                                                                                       |
 |  +---------------------------------------------------------------------------------+  |
 |  | Lockless 256-Slot Ring Buffer (`latch_ring_t`)                                  |  |
@@ -47,6 +50,10 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 |  | - Seqlock Protected State (`latch_seqlock_t`) with `atomic_thread_fence`        |  |
 |  | - Discrete-Time Control Barrier Function (DT-CBF) Enforcer                     |  |
 |  | - NIST FIPS 180-2 SHA-256 Attested Contract Manifest Integration                 |  |
+|  | - GOVERNOR Precheck Gate: Rational Units, Token Bucket, Q8 Confidence Shrink   |  |
+|  | - Deadman Liveness & Coherence Lease: Modulo-2^24 Bounded Forward Difference    |  |
+|  | - 6-Rung Supervisory Degradation Ladder FSM (HP -> ADVISE -> CLAMP -> ...)       |  |
+|  | - 4096-Entry Circular Event Ring with Rolling Tamper-Evident SHA-256 Blackbox   |  |
 |  | - Fail-Closed Fallback: Tri-State Mode (HP -> HOLD -> HOME)                      |  |
 |  +---------------------------------------------------------------------------------+  |
 |                                          |                                            |
@@ -62,7 +69,7 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 
 ### Key Architectural Invariants
 1. **Startup-Only Manifest Allocation & Zero Tick Heap Activity**: All ring buffers, state structs, and evidence tapes reside in pre-allocated `.bss` memory. `malloc` is used strictly once at process initialization inside `latch_manifest_load()` and freed before entering the tick loop; zero heap allocations occur during runtime decision ticks.
-2. **Deterministic WCET**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). Measured `latchd` decision cycle times stayed within the `100 µs` (`wcet_budget_us`) budget (`~1.1 µs` host-sim max, `~101.3 µs` observed under x86_64 QNX QEMU load), well inside the 1.0 ms deadline.
+2. **Manifest Latency Budget (measured max, not a WCET)**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). Every decision tick measures its own latency and compares it against the manifest's `timing.wcet_budget_us` (100 µs in `latch.manifest`); an exceedance increments the reported `wcet_overruns` counter instead of being hidden. Measured maxima: `~1.1 µs` host-sim, `~101.3 µs` in an x86_64 QNX QEMU VM run — slightly *over* the monitoring budget (counted as an overrun) yet far inside the 1.0 ms decision period. These are measured maxima on emulated hosts, never worst-case execution-time bounds; see the latency note in §7.1.
 3. **Seqlock Consistency**: Telemetry snapshots use an atomic generation sequence guard (`snapshot_gen`). Readers (such as verification inspectors and telemetry reporters) execute optimistic lock-free retry loops without blocking the safety-critical decision loop.
 
 ---
@@ -146,7 +153,7 @@ The session lifecycle was refactored into a two-phase decoupled handshake:
        st->last_rx_cycles = cycles_in;
    }
    ```
-3. **No artificial pacing in the bridge**: `latch_ingest.c` defers opening `/dev/latch/proposal` until the first valid 32-byte wire frame is read from `stdin`, and then hands each frame to the supervisor as fast as the transport delivers it. The supervisor's ring, bounded by the manifest's `ingest.queue_depth`, is the only buffer in the path. A previous revision slept $0.5 \times T_{\text{period}}$ between writes; on QEMU AArch64 `virt` that let the supervisor's 2-tick watchdog fire while the guest's next batch was still in flight, which failed closed into HA-HOLD $\rightarrow$ HA-HOME, retracted $\theta$, and turned every later frame into a spurious RATE veto (48 envelope vetoes where 7 are correct). The guest's burst is now bounded by `ingest.queue_depth` and asserted across files by `tools/consistency_check.py`.
+3. **No artificial pacing in the bridge**: `latch_ingest.c` defers opening `/dev/latch/proposal` until the first valid 32-byte wire frame is read from `stdin`, and then hands each frame to the supervisor as fast as the transport delivers it. The supervisor's ring, bounded by the manifest's `ingest.queue_depth`, is the only buffer in the path.
 
 ### 3.4 Telemetry Proof
 Under the new lifecycle:
@@ -155,11 +162,207 @@ Under the new lifecycle:
 - Envelope vetoes: **7** (exactly the 7 keep-out frames #26..#32)
 - Unexpected rate faults: **0**
 - Watchdog trips during streaming: **0**
-- Max decision latency: **1,242 ns**
+- Max decision latency: **1,413 ns** (archived run `docs/evidence/host-sim/20261113-181136-host-sim.txt`; varies with host load)
 
 ---
 
-## 4. Multi-Plant Contracts: Servo Gripper vs. Syringe Pump
+## 4. GOVERNOR Subsystem Architecture
+
+GOVERNOR extends LATCH with an industrial-grade safety supervisor, adding Wire Protocol v2, rational unit normalization, token-bucket rate shaping, a 24-bit advancing coherence lease, a 6-rung supervisory degradation ladder, and tamper-evident event ring blackbox forensics.
+
+### 4.1 Wire Protocol v2 Ingest Pipeline & 28-Byte CRC-32 Math
+
+The wire transport exchanges strictly packed 32-byte frames (`gov_wire_frame_t`).
+
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Magic: 0x4C415448                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Version (2)          |   Joint (0)   |   Kind (0..3) |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    Sequence Number (seq)                      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            Signed Payload u_mrad / shrink_v_max               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      IEEE 802.3 CRC-32                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                 Confidence Q8 (confidence_q8)                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Agent State  |           Coherence Counter (24-bit)          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Unit ID (unit_id)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+#### CRC-32 Split-Buffer Calculation
+The CRC field covers all payload bytes except the checksum itself:
+$$\text{CRC Coverage} = \text{Frame}[0..16) \mathbin{\Vert} \text{Frame}[20..32) \quad (\text{exactly } 28 \text{ bytes})$$
+Calculated using the IEEE 802.3 reflected polynomial ($0xEDB88320$), initialized to $0xFFFFFFFF$ and final XOR $0xFFFFFFFF$:
+```c
+uint32_t expected_crc = latch_crc32_buf(0xFFFFFFFFu, (const uint8_t *)frame, 16u);
+expected_crc = latch_crc32_buf(expected_crc, (const uint8_t *)frame + 20u, 12u) ^ 0xFFFFFFFFu;
+```
+
+#### Frame Kind Codes
+- `0 = CMD`: Legacy command proposal (treated as unit_id=0).
+- `1 = HEARTBEAT`: Deadman liveness lease renewal; carries zero payload; plant must not move.
+- `2 = CMD_V2`: Version 2 motion command with explicit `unit_id`, `confidence_q8`, and `agent_state`.
+- `3 = SHRINK_REQ`: AI dynamic envelope tightening request ($v_{\text{max}}' \le v_{\text{max}}$).
+
+### 4.2 Precheck Gate Mathematical Formulation
+
+#### 1. Rational Unit Normalization Arithmetic
+To eliminate non-deterministic floating-point conversions inside the safety microkernel, GOVERNOR implements 64-bit integer rational normalization:
+$$
+u_{\text{canonical}} = \frac{u_{\text{raw}} \cdot N_i}{D_i}
+$$
+where $(N_i, D_i)$ is declared in the signed manifest's `governor.units` dictionary. If `unit_id` is unknown or undeclared, the proposal is rejected fail-closed with `LATCH_FAULT_UNIT` (bit 12, `0x1000`).
+
+The two signed contracts declare these exact rationals — all conversion is exact 64-bit integer arithmetic, and a non-integral remainder, a zero denominator, or an overflow is rejected fail-closed with `LATCH_FAULT_UNIT` (proven by `gov_gate_precheck_test.c`: raw `100` under the servo's `1/57` scale has a remainder and is rejected; raw `37000` under `1/1000` converts to exactly `37`):
+
+| Contract | `unit_id=1` (canonical) | `unit_id=2` | `unit_id=3` |
+|---|---|---|---|
+| `governor_servo.manifest` | `mrad` | ×1/57 — milli-degree-scale raw → `mrad` (1 mrad = 57.2958 mdeg; `57` is the declared integer stand-in) | ×1/1000 — µrad-scale raw → `mrad` (attack A1 phase 4: `37000 → 37`) |
+| `syringe_governor.manifest` | `µL` | ×1000/1 — mL-scale raw → `µL` (raw `50` → `50000`) | ×1/1000 — nL-scale raw → `µL` |
+
+Every ratio lives only in the signed manifest: no unit conversion factor is a C literal, and the command's magnitude is never used to guess a unit.
+
+#### 2. Token-Bucket Rate Burst Smoother
+To defend against velocity flood attacks ($A2$), the precheck gate maintains a discrete leaky token bucket:
+$$
+b_k = \min\left(B_{\max}, \; b_{k-1} + r \cdot \Delta t\right)
+$$
+$$
+\text{Cost} = |u_k - \theta_{k-1}|
+$$
+If $\text{Cost} > b_k$, the burst exceeds available tokens. The proposal is clamped to $v_{\text{max}}$ and flags `LATCH_FAULT_RATE` (bit 7, `0x0080`).
+
+#### 3. Confidence Contraction (Q8 Arithmetic)
+When an agent reports lower certainty ($c_{Q8} < 255$), the precheck floors the reported value at the contract's `ladder.min_confidence_q8` (128 in both signed contracts — the historical Q8 half-scale floor; the key is required, range 1–255) and contracts the *motion* envelope:
+$$
+\text{scale} = \frac{\max(c_{Q8},\ \text{min\_confidence\_q8})}{256}
+$$
+$$
+v_{\text{effective}} = \lfloor v_{\text{max}} \cdot \text{scale} \rfloor, \quad a_{\text{effective}} = \lfloor a_{\text{max}} \cdot \text{scale} \rfloor
+$$
+Maximum slew velocity and acceleration limits contract proportionally; an active `SHRINK_REQ` takes the minimum of its own value and the confidence-scaled value. **Keep-out intervals do not move** — they stay at their signed manifest bounds and are re-validated against every applied step, so a low-confidence proposal can never tunnel through them.
+
+#### 4. Cumulative DOSE Limit Check (Medical Syringe Mode)
+In infusion contracts, precheck computes the delivered volume step $\Delta V$:
+If $\Delta V > \text{rung\_max\_step}$, `LATCH_FAULT_DOSE` (bit 15, `0x8000`) is asserted, preventing dangerous bolus over-infusion.
+
+### 4.3 Modulo-$2^{24}$ Bounded Forward Difference Coherence Engine
+
+To detect frozen control loops, infinite agent spins, and clock glitches, the deadman lease is governed by an advancing 24-bit counter $c_k \in [0, 2^{24}-1]$:
+$$
+\Delta c = (c_k - c_{k-1}) \pmod{2^{24}} = (c_k - c_{k-1}) \mathbin{\&} \text{0x00FFFFFF}
+$$
+
+**Lease Renewal Rules**:
+1. **Admissible Advance**: $1 \le \Delta c \le \text{coherence\_max\_gap}$ (default 3). The lease timer is reloaded to `lease_ticks` (100 ms).
+2. **Frozen Counter**: $\Delta c = 0$. Indicates stalled computation; lease is **NOT** renewed; trips `LATCH_FAULT_HEARTBEAT` (bit 13, `0x2000`).
+3. **Discontinuous Jump**: $\Delta c > \text{coherence\_max\_gap}$. Counter desynchronization; lease is **NOT** renewed; trips `LATCH_FAULT_HEARTBEAT`.
+
+### 4.4 6-Rung Degradation Ladder & 25-Frame Hysteresis Recovery FSM
+
+The supervisor executes a deterministic 6-rung finite state machine:
+
+| Rung | Name | Motion Authority | Velocity Bound | Fault/Lease Transition |
+|---|---|---|---|---|
+| **0** | `HP` (High Performance) | Full AI Proposal Authority | $v_{\text{applied}} \le v_{\text{max}}$ | Trips down to `ADVISE` on lease expiry or advisory fault |
+| **1** | `ADVISE` | AI Proposals Subject to Strict Rate Clamps | $v_{\text{applied}} \le v_{\text{advise}}$ | Demotes to `CLAMP` after 3 consecutive faults or lease expiry |
+| **2** | `CLAMP` | Actuator Step Clamped to Minimal Slew | $v_{\text{applied}} \le \text{clamp\_step}$ | Demotes to `SLOW` on repeated lease expiry |
+| **3** | `SLOW` | Limp-Home Velocity Clamping | $v_{\text{applied}} \le 0.2 \cdot v_{\text{max}}$ | Demotes to `SAFE_STOP` on lease expiry |
+| **4** | `SAFE_STOP` | AI Authority Revoked; Actuator Slew to Decelerate | $v_{\text{applied}} \to 0$ | Demotes to `LATCH` on lease expiry |
+| **5** | `LATCH` | Software Interlock / Fail-Closed `HOLD` (mock I²C on the QEMU take — no physical actuation there) | Zero Movement ($v = 0$) | Operator Release Required (`latchctl hold 0`) |
+
+#### Hysteresis & Recovery Invariants
+- **Heartbeat Chatter Non-Recovery**: Heartbeat-only frames (`kind=1`) renew the liveness lease, but **explicitly reset** `clean_command_streak = 0`. An agent cannot regain authority simply by repeating health pings.
+- **25-Frame Clean Command Recovery**: Promotion from a demoted rung up one level requires exactly $N = 25$ (`promote_clean_frames`) consecutive clean, valid, coherent motion proposals (`kind=2`). Any fault, CRC error, or sequence drop immediately resets the streak to 0.
+
+---
+
+## 5. Versioned Extension Devctls
+
+GOVERNOR extends the native QNX resource manager interface with out-of-band diagnostic and forensic devctls while keeping legacy devctls byte-for-byte backward compatible.
+
+### 5.1 `DCMD_LATCH_GET_GOV_STATUS` (0x43)
+
+Queries real-time supervisory status, lease counters, rate tokens, and degradation rungs.
+
+#### Binary Layout (228 Bytes)
+```text
++---------------------------------------------------------------------------------------+
+|  Legacy latch_status_reply_t (Bytes 0 .. 167)                                         |
+|  - uint64_t tick, uint64_t cycles, uint32_t seq, int32_t theta, int32_t v, int32_t a  |
+|  - uint16_t active_faults, uint16_t latched_faults, uint8_t mode, uint8_t reserved     |
+|  - uint32_t telemetry counters (proposals, wire, env, eperm, drops, wcet, backlog)    |
+|  - uint8_t  manifest_sha256[32]                                                       |
++---------------------------------------------------------------------------------------+
+|  GOVERNOR Extension Payload (Bytes 168 .. 227)                                        |
+|  - uint32_t extension_version        (Offset 168: ABI version = 1)                     |
+|  - uint32_t enabled                  (Offset 172: 1 if governor active, 0 if disabled) |
+|  - uint32_t rung                     (Offset 176: Active rung 0..5)                    |
+|  - uint32_t v2_session               (Offset 180: 1 if v2 protocol active)             |
+|  - uint32_t lease_ticks_remaining    (Offset 184: Remaining lease window ticks)        |
+|  - uint32_t lease_age_ticks          (Offset 188: Ticks since last advancing renewal)  |
+|  - uint32_t warmup_heartbeats_seen   (Offset 192: Count of valid warmup pings)         |
+|  - uint32_t agent_state              (Offset 196: Reported agent status 0..4)          |
+|  - uint32_t rate_tokens_remaining    (Offset 200: Token bucket fill level)             |
+|  - uint32_t shrink_active            (Offset 204: 1 if dynamic envelope tightened)     |
+|  - uint32_t shrink_v_max             (Offset 208: Active shrunk velocity limit)        |
+|  - uint32_t shrink_scale_q8          (Offset 212: Active shrink scale 0..255)          |
+|  - uint32_t coherence_ctr            (Offset 216: Last valid 24-bit coherence counter) |
+|  - uint32_t coherence_valid          (Offset 220: 1 if coherence sequence healthy)     |
+|  - uint32_t clean_command_streak     (Offset 224: Streak towards next promotion 0..25) |
++---------------------------------------------------------------------------------------+
+```
+
+### 5.2 `DCMD_LATCH_DUMP_GOV_EVENTS` (0x44)
+
+Retrieves historical event telemetry from the 4096-entry circular buffer in `.bss` memory.
+
+#### Data Structures
+```c
+typedef struct __attribute__((packed)) latch_gov_event {
+    uint64_t event_index;          /* Monotonic global event index */
+    uint64_t tick;                 /* Supervisor 1 kHz tick */
+    uint64_t cycles;               /* Sub-microsecond ClockCycles timestamp */
+    uint32_t seq;                  /* Proposal sequence number */
+    int32_t  raw_u_mrad;           /* Unscaled proposal from wire */
+    int32_t  normalized_u_mrad;    /* Canonicalized proposal */
+    int32_t  theta_applied_mrad;   /* Final actuator command issued */
+    uint32_t unit_id;              /* Manifest rational unit ID */
+    uint32_t coherence_ctr;        /* 24-bit coherence counter */
+    uint32_t lease_remaining;      /* Ticks remaining in lease */
+    uint16_t fault_bits;           /* Instantaneous microkernel fault mask */
+    uint8_t  mode;                 /* Simplex mode (HP, HOLD, HOME) */
+    uint8_t  rung_before;          /* Ladder rung before evaluation */
+    uint8_t  rung_after;           /* Ladder rung after evaluation */
+    uint8_t  kind;                 /* Wire v2 frame kind (0..3) */
+    uint8_t  verdict;              /* Decision verdict (ACCEPT, CLAMP, VETO) */
+    uint8_t  agent_state;          /* Agent state reported in frame */
+    uint8_t  confidence_q8;        /* Scaled confidence value */
+    uint8_t  coherence_valid;      /* Coherence continuity boolean */
+} latch_gov_event_t;
+_Static_assert(sizeof(latch_gov_event_t) == 62u, "Packed event record must be 62 bytes");
+```
+
+#### Tamper-Evident SHA-256 Rolling Hash Chain
+Each event emitted into the blackbox is linked into a cryptographic hash chain:
+$$
+H_0 = \text{SHA-256}(\text{manifest\_sha256})
+$$
+$$
+H_k = \text{SHA-256}\left(H_{k-1} \mathbin{\Vert} \text{EventBytes}_k\right)
+$$
+Any post-incident tampering (event deletion, modification of actuator angles, or reordering) breaks the rolling hash chain. Offline verification via `gov_replay.py` instantly pinpoints the exact compromised record index.
+
+---
+
+## 6. Multi-Plant Contracts: Servo Gripper vs. Syringe Pump
 
 LATCH enforces strict zero-hardcoding. All parameters, constraints, and hardware calibrations are loaded from signed, SHA-256 attested JSON manifests.
 
@@ -180,11 +383,11 @@ Both contracts validate with 100% cryptographic integrity using native NIST FIPS
 
 ---
 
-## 5. Target Validation & Build Architecture
+## 7. Target Validation & Build Architecture
 
 Validation across host simulation and QNX target environments:
 
-### 5.1 x86_64 QNX SDP 8.0 Target VM (`qnxqemu`)
+### 7.1 x86_64 QNX SDP 8.0 Target VM (`qnxqemu`)
 - **Kernel**: `procnto-smp-instr` x86_64
 - **Safety Invariant 1 (Ability Gatekeeper)**: `./latchctl grant-check` (`open(..., O_RDONLY)` + `DCMD_LATCH_PROBE_ABILITY`) returns exit code 2 (`EPERM`) when invoked without custom `latch/actuator` ability.
 - **Safety Invariant 2 (NIST SHA-256 Attestation)**: Sidecar validation confirms exact manifest match. Modifying 1 byte or supplying a stripped manifest triggers immediate fail-closed abort (`EXIT_FAILURE`).
@@ -192,16 +395,15 @@ Validation across host simulation and QNX target environments:
 - **Safety Invariant 4 (Decoupled Session Handshake & EOF)**: Zero premature watchdog trips (`7` keep-out vetoes); writer disconnect completes controlled `WATCHDOG -> HOLD -> HA-HOME` retraction before freezing the tape.
 - **Safety Invariant 5 (Decision Timing)**: Host-sim observed max latency ~1.1 µs; QEMU VM observed within `1.0 ms` period (`101.3 µs` peak measured cycle delta in target VM run).
 
-### 5.2 ARM64 Raspberry Pi 4 Model B (`latch_rpi4.build`)
+### 7.2 ARM64 Raspberry Pi 4 Model B (`latch_rpi4.build`)
 - **Kernel**: `procnto-smp-instr` aarch64le
 - **I2C Actuation**: `/dev/i2c1` via `i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1` (`GIC_SPI 117 + 32 = IRQ 149`)
 - **Hypervisor Support**: `/lib/dll/qvm` packaged into `/proc/boot` with `latch.qvmconf` (`gicd 0xff841000`, `gicc 0xff842000`; QEMU virt uses `latch_qemu_virt.qvmconf` with `0x08000000`, `0x08010000`).
 - **Real-Time Actuator Safety**: Fail-closed exit if PCA9685 fails initialization while `actuator.required == true`.
 
-### 5.3 QEMU AArch64 `virt` — the demonstrated target
+### 7.3 QEMU AArch64 `virt` — the demonstrated target
 
-This is the target the submission demonstrates on, and the only one with a
-committed evidence trail.
+This is the target the submission demonstrates on, and the only one with a committed evidence trail.
 
 | Property | Value |
 |---|---|
@@ -214,15 +416,6 @@ committed evidence trail.
 | Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` |
 | Evidence | `docs/evidence/` — every run's raw console, with an index and a run-output manifest |
 
-The full on-target evidence is archived in `docs/evidence/`, indexed by
-`docs/evidence/README.md`. The canonical artefact is
-`docs/evidence/on-target/CURRENT-SESSION.txt`; the defect record is in
-`docs/evidence/resolution/SUMMARY.md`.
+The full on-target evidence is archived in `docs/evidence/`, indexed by `docs/evidence/README.md`. The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`; the defect record is in `docs/evidence/resolution/SUMMARY.md`.
 
-**Note on the latency figures.** Section 5.1's numbers are from an x86_64
-QNX VM. The AArch64 `virt` figures are measured under **TCG** — software
-emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The
-project reports the **last** and the **max** decision latency, in cycles and in
-nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the
-machine. See `docs/evidence/derived/on-target-numbers.txt`.
-
+**Note on the latency figures.** Section 7.1's numbers are from an x86_64 QNX VM. The AArch64 `virt` figures are measured under **TCG** — software emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The project reports the **last** and the **max** decision latency, in cycles and in nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the machine. See `docs/evidence/derived/on-target-numbers.txt`.

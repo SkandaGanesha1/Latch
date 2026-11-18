@@ -1,0 +1,119 @@
+{
+  "schema_version": 3,
+  "plant": {
+    "name": "syringe-pump-bolus",
+    "axes": [
+      {
+        "id": 0,
+        "kind": "linear",
+        "unit": "uL",
+        "min": 0,
+        "max": 50000
+      }
+    ]
+  },
+  "envelope": {
+    "theta_min_mrad": 0,
+    "theta_max_mrad": 50000,
+    "home_mrad": 0,
+    "keepout": [
+      {
+        "lo_mrad": 45000,
+        "hi_mrad": 50000,
+        "label": "ENDSTOP_OCCLUSION"
+      }
+    ],
+    "v_max": 200,
+    "a_max": 50,
+    "j_max": 50,
+    "v_home": 20,
+    "lookahead_ticks": 10
+  },
+  "timing": {
+    "period_us": 1000,
+    "watchdog_ticks": 2,
+    "wcet_budget_us": 100,
+    "max_backlog_ticks": 256
+  },
+  "recovery": {
+    "hysteresis_clean_frames": 25,
+    "hold_to_home_ticks": 50
+  },
+  "decision": {
+    "cpu": 0,
+    "priority": 63,
+    "pulse_priority": 63
+  },
+  "ingest": {
+    "cpu": 1,
+    "delivery": "queued",
+    "queue_depth": 256
+  },
+  "paths": {
+    "proposal": "/dev/latch/proposal",
+    "actuator": "/dev/latch/actuator",
+    "ability": "latch/actuator",
+    "i2c_bus": "/dev/i2c1"
+  },
+  "actuator": {
+    "type": "pca9685",
+    "addr": 64,
+    "freq_hz": 50,
+    "prescale": 121,
+    "pwm_center": 307,
+    "pwm_min": 205,
+    "pwm_max": 410,
+    "retries": 1,
+    "init_delay_us": 600,
+    "required": false
+  },
+  "tape": {
+    "capacity": 4096,
+    "log_path": "/dev/shmem/latch_tape.csv"
+  },
+  "protocol": {
+    "magic": "LATH",
+    "version": 2,
+    "crc": "ieee32-v2",
+    "coverage": 28
+  },
+  "governor": {
+    "enabled": 1,
+    "ladder": {
+      "advise_fault_mask": 36864,
+      "clamp_max_step": 50,
+      "slow_scale_pct": 25,
+      "safe_stop_decel": 10,
+      "demote_faults_per_rung": 3,
+      "promote_clean_frames": 25,
+      "min_confidence_q8": 128
+    },
+    "deadman": {
+      "lease_ticks": 100,
+      "coherence_max_gap": 3,
+      "warmup_heartbeats": 4
+    },
+    "units": {
+      "enabled": 1,
+      "canonical_unit_id": 1,
+      "alternate_unit_ids": [
+        2,
+        3
+      ],
+      "conversion_numerators": [
+        1000,
+        1
+      ],
+      "conversion_denominators": [
+        1,
+        1000
+      ]
+    },
+    "rate": {
+      "enabled": 1,
+      "burst_tokens": 100,
+      "refill_per_tick": 10,
+      "sustain_per_tick": 50
+    }
+  }
+}

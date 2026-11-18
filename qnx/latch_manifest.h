@@ -21,6 +21,7 @@ extern "C" {
 #endif
 
 #define LATCH_MANIFEST_SCHEMA_VERSION  2u
+#define LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION 3u
 #define LATCH_MAX_AXES                4u
 #define LATCH_MAX_KEEPOUTS            8u
 #define LATCH_MANIFEST_MAX_TAPE_CAPACITY 4096u
@@ -109,6 +110,30 @@ typedef struct latch_manifest_protocol {
     uint32_t coverage;
 } latch_manifest_protocol_t;
 
+typedef struct latch_manifest_governor {
+    uint32_t enabled;
+    uint32_t advise_fault_mask;
+    uint32_t clamp_max_step;
+    uint32_t slow_scale_pct;
+    uint32_t safe_stop_decel;
+    uint32_t demote_faults_per_rung;
+    uint32_t promote_clean_frames;
+    uint32_t lease_ticks;
+    uint32_t coherence_max_gap;
+    uint32_t warmup_heartbeats;
+    uint32_t units_enabled;
+    uint32_t canonical_unit_id;
+    uint32_t alternate_unit_ids[4];
+    uint32_t conversion_numerators[4];
+    uint32_t conversion_denominators[4];
+    uint32_t unit_scale_count;
+    uint32_t rate_enabled;
+    uint32_t rate_burst_tokens;
+    uint32_t rate_refill_per_tick;
+    uint32_t rate_sustain_per_tick;
+    uint32_t min_confidence_q8;
+} latch_manifest_governor_t;
+
 typedef struct latch_manifest {
     uint32_t                  schema_version;
     char                      plant_name[64];
@@ -123,6 +148,8 @@ typedef struct latch_manifest {
     latch_manifest_actuator_t actuator;
     latch_manifest_tape_t     tape;
     latch_manifest_protocol_t protocol;
+    latch_manifest_governor_t governor;
+    bool                      governor_present;
     uint8_t                   sha256[32];
     char                      sha256_hex[65];
 } latch_manifest_t;

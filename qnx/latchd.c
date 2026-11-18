@@ -54,6 +54,9 @@
 
 #include "latch_protocol.h"
 #include "latch_manifest.h"
+#include "latch_ipc.h"
+#include "governor_policy.h"
+#include "gov_gate_precheck.h"
 
 /* ==========================================================================
  * 1. PCA9685 Register Map & Pulse Codes
@@ -81,7 +84,7 @@
 
 typedef struct latch_seqlock_slot {
     _Atomic uint32_t     gen;
-    latch_ipc_proposal_t proposal;
+    latch_proposal_t proposal;
 } latch_seqlock_slot_t;
 
 typedef struct latch_publish_buffer {
@@ -119,6 +122,16 @@ typedef struct latch_simplex_state {
     uint32_t       hold_ticks_elapsed;   /* Ticks spent in LATCH_MODE_HOLD    */
     uint8_t        mode;                 /* LATCH_MODE_HP / HOLD / HOME       */
 
+    governor_ladder_state_t gov_ladder;
+    gov_gate_state_t gov_gate;
+    uint32_t       gov_lease_remaining;
+    uint64_t       gov_last_lease_tick;
+    uint32_t       gov_last_coherence;
+    uint32_t       gov_warmup_seen;
+    uint8_t        gov_agent_state;
+    bool           gov_v2_session;
+    bool           gov_coherence_valid;
+
     bool           session_active;       /* true once proposal stream active */
     bool           retracted_home;       /* true when parked at home pose     */
     bool           tape_frozen;          /* true to prevent post-park overwrite */
@@ -136,6 +149,7 @@ typedef struct latch_simplex_state {
     _Atomic uint32_t total_eperm_rejects;
     _Atomic uint32_t eperm_pending;
     _Atomic uint32_t operator_hold_locked;
+    _Atomic uint32_t operator_release_pending;
     _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
     _Atomic uint32_t session_reset_pending; /* Armed by latch_io_open(), consumed by tick */
     _Atomic uint32_t open_writers;          /* Active writer reference count */
@@ -150,6 +164,9 @@ typedef struct latch_simplex_state {
 static latch_manifest_t       g_manifest;
 static latch_tape_entry_t     g_latch_tape[LATCH_TAPE_CAPACITY];
 static _Atomic uint32_t       g_tape_write_idx = 0u;
+static latch_gov_event_t      g_gov_events[LATCH_GOV_EVENT_CAPACITY];
+static _Atomic uint64_t       g_gov_event_write_idx = 0u;
+static _Atomic uint32_t       g_gov_event_overflow = 0u;
 static latch_publish_buffer_t g_pub_buf;
 static latch_simplex_state_t  g_simplex;
 #ifdef __QNXNTO__
@@ -187,6 +204,46 @@ static inline uint32_t latch_cycles_to_ns(uint64_t dcycles) {
     return (uint32_t)((dcycles * 1000000000ULL) / g_cycles_per_sec);
 }
 
+static bool latch_governor_enabled(void) {
+    return g_manifest.schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+           g_manifest.governor.enabled != 0u;
+}
+
+static governor_ladder_config_t latch_governor_ladder_config(void) {
+    governor_ladder_config_t config = {
+        .enabled = latch_governor_enabled() ? 1u : 0u,
+        .advisory_fault_mask = g_manifest.governor.advise_fault_mask,
+        .faults_per_demotion = g_manifest.governor.demote_faults_per_rung,
+        .clean_frames_per_promotion = g_manifest.governor.promote_clean_frames
+    };
+    return config;
+}
+
+static void latch_governor_init_state(latch_simplex_state_t *state) {
+    if (state == NULL) return;
+    governor_ladder_init(&state->gov_ladder);
+    gov_gate_init(&g_manifest.governor, &state->gov_gate);
+    state->gov_lease_remaining = 0u;
+    state->gov_last_lease_tick = 0u;
+    state->gov_last_coherence = 0u;
+    state->gov_warmup_seen = 0u;
+    state->gov_agent_state = 0u;
+    state->gov_v2_session = false;
+    state->gov_coherence_valid = false;
+}
+
+static void latch_governor_new_session(latch_simplex_state_t *state) {
+    if (state == NULL) return;
+    state->gov_lease_remaining = 0u;
+    state->gov_last_lease_tick = 0u;
+    state->gov_last_coherence = 0u;
+    state->gov_warmup_seen = 0u;
+    state->gov_agent_state = 0u;
+    state->gov_v2_session = false;
+    state->gov_coherence_valid = false;
+    gov_gate_init(&g_manifest.governor, &state->gov_gate);
+}
+
 static void latch_record_eperm_fault(void) {
     atomic_fetch_add_explicit(&g_simplex.total_eperm_rejects, 1u, memory_order_relaxed);
     atomic_store_explicit(&g_simplex.eperm_pending, 1u, memory_order_release);
@@ -197,7 +254,7 @@ static void latch_record_eperm_fault(void) {
  * ========================================================================== */
 
 static void latch_publish_proposal(latch_publish_buffer_t *buf,
-                                   const latch_ipc_proposal_t *prop) {
+                                   const latch_proposal_t *prop) {
     if (strcmp(g_manifest.ingest.delivery, "queued") == 0) {
         uint32_t depth = g_manifest.ingest.queue_depth;
         if (depth == 0 || depth > LATCH_PUB_RING_SIZE) depth = LATCH_PUB_RING_SIZE;
@@ -237,7 +294,7 @@ static void latch_publish_proposal(latch_publish_buffer_t *buf,
 
 static bool latch_consume_proposal(latch_publish_buffer_t *buf,
                                    uint32_t *last_pub_inout,
-                                   latch_ipc_proposal_t *out_prop) {
+                                   latch_proposal_t *out_prop) {
     if (strcmp(g_manifest.ingest.delivery, "queued") == 0) {
         uint32_t t = atomic_load_explicit(&buf->read_tail, memory_order_relaxed);
         uint32_t h = atomic_load_explicit(&buf->write_head, memory_order_acquire);
@@ -487,13 +544,17 @@ static uint16_t latch_mrad_to_pca9685_off(int32_t theta_mrad) {
     int32_t span_neg = (g_manifest.num_axes > 0 && g_manifest.axes[0].min < 0)
                            ? -g_manifest.axes[0].min
                            : -g_manifest.envelope.theta_min_mrad;
-    if (span_pos <= 0) span_pos = 1000;
-    if (span_neg <= 0) span_neg = 1000;
-
     int32_t counts;
     if (safe_theta >= 0) {
+        /* Fail closed: a non-positive span means theta cannot be scaled to
+         * PWM counts. Return the neutral centre (no motion) instead of
+         * dividing by a magic constant. Reachable only for envelopes whose
+         * positive span is invalid; behaviourally identical for every
+         * validated manifest. */
+        if (span_pos <= 0) return (uint16_t)((uint32_t)center & 0x0FFFu);
         counts = center + ((safe_theta * (pmax - center)) / span_pos);
     } else {
+        if (span_neg <= 0) return (uint16_t)((uint32_t)center & 0x0FFFu);
         counts = center + ((safe_theta * (center - pmin)) / span_neg);
     }
     counts = latch_clamp_i32(counts, pmin, pmax);
@@ -625,6 +686,53 @@ static void latch_record_tape(uint64_t tick,
     atomic_store_explicit(&g_tape_write_idx, idx + 1u, memory_order_release);
 }
 
+static void latch_record_governor_event(const latch_proposal_t *proposal,
+                                        bool frame_present,
+                                        bool frame_accepted,
+                                        uint64_t tick,
+                                        uint64_t cycles,
+                                        int32_t normalized_u,
+                                        int32_t theta_applied,
+                                        uint16_t fault_bits,
+                                        uint8_t mode,
+                                        governor_ladder_result_t ladder_result,
+                                        uint32_t seq) {
+    if (g_manifest.governor.enabled == 0u ||
+        (!frame_present && fault_bits == LATCH_FAULT_NONE && ladder_result.changed == 0u)) {
+        return;
+    }
+
+    uint64_t index = atomic_fetch_add_explicit(&g_gov_event_write_idx, 1u, memory_order_acq_rel);
+    if (index >= LATCH_GOV_EVENT_CAPACITY) {
+        atomic_store_explicit(&g_gov_event_overflow, 1u, memory_order_release);
+    }
+
+    latch_gov_event_t *event = &g_gov_events[index % LATCH_GOV_EVENT_CAPACITY];
+    memset(event, 0, sizeof(*event));
+    event->event_index = index;
+    event->tick = tick;
+    event->cycles = cycles;
+    event->seq = seq;
+    event->raw_u_mrad = frame_present ? proposal->u_mrad : 0;
+    event->normalized_u_mrad = normalized_u;
+    event->theta_applied_mrad = theta_applied;
+    event->unit_id = frame_present ? proposal->unit_id : 0u;
+    event->coherence_ctr = frame_present ? proposal->coherence_ctr : g_simplex.gov_last_coherence;
+    event->lease_remaining = g_simplex.gov_lease_remaining;
+    event->fault_bits = fault_bits;
+    event->mode = mode;
+    event->rung_before = (uint8_t)ladder_result.rung_before;
+    event->rung_after = (uint8_t)ladder_result.rung_after;
+    event->kind = frame_present ? proposal->kind : 0u;
+    event->verdict = !frame_present ? 0u :
+                     (frame_accepted ? 1u :
+                      (proposal->kind == GOVERNOR_WIRE_HEARTBEAT ? 2u :
+                       (proposal->kind == GOVERNOR_WIRE_SHRINK_REQ ? 3u : 4u)));
+    event->agent_state = frame_present ? proposal->agent_state : g_simplex.gov_agent_state;
+    event->confidence_q8 = frame_present ? proposal->confidence_q8 : 0u;
+    event->coherence_valid = g_simplex.gov_coherence_valid ? 1u : 0u;
+}
+
 static void latch_simplex_tick(latch_simplex_state_t *st,
                                latch_publish_buffer_t *pub) {
     /*
@@ -650,7 +758,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
      * the paths that return true, and the compiler cannot prove that across
      * the call. Zeroing it costs nothing (the field is only read when
      * has_new is true) and removes a spurious maybe-uninitialized report. */
-    latch_ipc_proposal_t prop;
+    latch_proposal_t prop;
     memset(&prop, 0, sizeof(prop));
     bool has_new = latch_consume_proposal(pub, &st->last_consumed_pub, &prop);
 
@@ -693,6 +801,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                                  (st->accel_mrad_tick2 == 0);
             st->last_seq           = 0u;   /* new sequence epoch */
             st->seq_valid          = false;
+            latch_governor_new_session(st);
             if (plant_at_rest) {
                 st->mode               = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
                                              ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
@@ -745,13 +854,33 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         tick_faults |= LATCH_FAULT_OPERATOR;
     }
 
+    bool gov_enabled = latch_governor_enabled();
+    bool gov_lease_renewed = false;
+    bool gov_lease_expired = false;
+    bool gov_frame_accepted = false;
+    bool gov_frame_coherent = false;
+    bool gov_command_valid = true;
+    bool gov_message_only = false;
     int32_t u_candidate = st->last_u_proposed_mrad;
     uint32_t seq_observed = st->last_seq;
+    /* `has_new` is later cleared for message-only/rejected frames so they
+     * cannot move the plant. Preserve physical input presence separately for
+     * the recovery ladder's frame accounting. */
+    const bool frame_present = has_new;
 
     if (has_new) {
+        bool gov_v2 = gov_enabled && prop.wire_version == 2u;
+        bool gov_heartbeat = gov_v2 && prop.kind == GOVERNOR_WIRE_HEARTBEAT;
+        bool gov_shrink = gov_v2 && prop.kind == GOVERNOR_WIRE_SHRINK_REQ;
+        gov_message_only = gov_heartbeat || gov_shrink;
         seq_observed = prop.seq;
-        st->last_u_proposed_mrad = prop.u_mrad;
-        u_candidate = prop.u_mrad;
+        if (gov_message_only) {
+            u_candidate = st->theta_mrad;
+        } else {
+            st->last_u_proposed_mrad = prop.u_mrad;
+            u_candidate = prop.u_mrad;
+        }
+        bool sequence_ok = false;
 
         /* 1. Check wire-level pre-faults from ingest */
         if (prop.pre_fault_bits != 0u) {
@@ -787,40 +916,233 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
             if (!st->seq_valid) {
                 if (prop.seq == 0u) {
                     tick_faults |= LATCH_FAULT_SEQ;
+                } else {
+                    sequence_ok = true;
                 }
             } else {
                 uint32_t delta = prop.seq - st->last_seq;
                 if (delta == 0u || delta > 0x7FFFFFFFu) {
                     tick_faults |= LATCH_FAULT_SEQ;
+                } else {
+                    sequence_ok = true;
                 }
             }
         }
 
-        if ((tick_faults & LATCH_FAULT_WIRE_MASK) != 0u) {
-            st->total_wire_faults++;
-        } else {
-            /* 4. Evaluate kinematic envelope and forward lookahead */
-            uint16_t env_faults = latch_check_envelope(
-                st->theta_mrad, st->velocity_mrad_tick, st->accel_mrad_tick2, u_candidate);
-            if (env_faults != LATCH_FAULT_NONE) {
-                tick_faults |= env_faults;
-                st->total_envelope_faults++;
+        if (gov_v2 && sequence_ok &&
+            (prop.kind == GOVERNOR_WIRE_HEARTBEAT ||
+             prop.kind == GOVERNOR_WIRE_CMD_V2 ||
+             prop.kind == GOVERNOR_WIRE_SHRINK_REQ)) {
+            if (!st->gov_v2_session) {
+                if (prop.kind == GOVERNOR_WIRE_SHRINK_REQ) {
+                    /* A limit request cannot create a session or lease. */
+                    tick_faults |= LATCH_FAULT_HEARTBEAT;
+                    gov_command_valid = false;
+                } else {
+                    st->gov_v2_session = true;
+                    st->gov_coherence_valid = true;
+                    st->gov_last_coherence = prop.coherence_ctr;
+                    st->gov_lease_remaining = g_manifest.governor.lease_ticks;
+                    st->gov_agent_state = prop.agent_state;
+                    gov_lease_renewed = true;
+                    gov_frame_coherent = true;
+                }
+            } else {
+                uint32_t delta = (prop.coherence_ctr - st->gov_last_coherence) & 0x00FFFFFFu;
+                if (delta == 0u || delta > g_manifest.governor.coherence_max_gap) {
+                    tick_faults |= LATCH_FAULT_HEARTBEAT;
+                    gov_command_valid = false;
+                } else {
+                    st->gov_last_coherence = prop.coherence_ctr;
+                    st->gov_agent_state = prop.agent_state;
+                    gov_frame_coherent = true;
+                    /* SHRINK_REQ carries telemetry but cannot keep its sender alive. */
+                    if (prop.kind == GOVERNOR_WIRE_HEARTBEAT ||
+                        prop.kind == GOVERNOR_WIRE_CMD_V2) {
+                        st->gov_lease_remaining = g_manifest.governor.lease_ticks;
+                        gov_lease_renewed = true;
+                    }
+                }
+            }
+            if (gov_frame_coherent && gov_heartbeat) {
+                if (st->gov_warmup_seen < UINT32_MAX) st->gov_warmup_seen++;
+            }
+            if (gov_frame_coherent && prop.kind == GOVERNOR_WIRE_CMD_V2 &&
+                st->gov_warmup_seen < g_manifest.governor.warmup_heartbeats) {
+                gov_command_valid = false;
+            }
+        } else if (gov_v2 && sequence_ok && prop.kind == GOVERNOR_WIRE_CMD) {
+            if (!st->gov_v2_session || st->gov_lease_remaining == 0u ||
+                st->gov_warmup_seen < g_manifest.governor.warmup_heartbeats) {
+                gov_command_valid = false;
             }
         }
 
+        if (gov_v2 && sequence_ok && gov_command_valid &&
+            prop.kind == GOVERNOR_WIRE_SHRINK_REQ) {
+            gov_gate_input_t gate_input = {
+                .rung = st->gov_ladder.rung,
+                .kind = prop.kind,
+                .confidence_q8 = prop.confidence_q8,
+                    .unit_id = prop.unit_id,
+                .has_v2_metadata = 1u,
+                .theta = st->theta_mrad,
+                .velocity = st->velocity_mrad_tick,
+                .acceleration = st->accel_mrad_tick2,
+                .candidate = prop.u_mrad
+            };
+            gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
+                                                       &g_manifest.governor,
+                                                       &st->gov_gate,
+                                                       &gate_input);
+            tick_faults |= gate.faults;
+            if (gate.command_valid == 0u) gov_command_valid = false;
+        }
+
+        if (gov_v2 && gov_message_only) gov_command_valid = false;
+
+        if ((tick_faults & LATCH_FAULT_WIRE_MASK) != 0u) {
+            st->total_wire_faults++;
+        } else if (gov_command_valid && !gov_message_only) {
+            int32_t target_mrad = u_candidate;
+            if (gov_v2 && (prop.kind == GOVERNOR_WIRE_CMD ||
+                           prop.kind == GOVERNOR_WIRE_CMD_V2)) {
+                gov_gate_input_t gate_input = {
+                    .rung = st->gov_ladder.rung,
+                    .kind = prop.kind,
+                    .confidence_q8 = prop.confidence_q8,
+                    .unit_id = prop.kind == GOVERNOR_WIRE_CMD_V2
+                                   ? prop.unit_id : g_manifest.governor.canonical_unit_id,
+                    .has_v2_metadata = gov_v2 ? 1u : 0u,
+                    .theta = st->theta_mrad,
+                    .velocity = st->velocity_mrad_tick,
+                    .acceleration = st->accel_mrad_tick2,
+                    .candidate = u_candidate
+                };
+                gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
+                                                           &g_manifest.governor,
+                                                           &st->gov_gate,
+                                                           &gate_input);
+                tick_faults |= gate.faults;
+                u_candidate = gate.candidate;
+                target_mrad = gate.normalized_target;
+                if (gate.command_valid == 0u) {
+                    gov_command_valid = false;
+                } else {
+                    st->last_u_proposed_mrad = gate.normalized_target;
+                }
+            }
+
+            if ((tick_faults & LATCH_FAULT_WIRE_MASK) == 0u &&
+                gov_command_valid && !gov_message_only) {
+                uint16_t env_faults = 0u;
+                if (target_mrad < g_manifest.envelope.theta_min_mrad ||
+                    target_mrad > g_manifest.envelope.theta_max_mrad) {
+                    env_faults |= LATCH_FAULT_BOUNDS;
+                }
+                if (latch_manifest_crossed_keepout(&g_manifest, st->theta_mrad, target_mrad)) {
+                    env_faults |= LATCH_FAULT_KEEPOUT;
+                }
+                /* 4. Evaluate kinematic envelope and forward lookahead */
+                env_faults |= latch_check_envelope(
+                    st->theta_mrad, st->velocity_mrad_tick, st->accel_mrad_tick2, u_candidate);
+                if (env_faults != LATCH_FAULT_NONE) {
+                    tick_faults |= env_faults;
+                    st->total_envelope_faults++;
+                }
+            }
+        }
+
+        if (gov_v2 && sequence_ok &&
+            (tick_faults & (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_RESERVED |
+                            LATCH_FAULT_SEQ)) == 0u) {
+            st->last_seq = prop.seq;
+            st->seq_valid = true;
+        }
         if (tick_faults == LATCH_FAULT_NONE) {
             st->last_seq       = prop.seq;
             st->seq_valid      = true;
             st->last_rx_cycles = cycles_in;
             st->last_rx_tick   = st->tick;
         }
+        if (gov_v2 && gov_lease_renewed) {
+            st->last_rx_cycles = cycles_in;
+            st->last_rx_tick = st->tick;
+            st->gov_last_lease_tick = st->tick;
+        }
+        if (gov_v2 && sequence_ok && gov_command_valid && !gov_message_only &&
+            tick_faults == LATCH_FAULT_NONE) {
+            gov_frame_accepted = true;
+        }
+        if (gov_v2 && (!gov_command_valid || gov_message_only)) {
+            u_candidate = st->theta_mrad;
+            has_new = false;
+        }
     } else {
         /* Watchdog timer check during active session */
-        uint64_t silent_ticks = (st->last_rx_tick == 0u)
-                                    ? st->tick
-                                    : (st->tick - st->last_rx_tick);
-        if (silent_ticks >= (uint64_t)g_manifest.timing.watchdog_ticks) {
-            tick_faults |= LATCH_FAULT_WATCHDOG;
+        if (!gov_enabled || !st->gov_v2_session) {
+            uint64_t silent_ticks = (st->last_rx_tick == 0u)
+                                        ? st->tick
+                                        : (st->tick - st->last_rx_tick);
+            if (silent_ticks >= (uint64_t)g_manifest.timing.watchdog_ticks) {
+                tick_faults |= LATCH_FAULT_WATCHDOG;
+            }
+        }
+    }
+
+    if (gov_enabled && st->gov_v2_session && !gov_lease_renewed) {
+        if (st->gov_lease_remaining > 0u) st->gov_lease_remaining--;
+        if (st->gov_lease_remaining == 0u) {
+            tick_faults |= LATCH_FAULT_HEARTBEAT;
+            gov_lease_expired = true;
+            st->gov_lease_remaining = g_manifest.governor.lease_ticks;
+        }
+    }
+
+    governor_ladder_result_t gov_ladder_result = {
+        .rung_before = st->gov_ladder.rung,
+        .rung_after = st->gov_ladder.rung,
+        .changed = 0u,
+        .hard_fault = 0u
+    };
+    bool gov_legacy_hard_fault = false;
+    if (gov_enabled) {
+        uint16_t ladder_faults = (uint16_t)(tick_faults &
+            (uint16_t)~(LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN));
+        bool demotion_event = gov_lease_expired ||
+            (tick_faults & (LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN)) != 0u;
+        governor_ladder_config_t ladder_config = latch_governor_ladder_config();
+        governor_ladder_input_t ladder_input = {
+            .fault_bits = ladder_faults,
+            .frame_accepted = gov_frame_accepted ? 1u : 0u,
+            .coherent = gov_frame_coherent ? 1u : 0u,
+            .frame_present = frame_present ? 1u : 0u,
+            .immediate_demotion = demotion_event ? 1u : 0u,
+            .safe_stop_complete =
+                (st->velocity_mrad_tick == 0 && st->accel_mrad_tick2 == 0) ? 1u : 0u,
+            .operator_release = (uint8_t)atomic_exchange_explicit(
+                &st->operator_release_pending, 0u, memory_order_acq_rel)
+        };
+        gov_ladder_result = governor_ladder_step(&ladder_config, &st->gov_ladder, &ladder_input);
+        uint16_t non_hard = (uint16_t)(g_manifest.governor.advise_fault_mask |
+                                       LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN);
+        gov_legacy_hard_fault = gov_ladder_result.hard_fault != 0u ||
+            (tick_faults & (uint16_t)~non_hard) != 0u ||
+            st->gov_ladder.rung == GOVERNOR_RUNG_LATCH;
+    }
+
+    if (gov_enabled && st->gov_ladder.rung == GOVERNOR_RUNG_SAFE_STOP) {
+        int64_t velocity = st->velocity_mrad_tick;
+        int64_t decel = g_manifest.governor.safe_stop_decel;
+        if (velocity > 0) velocity = velocity > decel ? velocity - decel : 0;
+        else if (velocity < 0) velocity = velocity < -decel ? velocity + decel : 0;
+        u_candidate = (int32_t)latch_clamp_i64((int64_t)st->theta_mrad + velocity,
+                                               INT32_MIN, INT32_MAX);
+        if (latch_check_envelope(st->theta_mrad, st->velocity_mrad_tick,
+                                 st->accel_mrad_tick2, u_candidate) != LATCH_FAULT_NONE) {
+            tick_faults |= LATCH_FAULT_RATE;
+            st->gov_ladder.rung = GOVERNOR_RUNG_LATCH;
+            gov_legacy_hard_fault = true;
         }
     }
 
@@ -829,7 +1151,31 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     uint32_t hold_home = g_manifest.recovery.hold_to_home_ticks;
     int32_t home_pos   = g_manifest.envelope.home_mrad;
 
-    if (tick_faults != LATCH_FAULT_NONE) {
+    if (gov_enabled) {
+        if (gov_legacy_hard_fault) {
+            st->clean_streak = 0u;
+            st->latched_faults |= tick_faults;
+            if (st->mode == (uint8_t)LATCH_MODE_HP) {
+                st->mode = (uint8_t)LATCH_MODE_HOLD;
+                st->hold_ticks_elapsed = 1u;
+            } else if (st->mode == (uint8_t)LATCH_MODE_HOLD) {
+                st->hold_ticks_elapsed++;
+                if (st->hold_ticks_elapsed >= hold_home && st->theta_mrad != home_pos &&
+                    latch_home_path_is_legal(st->theta_mrad)) {
+                    st->mode = (uint8_t)LATCH_MODE_HOME;
+                }
+            } else if (st->mode == (uint8_t)LATCH_MODE_HOME &&
+                       (tick_faults & ~(LATCH_FAULT_WATCHDOG | LATCH_FAULT_HEARTBEAT |
+                                        LATCH_FAULT_WIDEN)) != 0u) {
+                st->mode = (uint8_t)LATCH_MODE_HOLD;
+                st->hold_ticks_elapsed = 1u;
+            }
+        } else if (st->mode != (uint8_t)LATCH_MODE_HP &&
+                   st->mode == (uint8_t)LATCH_MODE_HOLD) {
+            st->mode = (uint8_t)LATCH_MODE_HP;
+            st->hold_ticks_elapsed = 0u;
+        }
+    } else if (tick_faults != LATCH_FAULT_NONE) {
         st->clean_streak = 0u;
         st->latched_faults |= tick_faults;
 
@@ -871,7 +1217,10 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     int32_t next_theta = st->theta_mrad;
     int32_t next_vel   = 0;
 
-    if (st->mode == (uint8_t)LATCH_MODE_HP) {
+    if (gov_enabled && st->gov_ladder.rung == GOVERNOR_RUNG_SAFE_STOP) {
+        next_theta = u_candidate;
+        next_vel = next_theta - st->theta_mrad;
+    } else if (st->mode == (uint8_t)LATCH_MODE_HP) {
         int32_t step = latch_clamp_i32(u_candidate - st->theta_mrad,
                                        -g_manifest.envelope.v_max,
                                        g_manifest.envelope.v_max);
@@ -956,6 +1305,16 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                           (uint16_t)st->mode,
                           tick_faults);
     }
+
+    /* GOVERNOR blackbox capture is fixed-size, single-writer, and memory-only.
+     * The ring holds raw records only -- the on-target recorder never hashes.
+     * Persistence happens when an operator runs `latchctl events --json`, and
+     * the rolling SHA-256 chain is computed offline over that dump by
+     * tools/gov_replay.py. */
+    latch_record_governor_event(&prop, frame_present, gov_frame_accepted,
+                                st->tick, cycles_in, u_candidate, next_theta,
+                                tick_faults, st->mode, gov_ladder_result,
+                                seq_observed);
 
     bool q_empty = (atomic_load_explicit(&pub->read_tail, memory_order_acquire) >=
                     atomic_load_explicit(&pub->write_head, memory_order_acquire));
@@ -1069,6 +1428,41 @@ static bool latch_fill_status(latch_status_reply_t *out) {
     return false;
 }
 
+static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    for (int tries = 0; tries < 4; ++tries) {
+        uint32_t g1 = 0u;
+        if (!latch_snapshot_wait_even(&g1)) return false;
+        atomic_thread_fence(memory_order_acquire);
+        if (!latch_fill_status(&out->latch)) return false;
+
+        out->extension_version = 2u;
+        out->enabled = g_manifest.governor.enabled;
+        out->rung = (uint32_t)g_simplex.gov_ladder.rung;
+        out->v2_session = g_simplex.gov_v2_session ? 1u : 0u;
+        out->lease_ticks_remaining = g_simplex.gov_lease_remaining;
+        uint64_t age = g_simplex.gov_v2_session &&
+                       g_simplex.tick >= g_simplex.gov_last_lease_tick
+                           ? g_simplex.tick - g_simplex.gov_last_lease_tick : 0u;
+        out->lease_age_ticks = age > UINT32_MAX ? UINT32_MAX : (uint32_t)age;
+        out->warmup_heartbeats_seen = g_simplex.gov_warmup_seen;
+        out->agent_state = g_simplex.gov_agent_state;
+        out->rate_tokens_remaining = g_simplex.gov_gate.rate_tokens;
+        out->shrink_active = g_simplex.gov_gate.shrink_active;
+        out->shrink_v_max = g_simplex.gov_gate.shrink_v;
+        out->shrink_scale_q8 = g_simplex.gov_gate.shrink_scale_q8;
+        out->coherence_ctr = g_simplex.gov_last_coherence;
+        out->coherence_valid = g_simplex.gov_coherence_valid ? 1u : 0u;
+        out->clean_command_streak = g_simplex.gov_ladder.clean_frame_streak;
+
+        atomic_thread_fence(memory_order_acquire);
+        uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if (g1 == g2) return true;
+    }
+    return false;
+}
+
 static bool latch_fill_tape_dump(latch_tape_dump_t *dump) {
     for (int retry = 0; retry < 5; ++retry) {
         uint32_t g1 = 0u;
@@ -1123,6 +1517,57 @@ static bool latch_fill_tape_dump(latch_tape_dump_t *dump) {
     }
     /* The writer never settled: the dump is not trustworthy. Report the
      * failure rather than serving a partial dump as if it were complete. */
+    return false;
+}
+
+static bool latch_fill_governor_event_dump(latch_gov_event_dump_t *dump) {
+    if (dump == NULL) return false;
+    for (int retry = 0; retry < 5; ++retry) {
+        uint32_t g1 = 0u;
+        if (!latch_snapshot_wait_even(&g1)) return false;
+        atomic_thread_fence(memory_order_acquire);
+
+        uint64_t write_index = atomic_load_explicit(&g_gov_event_write_idx,
+                                                   memory_order_acquire);
+        uint64_t start = dump->start_index;
+        uint32_t count = dump->count;
+        if (count == 0u || count > LATCH_GOV_EVENT_DUMP_MAX) {
+            count = LATCH_GOV_EVENT_DUMP_MAX;
+        }
+        if (start == UINT64_MAX) {
+            start = write_index > count ? write_index - count : 0u;
+        }
+
+        uint32_t dropped = 0u;
+        if (write_index > LATCH_GOV_EVENT_CAPACITY) {
+            uint64_t earliest = write_index - LATCH_GOV_EVENT_CAPACITY;
+            if (start < earliest) {
+                dropped = (uint32_t)(earliest - start);
+                start = earliest;
+            }
+        }
+
+        if (start >= write_index) {
+            count = 0u;
+        } else if ((uint64_t)count > write_index - start) {
+            count = (uint32_t)(write_index - start);
+        }
+
+        for (uint32_t i = 0u; i < count; ++i) {
+            dump->entries[i] = g_gov_events[(start + i) % LATCH_GOV_EVENT_CAPACITY];
+        }
+        dump->start_index = start;
+        dump->latest_index = write_index;
+        dump->count = count;
+        dump->dropped = dropped;
+        dump->overflow = atomic_load_explicit(&g_gov_event_overflow, memory_order_acquire);
+        dump->record_version = 1u;
+        memcpy(dump->manifest_sha256, g_manifest.sha256, sizeof(dump->manifest_sha256));
+
+        atomic_thread_fence(memory_order_acquire);
+        uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if (g1 == g2) return true;
+    }
     return false;
 }
 
@@ -1338,14 +1783,19 @@ static int latch_io_write(resmgr_context_t *ctp,
     }
 
     size_t nbytes = _IO_WRITE_GET_NBYTES(msg);
-    if (nbytes != sizeof(latch_ipc_proposal_t)) {
-        return EMSGSIZE;
-    }
+    if (nbytes != sizeof(latch_ipc_proposal_t) &&
+        nbytes != sizeof(latch_ipc_proposal_v2_t)) return EMSGSIZE;
 
-    latch_ipc_proposal_t prop;
-    ssize_t got = resmgr_msgread(ctp, &prop, sizeof(prop), sizeof(msg->i));
-    if (got != (ssize_t)sizeof(prop) || prop.ipc_magic != LATCH_IPC_PROPOSAL_MAGIC) {
+    uint8_t wire_message[sizeof(latch_ipc_proposal_v2_t)];
+    ssize_t got = resmgr_msgread(ctp, wire_message, nbytes, sizeof(msg->i));
+    latch_proposal_t prop;
+    if (got != (ssize_t)nbytes || latch_ipc_decode(wire_message, nbytes, &prop) != 0) {
         return EBADMSG;
+    }
+    if (prop.wire_version == 2u &&
+        (g_manifest.schema_version != LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION ||
+         g_manifest.protocol.version != 2u || g_manifest.governor.enabled == 0u)) {
+        return EPROTONOSUPPORT;
     }
 
     latch_publish_proposal(&g_pub_buf, &prop);
@@ -1380,6 +1830,9 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             atomic_store_explicit(&g_simplex.operator_hold_locked,
                                   cmd->lock_hold ? 1u : 0u,
                                   memory_order_release);
+            atomic_store_explicit(&g_simplex.operator_release_pending,
+                                  cmd->lock_hold ? 0u : 1u,
+                                  memory_order_release);
             nbytes_out = 0u;
             break;
         }
@@ -1405,12 +1858,31 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             nbytes_out = sizeof(rep);
             break;
         }
+        case (unsigned int)DCMD_LATCH_GET_GOV_STATUS: {
+            if (msg->i.nbytes < (int)sizeof(latch_governor_status_reply_t)) return EBADMSG;
+            latch_governor_status_reply_t rep;
+            if (!latch_fill_governor_status(&rep)) return EBUSY;
+            memcpy(data_ptr, &rep, sizeof(rep));
+            nbytes_out = sizeof(rep);
+            break;
+        }
         case (unsigned int)DCMD_LATCH_DUMP_TAPE: {
             if (msg->i.nbytes < (int)sizeof(latch_tape_dump_t)) {
                 return EBADMSG;
             }
             latch_tape_dump_t *dump = (latch_tape_dump_t *)data_ptr;
             if (!latch_fill_tape_dump(dump)) {
+                return EBUSY;
+            }
+            nbytes_out = sizeof(*dump);
+            break;
+        }
+        case (unsigned int)DCMD_LATCH_DUMP_GOV_EVENTS: {
+            if (msg->i.nbytes < (int)sizeof(latch_gov_event_dump_t)) {
+                return EBADMSG;
+            }
+            latch_gov_event_dump_t *dump = (latch_gov_event_dump_t *)data_ptr;
+            if (!latch_fill_governor_event_dump(dump)) {
                 return EBUSY;
             }
             nbytes_out = sizeof(*dump);
@@ -1557,6 +2029,7 @@ int main(int argc, char *argv[]) {
     g_simplex.period_ns     = g_manifest.timing.period_us * 1000u;
     g_simplex.ticks_per_sec = (int32_t)(1000000000u / g_simplex.period_ns);
     g_simplex.i2c_fd        = -1;
+    latch_governor_init_state(&g_simplex);
 
     /* Create custom ability "latch/actuator" with flags=0 (neither root nor non-root) */
     g_ability_actuator_id = procmgr_ability_create(g_manifest.paths.ability, 0);
@@ -1683,8 +2156,12 @@ static void latch_sim_reset(void) {
     memset(&g_simplex, 0, sizeof(g_simplex));
     memset(g_latch_tape, 0, sizeof(g_latch_tape));
     atomic_store_explicit(&g_tape_write_idx, 0u, memory_order_relaxed);
+    memset(g_gov_events, 0, sizeof(g_gov_events));
+    atomic_store_explicit(&g_gov_event_write_idx, 0u, memory_order_relaxed);
+    atomic_store_explicit(&g_gov_event_overflow, 0u, memory_order_relaxed);
     g_simplex.mode           = (uint8_t)LATCH_MODE_HP;
     g_simplex.theta_mrad     = g_manifest.envelope.home_mrad;
+    latch_governor_init_state(&g_simplex);
     g_simplex.session_active = false;
     atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
     g_simplex.period_ns      = g_manifest.timing.period_us * 1000u;
@@ -1708,6 +2185,9 @@ static int latch_sim_devctl_actuator(bool caller_has_ability,
         atomic_store_explicit(&g_simplex.operator_hold_locked,
                               cmd->lock_hold ? 1u : 0u,
                               memory_order_release);
+        atomic_store_explicit(&g_simplex.operator_release_pending,
+                              cmd->lock_hold ? 0u : 1u,
+                              memory_order_release);
         return 0;
     }
     if (dcmd == (unsigned int)DCMD_LATCH_GET_STATUS && payload != NULL) {
@@ -1715,8 +2195,14 @@ static int latch_sim_devctl_actuator(bool caller_has_ability,
          * served as valid would misreport the supervisor's state. */
         return latch_fill_status((latch_status_reply_t *)payload) ? 0 : EBUSY;
     }
+    if (dcmd == (unsigned int)DCMD_LATCH_GET_GOV_STATUS && payload != NULL) {
+        return latch_fill_governor_status((latch_governor_status_reply_t *)payload) ? 0 : EBUSY;
+    }
     if (dcmd == (unsigned int)DCMD_LATCH_DUMP_TAPE && payload != NULL) {
         return latch_fill_tape_dump((latch_tape_dump_t *)payload) ? 0 : EBUSY;
+    }
+    if (dcmd == (unsigned int)DCMD_LATCH_DUMP_GOV_EVENTS && payload != NULL) {
+        return latch_fill_governor_event_dump((latch_gov_event_dump_t *)payload) ? 0 : EBUSY;
     }
     return ENOTTY;
 }
@@ -1727,7 +2213,12 @@ static int latch_export_tape_csv(const char *csv_path) {
         perror("latchd: fopen csv");
         return -1;
     }
-    fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits\n");
+    bool gov_on = (g_manifest.governor.enabled != 0u);
+    if (gov_on) {
+        fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits,rung\n");
+    } else {
+        fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits\n");
+    }
     uint32_t wr_idx = atomic_load_explicit(&g_tape_write_idx, memory_order_acquire);
     /* The tape is WRITTEN with `% cap` (the manifest's tape.capacity), so it
      * must be READ the same way. The previous form used a fixed
@@ -1737,41 +2228,156 @@ static int latch_export_tape_csv(const char *csv_path) {
     if (cap == 0u || cap > LATCH_TAPE_CAPACITY) cap = LATCH_TAPE_CAPACITY;
     uint32_t count = (wr_idx > cap) ? cap : wr_idx;
     uint32_t start = wr_idx - count;
+    uint32_t gov_cnt = gov_on ? atomic_load_explicit(&g_gov_event_write_idx, memory_order_acquire) : 0u;
     for (uint32_t i = 0; i < count; ++i) {
         const latch_tape_entry_t *e = &g_latch_tape[(start + i) % cap];
         uint64_t lat = e->cycles_out - e->cycles_in;
-        fprintf(fp,
-                "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
-                e->tick,
-                e->cycles_in,
-                e->cycles_out,
-                lat,
-                e->seq,
-                e->u_proposed,
-                e->theta_applied,
-                (unsigned int)e->mode,
-                latch_mode_str(e->mode),
-                (unsigned int)e->fault_bits);
+        if (gov_on) {
+            uint8_t rung = (uint8_t)g_simplex.gov_ladder.rung;
+            for (uint32_t g = 0; g < gov_cnt && g < LATCH_GOV_EVENT_CAPACITY; ++g) {
+                if (g_gov_events[g].seq == e->seq && g_gov_events[g].tick == e->tick) {
+                    rung = g_gov_events[g].rung_after;
+                    break;
+                }
+            }
+            fprintf(fp,
+                    "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X,%u\n",
+                    e->tick,
+                    e->cycles_in,
+                    e->cycles_out,
+                    lat,
+                    e->seq,
+                    e->u_proposed,
+                    e->theta_applied,
+                    (unsigned int)e->mode,
+                    latch_mode_str(e->mode),
+                    (unsigned int)e->fault_bits,
+                    (unsigned int)rung);
+        } else {
+            fprintf(fp,
+                    "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
+                    e->tick,
+                    e->cycles_in,
+                    e->cycles_out,
+                    lat,
+                    e->seq,
+                    e->u_proposed,
+                    e->theta_applied,
+                    (unsigned int)e->mode,
+                    latch_mode_str(e->mode),
+                    (unsigned int)e->fault_bits);
+        }
     }
     fclose(fp);
     return 0;
 }
 
-static int latch_run_pipe_simulation(const char *csv_path) {
+static int latch_export_events_json(const char *json_path) {
+    if (json_path == NULL) return 0;
+    FILE *fp = fopen(json_path, "w");
+    if (fp == NULL) {
+        perror("latchd: fopen events json");
+        return -1;
+    }
+    latch_gov_event_dump_t dump;
+    memset(&dump, 0, sizeof(dump));
+    dump.start_index = UINT64_MAX;
+    dump.count = LATCH_GOV_EVENT_DUMP_MAX;
+    (void)latch_fill_governor_event_dump(&dump);
+
+    char sha_hex[65];
+    for (int i = 0; i < 32; ++i) snprintf(&sha_hex[i * 2], 3, "%02x", dump.manifest_sha256[i]);
+    sha_hex[64] = '\0';
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"start_index\": %" PRIu64 ",\n", dump.start_index);
+    fprintf(fp, "  \"latest_index\": %" PRIu64 ",\n", dump.latest_index);
+    fprintf(fp, "  \"count\": %u,\n", dump.count);
+    fprintf(fp, "  \"dropped\": %u,\n", dump.dropped);
+    fprintf(fp, "  \"overflow\": %u,\n", dump.overflow);
+    fprintf(fp, "  \"record_version\": %u,\n", dump.record_version);
+    fprintf(fp, "  \"manifest_sha256\": \"%s\",\n", sha_hex);
+    fprintf(fp, "  \"events\": [\n");
+    for (uint32_t i = 0; i < dump.count; ++i) {
+        const latch_gov_event_t *e = &dump.entries[i];
+        char ev_hex[125];
+        for (size_t b = 0; b < sizeof(*e); ++b) snprintf(&ev_hex[b * 2], 3, "%02x", ((const uint8_t *)e)[b]);
+        ev_hex[124] = '\0';
+        fprintf(fp, "    {\n");
+        fprintf(fp, "      \"event_index\": %" PRIu64 ",\n", e->event_index);
+        fprintf(fp, "      \"tick\": %" PRIu64 ",\n", e->tick);
+        fprintf(fp, "      \"cycles\": %" PRIu64 ",\n", e->cycles);
+        fprintf(fp, "      \"seq\": %u,\n", e->seq);
+        fprintf(fp, "      \"raw_u_mrad\": %d,\n", e->raw_u_mrad);
+        fprintf(fp, "      \"normalized_u_mrad\": %d,\n", e->normalized_u_mrad);
+        fprintf(fp, "      \"theta_applied_mrad\": %d,\n", e->theta_applied_mrad);
+        fprintf(fp, "      \"unit_id\": %u,\n", e->unit_id);
+        fprintf(fp, "      \"coherence_ctr\": %u,\n", e->coherence_ctr);
+        fprintf(fp, "      \"lease_remaining\": %u,\n", e->lease_remaining);
+        fprintf(fp, "      \"fault_bits\": %u,\n", (unsigned int)e->fault_bits);
+        fprintf(fp, "      \"mode\": %u,\n", (unsigned int)e->mode);
+        fprintf(fp, "      \"rung_before\": %u,\n", (unsigned int)e->rung_before);
+        fprintf(fp, "      \"rung_after\": %u,\n", (unsigned int)e->rung_after);
+        fprintf(fp, "      \"kind\": %u,\n", (unsigned int)e->kind);
+        fprintf(fp, "      \"verdict\": %u,\n", (unsigned int)e->verdict);
+        fprintf(fp, "      \"agent_state\": %u,\n", (unsigned int)e->agent_state);
+        fprintf(fp, "      \"confidence_q8\": %u,\n", (unsigned int)e->confidence_q8);
+        fprintf(fp, "      \"coherence_valid\": %u,\n", (unsigned int)e->coherence_valid);
+        fprintf(fp, "      \"bytes_hex\": \"%s\"\n", ev_hex);
+        fprintf(fp, "    }%s\n", (i + 1 < dump.count) ? "," : "");
+    }
+    fprintf(fp, "  ]\n");
+    fprintf(fp, "}\n");
+    fclose(fp);
+    return 0;
+}
+
+static int latch_run_pipe_simulation(const char *csv_path, const char *events_json_path) {
     latch_sim_reset();
-    latch_ipc_proposal_t prop;
+    latch_proposal_t prop;
 
     while (1) {
+        uint8_t wire_prop[sizeof(latch_ipc_proposal_v2_t)];
         size_t total = 0u;
-        uint8_t *p = (uint8_t *)&prop;
-        while (total < sizeof(prop)) {
-            ssize_t n = read(STDIN_FILENO, p + total, sizeof(prop) - total);
-            if (n <= 0) break;
-            total += (size_t)n;
+        while (total < sizeof(uint32_t)) {
+            ssize_t n = read(STDIN_FILENO, wire_prop + total, sizeof(uint32_t) - total);
+            if (n > 0) {
+                total += (size_t)n;
+            } else if (n == 0) {
+                break;
+            } else if (errno != EINTR) {
+                fprintf(stderr, "latchd: failed while reading IPC magic\n");
+                return EXIT_FAILURE;
+            }
         }
         if (total == 0u) break;
-        if (total != sizeof(prop) || prop.ipc_magic != LATCH_IPC_PROPOSAL_MAGIC) {
+        if (total != sizeof(uint32_t)) {
+            fprintf(stderr, "latchd: truncated IPC magic on pipe\n");
+            return EXIT_FAILURE;
+        }
+        uint32_t ipc_magic = 0u;
+        memcpy(&ipc_magic, wire_prop, sizeof(ipc_magic));
+        size_t packet_len = (ipc_magic == LATCH_IPC_PROPOSAL_MAGIC)
+                                ? sizeof(latch_ipc_proposal_t)
+                                : (ipc_magic == LATCH_IPC_PROPOSAL_V2_MAGIC)
+                                      ? sizeof(latch_ipc_proposal_v2_t) : 0u;
+        if (packet_len == 0u) {
             fprintf(stderr, "latchd: invalid IPC proposal on pipe\n");
+            return EXIT_FAILURE;
+        }
+        while (total < packet_len) {
+            ssize_t n = read(STDIN_FILENO, wire_prop + total, packet_len - total);
+            if (n > 0) {
+                total += (size_t)n;
+            } else if (n == 0) {
+                break;
+            } else if (errno != EINTR) {
+                fprintf(stderr, "latchd: failed while reading IPC proposal\n");
+                return EXIT_FAILURE;
+            }
+        }
+        if (total != packet_len || latch_ipc_decode(wire_prop, total, &prop) != 0) {
+            fprintf(stderr, "latchd: invalid or truncated IPC proposal on pipe\n");
             return EXIT_FAILURE;
         }
         /* At tick 110 (before tick runs), simulate unauthorized client devctl calling force_hold */
@@ -1788,6 +2394,11 @@ static int latch_run_pipe_simulation(const char *csv_path) {
             return EXIT_FAILURE;
         }
     }
+    if (events_json_path != NULL) {
+        if (latch_export_events_json(events_json_path) != 0) {
+            return EXIT_FAILURE;
+        }
+    }
 
     latch_status_reply_t st;
     memset(&st, 0, sizeof(st));
@@ -1801,6 +2412,241 @@ static int latch_run_pipe_simulation(const char *csv_path) {
            st.total_eperm_rejects,
            st.max_latency_cycles);
     return EXIT_SUCCESS;
+}
+
+static void latch_governor_test_frame(uint8_t kind, uint32_t seq, uint32_t coherence,
+                                      int32_t u_mrad, uint8_t confidence_q8) {
+    latch_proposal_t proposal;
+    memset(&proposal, 0, sizeof(proposal));
+    proposal.ipc_magic = LATCH_IPC_PROPOSAL_MAGIC;
+    proposal.seq = seq;
+    proposal.u_mrad = u_mrad;
+    proposal.wire_flags = kind;
+    proposal.ingest_cycles = latch_clock_cycles();
+    proposal.wire_version = 2u;
+    proposal.kind = kind;
+    proposal.confidence_q8 = confidence_q8;
+    proposal.unit_id = kind == GOVERNOR_WIRE_CMD_V2
+                           ? ((u_mrad == 370000) ? 999u : (u_mrad == 37000) ? 3u : 1u)
+                           : 0u;
+    proposal.agent_state = 1u;
+    proposal.coherence_ctr = coherence;
+    if (kind == GOVERNOR_WIRE_SHRINK_REQ) {
+        proposal.shrink_v = (uint32_t)u_mrad;
+        proposal.shrink_scale_q8 = confidence_q8;
+    }
+    latch_publish_proposal(&g_pub_buf, &proposal);
+    latch_simplex_tick(&g_simplex, &g_pub_buf);
+}
+
+static int latch_run_governor_integration_test(void) {
+    latch_manifest_t saved_manifest = g_manifest;
+    g_manifest.schema_version = LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION;
+    g_manifest.protocol.version = 2u;
+    g_manifest.governor.enabled = 1u;
+    g_manifest.governor.advise_fault_mask = LATCH_FAULT_UNIT;
+    g_manifest.governor.clamp_max_step = 5u;
+    g_manifest.governor.slow_scale_pct = 25u;
+    g_manifest.governor.safe_stop_decel = 10u;
+    g_manifest.governor.demote_faults_per_rung = 2u;
+    g_manifest.governor.promote_clean_frames = 2u;
+    g_manifest.governor.min_confidence_q8 = 128u;
+    g_manifest.governor.lease_ticks = 3u;
+    g_manifest.governor.coherence_max_gap = 3u;
+    g_manifest.governor.warmup_heartbeats = 2u;
+    g_manifest.governor.units_enabled = 1u;
+    g_manifest.governor.canonical_unit_id = 1u;
+    g_manifest.governor.unit_scale_count = 2u;
+    g_manifest.governor.alternate_unit_ids[0] = 2u;
+    g_manifest.governor.alternate_unit_ids[1] = 3u;
+    g_manifest.governor.conversion_numerators[0] = 1u;
+    g_manifest.governor.conversion_numerators[1] = 1u;
+    g_manifest.governor.conversion_denominators[0] = 57u;
+    g_manifest.governor.conversion_denominators[1] = 1000u;
+    g_manifest.governor.rate_enabled = 0u;
+    g_manifest.governor.rate_burst_tokens = 40u;
+    g_manifest.governor.rate_refill_per_tick = 2u;
+    g_manifest.governor.rate_sustain_per_tick = (uint32_t)g_manifest.envelope.v_max;
+    latch_sim_reset();
+
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 1u, 0x00FFFFFEu, 0, 0u);
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 2u, 1u, 0, 0u);
+    if ((g_simplex.active_faults & LATCH_FAULT_HEARTBEAT) != 0u ||
+        g_simplex.gov_last_coherence != 1u || g_simplex.gov_warmup_seen != 2u) {
+        fprintf(stderr, "FAIL: 24-bit coherence counter did not wrap within the configured gap\n");
+        goto fail;
+    }
+
+    latch_sim_reset();
+
+    latch_governor_test_frame(GOVERNOR_WIRE_SHRINK_REQ, 1u, 1u, 12, 128u);
+    if (g_simplex.gov_v2_session || g_simplex.gov_lease_remaining != 0u ||
+        g_simplex.gov_gate.shrink_active != 0u) {
+        fprintf(stderr, "FAIL: SHRINK_REQ created a v2 session or lease before a heartbeat/command\n");
+        goto fail;
+    }
+
+    latch_sim_reset();
+
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 1u, 1u, 0, 0u);
+    if (!g_simplex.gov_v2_session || g_simplex.gov_lease_remaining != 3u ||
+        g_simplex.gov_warmup_seen != 1u || g_simplex.theta_mrad != g_manifest.envelope.home_mrad) {
+        fprintf(stderr, "FAIL: GOVERNOR heartbeat did not open a lease-only warm-up session\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 2u, 1u, 0, 0u);
+    if ((g_simplex.active_faults & LATCH_FAULT_HEARTBEAT) == 0u ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_ADVISE ||
+        g_simplex.theta_mrad != g_manifest.envelope.home_mrad) {
+        fprintf(stderr, "FAIL: frozen coherence was not dropped and degraded one rung\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 3u, 2u, 0, 0u);
+    if (g_simplex.gov_warmup_seen != 2u || g_simplex.gov_lease_remaining != 3u) {
+        fprintf(stderr, "FAIL: advancing heartbeat did not restore lease and complete warm-up\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 4u, 3u, 0, 0u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_ADVISE ||
+        g_simplex.theta_mrad != g_manifest.envelope.home_mrad) {
+        fprintf(stderr, "FAIL: heartbeat-only traffic promoted the ladder or moved the plant\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 5u, 4u, 25, 255u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_ADVISE ||
+        g_simplex.gov_ladder.clean_frame_streak != 1u) {
+        fprintf(stderr, "FAIL: one clean command bypassed the configured recovery streak\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 6u, 5u, 25, 255u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_HP ||
+        g_simplex.mode != LATCH_MODE_HP || g_simplex.theta_mrad <= g_manifest.envelope.home_mrad ||
+        g_simplex.theta_mrad > g_manifest.envelope.v_max) {
+        fprintf(stderr, "FAIL: clean command streak did not recover and admit a confidence-limited command\n");
+        goto fail;
+    }
+
+    int32_t before_unit = g_simplex.theta_mrad;
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 7u, 6u, 370000, 255u);
+    if ((g_simplex.active_faults & LATCH_FAULT_UNIT) == 0u ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_ADVISE ||
+        g_simplex.theta_mrad != before_unit || g_simplex.mode != LATCH_MODE_HP) {
+        fprintf(stderr, "FAIL: unit anomaly changed plant state or entered legacy HOLD\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 8u, 7u, 370000, 255u);
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 9u, 8u, 370000, 255u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_CLAMP || g_simplex.theta_mrad != before_unit) {
+        fprintf(stderr, "FAIL: repeated advisory unit anomalies did not reach CLAMP safely\n");
+        goto fail;
+    }
+
+    latch_governor_test_frame(GOVERNOR_WIRE_SHRINK_REQ, 10u, 9u, 12, 128u);
+    if (g_simplex.gov_gate.shrink_v != 12u || g_simplex.gov_gate.shrink_scale_q8 != 128u ||
+        g_simplex.gov_lease_remaining != 2u) {
+        fprintf(stderr, "FAIL: SHRINK_REQ did not narrow limits without renewing the lease\n");
+        goto fail;
+    }
+    uint64_t last_lease_tick = g_simplex.gov_last_lease_tick;
+    latch_governor_test_frame(GOVERNOR_WIRE_SHRINK_REQ, 11u, 10u, 13, 150u);
+    if ((g_simplex.active_faults & LATCH_FAULT_WIDEN) == 0u ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_SLOW ||
+        g_simplex.gov_lease_remaining != 1u ||
+        g_simplex.gov_last_lease_tick != last_lease_tick) {
+        fprintf(stderr, "FAIL: wider SHRINK_REQ was not rejected with one-rung demotion\n");
+        goto fail;
+    }
+
+    latch_governor_status_reply_t lease_status;
+    if (latch_fill_governor_status(&lease_status) != true ||
+        lease_status.lease_age_ticks != (uint32_t)(g_simplex.tick - last_lease_tick)) {
+        fprintf(stderr, "FAIL: status age tracked SHRINK_REQ activity instead of lease renewal\n");
+        goto fail;
+    }
+
+    g_simplex.gov_lease_remaining = 1u;
+    latch_simplex_tick(&g_simplex, &g_pub_buf);
+    if ((g_simplex.active_faults & LATCH_FAULT_HEARTBEAT) == 0u ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_SAFE_STOP) {
+        fprintf(stderr, "FAIL: host-tick lease expiry did not demote exactly one rung\n");
+        goto fail;
+    }
+
+    /* A hard envelope fault must still enter the legacy HOLD path and LATCH rung. */
+    g_simplex.gov_ladder.rung = GOVERNOR_RUNG_HP;
+    g_simplex.gov_gate.shrink_active = 0u;
+    g_simplex.gov_gate.rate_tokens = 40u;
+    g_simplex.theta_mrad = 240;
+    g_simplex.velocity_mrad_tick = 0;
+    g_simplex.accel_mrad_tick2 = 0;
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD, 12u, 0u, 660, 0u);
+    if ((g_simplex.active_faults & LATCH_FAULT_KEEPOUT) == 0u ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_LATCH ||
+        g_simplex.mode != LATCH_MODE_HOLD || g_simplex.theta_mrad != 240) {
+        fprintf(stderr, "FAIL: hard envelope fault did not retain LATCH/HOLD authority\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 13u, 11u, 0, 0u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_LATCH) {
+        fprintf(stderr, "FAIL: LATCH recovered without an operator release\n");
+        goto fail;
+    }
+    latch_force_hold_cmd_t release = { .lock_hold = 0u, .reason_code = 7u };
+    if (latch_sim_devctl_actuator(true, (unsigned int)DCMD_LATCH_FORCE_HOLD, &release) != 0) {
+        fprintf(stderr, "FAIL: authorized operator release command failed\n");
+        goto fail;
+    }
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 14u, 12u, 0, 0u);
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 15u, 13u, 25, 255u);
+    latch_governor_test_frame(GOVERNOR_WIRE_CMD_V2, 16u, 14u, 25, 255u);
+    if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_SAFE_STOP) {
+        fprintf(stderr, "FAIL: operator release plus clean command streak did not enter SAFE_STOP\n");
+        goto fail;
+    }
+    latch_governor_status_reply_t status;
+    if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_GOV_STATUS,
+                                  &status) != 0 || status.extension_version != 2u ||
+        status.enabled != 1u || status.rung != GOVERNOR_RUNG_SAFE_STOP ||
+        status.v2_session != 1u || status.coherence_ctr != 14u) {
+        fprintf(stderr, "FAIL: versioned GOVERNOR status did not expose a coherent policy snapshot\n");
+        goto fail;
+    }
+
+    latch_gov_event_dump_t edump;
+    memset(&edump, 0, sizeof(edump));
+    edump.start_index = UINT64_MAX;
+    edump.count = 64;
+    if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_DUMP_GOV_EVENTS, &edump) != 0 ||
+        edump.count == 0u || edump.latest_index == 0u || edump.record_version != 1u) {
+        fprintf(stderr, "FAIL: DCMD_LATCH_DUMP_GOV_EVENTS did not expose a coherent event dump\n");
+        goto fail;
+    }
+
+    /* Test ring buffer overflow, wrap-around and pagination clamping */
+    latch_proposal_t dummy_prop = { .kind = GOVERNOR_WIRE_CMD_V2, .u_mrad = 10, .unit_id = 0, .coherence_ctr = 20 };
+    governor_ladder_result_t dummy_lad = { .rung_before = GOVERNOR_RUNG_HP, .rung_after = GOVERNOR_RUNG_HP };
+    for (uint32_t i = 0; i < LATCH_GOV_EVENT_CAPACITY + 10u; ++i) {
+        latch_record_governor_event(&dummy_prop, true, true, 1000u + i, 2000u + i, 10, 10,
+                                    LATCH_FAULT_NONE, LATCH_MODE_HP, dummy_lad, 100u + i);
+    }
+    memset(&edump, 0, sizeof(edump));
+    edump.start_index = 0u; /* overwritten */
+    edump.count = 32u;
+    if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_DUMP_GOV_EVENTS, &edump) != 0 ||
+        edump.overflow != 1u || edump.dropped == 0u || edump.start_index == 0u) {
+        fprintf(stderr, "FAIL: circular event ring did not report overflow/dropped on wrap\n");
+        goto fail;
+    }
+
+    g_manifest = saved_manifest;
+    latch_sim_reset();
+    puts("[GOVERNOR_INTEGRATION] PASS: lease, coherence, warm-up, prechecks, ladder, hard-fault fallback and operator release");
+    return 0;
+
+fail:
+    g_manifest = saved_manifest;
+    latch_sim_reset();
+    return -1;
 }
 
 static int latch_run_self_tests(void) {
@@ -1823,7 +2669,7 @@ static int latch_run_self_tests(void) {
     latch_publish_buffer_t test_buf;
     memset(&test_buf, 0, sizeof(test_buf));
     for (uint32_t s = 1; s <= 32; ++s) {
-        latch_ipc_proposal_t in = {
+        latch_proposal_t in = {
             .ipc_magic = LATCH_IPC_PROPOSAL_MAGIC,
             .seq = s,
             .u_mrad = (int32_t)(s * 10),
@@ -1835,7 +2681,7 @@ static int latch_run_self_tests(void) {
     }
     for (uint32_t s = 1; s <= 32; ++s) {
         uint32_t consumed_gen = s - 1;
-        latch_ipc_proposal_t out;
+        latch_proposal_t out;
         bool ok = latch_consume_proposal(&test_buf, &consumed_gen, &out);
         if (!ok || out.seq != s || out.u_mrad != (int32_t)(s * 10)) {
             fprintf(stderr, "FAIL: Ring buffer FIFO test failed at sequence %u\n", s);
@@ -1858,7 +2704,7 @@ static int latch_run_self_tests(void) {
     uint32_t seq = 1u;
     for (int i = 0; i < 10; ++i) {
         pos += dir * step;
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
             .u_mrad         = pos,
@@ -1879,7 +2725,7 @@ static int latch_run_self_tests(void) {
 
     /* Fault 1: Keep-out box violation */
     {
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
             .u_mrad         = keepout_val,
@@ -1899,7 +2745,7 @@ static int latch_run_self_tests(void) {
 
     /* 25-Clean-Frame Hysteresis recovery back to HP */
     for (uint32_t i = 0; i < g_manifest.recovery.hysteresis_clean_frames; ++i) {
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq++,
             .u_mrad         = last_held_pos,
@@ -1917,7 +2763,7 @@ static int latch_run_self_tests(void) {
 
     /* Fault 2: CRC corruption flagged by ingest */
     {
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = 0u,
             .u_mrad         = 0,
@@ -1936,7 +2782,7 @@ static int latch_run_self_tests(void) {
 
     /* Fault 3: Sequence replay */
     {
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
             .seq            = seq - 1u,
             .u_mrad         = last_held_pos,
@@ -2017,7 +2863,7 @@ static int latch_run_self_tests(void) {
     /* Now send Frame #1 after wait: should start cleanly in HP */
     pos = home + dir * step;
     {
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic = LATCH_IPC_PROPOSAL_MAGIC, .seq = 1u, .u_mrad = pos,
             .wire_flags = 0u, .pre_fault_bits = LATCH_FAULT_NONE, .ingest_cycles = latch_clock_cycles()
         };
@@ -2032,7 +2878,7 @@ static int latch_run_self_tests(void) {
     /* Test 8: Writer EOF disconnect mid-motion does NOT teleport in 1 tick; retracts via WATCHDOG->HOLD->HOME */
     for (int i = 0; i < 6; ++i) {
         pos += dir * step;
-        latch_ipc_proposal_t p = {
+        latch_proposal_t p = {
             .ipc_magic = LATCH_IPC_PROPOSAL_MAGIC, .seq = (uint32_t)(2 + i), .u_mrad = pos,
             .wire_flags = 0u, .pre_fault_bits = LATCH_FAULT_NONE, .ingest_cycles = latch_clock_cycles()
         };
@@ -2075,6 +2921,10 @@ static int latch_run_self_tests(void) {
         }
     }
 
+    if (latch_run_governor_integration_test() != 0) {
+        return EXIT_FAILURE;
+    }
+
     printf("[LATCH_HOST_SIM] PASS: All 9 safety, EOF, parser & Seqlock tests verified (PWM center=%u counts).\n",
            (unsigned int)latch_mrad_to_pca9685_off(0));
     return EXIT_SUCCESS;
@@ -2083,6 +2933,7 @@ static int latch_run_self_tests(void) {
 int main(int argc, char *argv[]) {
     bool pipe_mode = false;
     const char *csv_path = NULL;
+    const char *events_json_path = NULL;
     const char *manifest_path = "latch.manifest";
 
     for (int i = 1; i < argc; ++i) {
@@ -2090,6 +2941,8 @@ int main(int argc, char *argv[]) {
             pipe_mode = true;
         } else if (strcmp(argv[i], "--csv") == 0 && i + 1 < argc) {
             csv_path = argv[++i];
+        } else if (strcmp(argv[i], "--events-json") == 0 && i + 1 < argc) {
+            events_json_path = argv[++i];
         } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
             manifest_path = argv[++i];
         }
@@ -2110,7 +2963,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (pipe_mode) {
-        return latch_run_pipe_simulation(csv_path);
+        return latch_run_pipe_simulation(csv_path, events_json_path);
     }
     return latch_run_self_tests();
 }

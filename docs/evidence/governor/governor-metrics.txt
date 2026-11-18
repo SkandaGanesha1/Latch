@@ -1,0 +1,69 @@
+================================================================================
+           LATCH GOVERNOR — ADVERSARIAL ATTACK RIG & SAFETY METRICS             
+ Execution: host-sim build (qnx/build/host-sim/latchd) of the QNX SDP 8.0
+           supervisor sources, run on the x86_64 build host.
+           On-target proof: governor-qemu-verify.txt / governor-qemu-console.txt.
+ Test Date: 2026-11-18
+================================================================================
+
+EXECUTIVE SUMMARY:
+  Total Adversarial Attack Scenarios : 5
+  Total Ticks Evaluated              : 105
+  Total Keep-Out Zone Intrusions     : 0 (Envelopes Breached: 0.0%)
+  Deterministic Fault Detection Rate : 100.0% (5/5 attacks detected)
+  Supervisory Ladder Transitions     : Deterministic demotion & bounded hysteresis
+  Overall Safety Suite Verdict       : PASS (0.0% failure rate)
+
+--------------------------------------------------------------------------------
+ATTACK SCORECARD BREAKDOWN:
+--------------------------------------------------------------------------------
+1. Attack A1: Rogue Unit Injection
+   - Evaluated Ticks : 8
+   - Target Parameter: u=370000 mrad with unmapped unit_id=999
+   - Invariant Result: LATCH_FAULT_UNIT (bit 12, 0x1000) asserted
+   - Ladder Reaction : Demoted HP -> ADVISE -> CLAMP on 3 faults
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+2. Attack A2: Rate Flood Attack
+   - Evaluated Ticks : 5
+   - Target Parameter: Delta u = 500 mrad in 1 ms (exceeding v_max=25 mrad/tick)
+   - Invariant Result: LATCH_FAULT_RATE (bit 7, 0x0080) asserted
+   - Actuator Control: Clamped to 0 mrad step (within legal boundary)
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+3. Attack A4: Deadman Lease Trip & Recovery
+   - Evaluated Ticks : 79
+   - Target Parameter: > 100 ms heartbeat silence -> lease expiry -> 25 recovery
+   - Invariant Result: LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) asserted
+   - Hold Invariant  : Heartbeat traffic held lease without promotion credit
+   - Recovery Proof  : Exactly 25 clean commands promoted ADVISE -> HP
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+4. Attack A5: Coherence Spoof Attack
+   - Evaluated Ticks : 6
+   - Target Parameter: Frozen counter (delta=0) and forward jump (delta=10 > gap=3)
+   - Invariant Result: LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) asserted
+   - Ladder Reaction : HP -> ADVISE (frozen) -> CLAMP (jump)
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+5. Attack A6: Sequence Replay Attack
+   - Evaluated Ticks : 7
+   - Target Parameter: Replay of past sequence number (seq <= last_seq)
+   - Invariant Result: LATCH_FAULT_SEQ (bit 2, 0x0004) asserted
+   - Supervisory FSM : Transitioned to LATCH (HOLD mode)
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+--------------------------------------------------------------------------------
+UNIVERSAL CRITERIA ATTESTATION:
+  [CRITERION 1] Zero Keep-Out Envelope Intrusions (0% Breach Rate): SATISFIED
+  [CRITERION 2] Deterministic Microkernel Fault Detection         : SATISFIED
+  [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
+  [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
+================================================================================
+[CONCLUSION] All 105 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
+             (same C sources as the on-target binary; suite wall time 0.037 s).

@@ -1,0 +1,103 @@
+================================================================================
+LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION
+Date: 2026-11-18T03:56:22Z
+Host: Linux 7.3.3-300.fc45.x86_64 x86_64
+Compiler: gcc (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)
+================================================================================
+
+--- 1. GOVERNOR MANIFEST TESTS (governor_manifest_test.py) ---
+[GOVERNOR_MANIFEST] PASS enabled schema-3 contract with wire v2
+[GOVERNOR_MANIFEST] PASS disabled schema-3 contract with wire v1
+[GOVERNOR_MANIFEST] PASS enabled contract rejects mismatched protocol v1
+[GOVERNOR_MANIFEST] PASS unknown governor key rejected
+[GOVERNOR_MANIFEST] PASS duplicate governor key rejected
+[GOVERNOR_MANIFEST] PASS missing required governor setting rejected
+[GOVERNOR_MANIFEST] PASS invalid canonical unit ID rejected
+[GOVERNOR_MANIFEST] PASS mismatched unit conversion arrays rejected
+[GOVERNOR_MANIFEST] PASS disabled GOVERNOR cannot select protocol v2
+[GOVERNOR_MANIFEST] PASS overlapping keep-out intervals rejected
+[GOVERNOR_MANIFEST] PASS advisory mask with DOSE bit admitted
+[GOVERNOR_MANIFEST] PASS advisory mask with unauthorized bits rejected
+[GOVERNOR_MANIFEST] PASS syringe governor schema-3 contract verified
+[GOVERNOR_MANIFEST] PASS syringe contract clamp_max_step exceeding v_max rejected
+
+--- 2. GOVERNOR E2E INTEGRATION TESTS (governor_e2e.py) ---
+[GOVERNOR_SCENARIO_1] PASS: keepout violation enters HOLD and LATCH immediately (not ADVISE)
+[GOVERNOR_SCENARIO_2] PASS: v1 SILENCE=0x80 is fail-closed (never read as HEARTBEAT) and v2 rejects 0x80
+[GOVERNOR_SCENARIO_3] PASS: global assertion verified: u=370000 and all commands never land theta in keepout [250, 650]
+[GOVERNOR_SCENARIO_4] PASS: deadman lease expiry enforces deterministic graded ladder demotion
+[GOVERNOR_SCENARIO_5] PASS: heartbeat traffic renews lease but cannot recover rung (streak stays 0, plant unmoved)
+[GOVERNOR_SCENARIO_6] PASS: envelope widening request vetoed with LATCH_FAULT_WIDEN and one-rung demotion
+[GOVERNOR_SCENARIO_7] PASS: medical syringe governor enforces DOSE fault, rate clamping, and ladder degradation
+[GOVERNOR_E2E] PASS: all 6 priority governor scenarios verified
+
+--- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---
+================================================================================
+ LATCH GOVERNOR — Unified Adversarial Attack Rig & Invariant Verification Suite 
+ Target: QNX SDP 8.0 Microkernel Safety Interlock & Dead Man's Switch           
+================================================================================
+
+=== [ATTACK A1: ROGUE UNIT INJECTION] ===
+Scenario: Injecting u=370000 with unmapped unit_id=999...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] FAULT_UNIT asserted on all 4 rogue proposals.
+  [PASS] Supervisory ladder demoted to CLAMP on threshold.
+  [PASS] Valid rational conversion unit_id=3 admitted cleanly.
+[ATTACK A1 VERDICT] PASS
+
+=== [ATTACK A2: RATE FLOOD ATTACK] ===
+Scenario: Injecting Delta u = 500 mrad in 1 tick to exhaust rate limiter...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] FAULT_RATE asserted on rate-flood proposal (faults=0x8080).
+  [PASS] Proposed step 500 mrad was clamped to 0 mrad (<= v_max 25 mrad/tick).
+[ATTACK A2 VERDICT] PASS
+
+=== [ATTACK A4: STANDALONE DEADMAN LEASE TRIP] ===
+Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Silence...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] FAULT_HEARTBEAT asserted and ladder demoted to ADVISE on lease expiry.
+  [PASS] Heartbeat hold maintained ADVISE without gaining recovery credit.
+  [PASS] Exactly 25 clean commands promoted supervisory rung back to HP.
+  [PASS] Final deadman silence dropped system into fail-closed LATCH.
+[ATTACK A4 VERDICT] PASS
+
+=== [ATTACK A5: COHERENCE SPOOF ATTACK] ===
+Scenario: Injecting frozen counter (delta=0) and forward jump (delta=10 > max_gap=3)...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] Frozen coherence (delta=0) asserted FAULT_HEARTBEAT and demoted HP -> ADVISE.
+  [PASS] Coherence jump (delta=10 > 3) asserted FAULT_HEARTBEAT and demoted ADVISE -> CLAMP.
+  [PASS] Spoofed proposals rejected fail-closed, plant held stationary.
+[ATTACK A5 VERDICT] PASS
+
+=== [ATTACK A6: SEQUENCE REPLAY ATTACK] ===
+Scenario: Capturing legitimate frames and replaying older/duplicate seq...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] Replayed sequence #3 asserted FAULT_SEQ (faults=0x0004).
+  [PASS] Replay attack forced immediate fail-closed transition to LATCH (HOLD mode).
+  [PASS] Plant held stationary at 30 mrad, malicious u=100 rejected.
+[ATTACK A6 VERDICT] PASS
+
+================================================================================
+                         ADVERSARIAL EVALUATION SCORECARD                       
+================================================================================
+ID   | Attack Scenario                  | Ticks  | Fault Bit Verified | Status
+------------------------------------------------------------------------------
+A1   | Rogue Unit Injection             | 8      | FAULT_UNIT (bit 12 | PASS  
+A2   | Rate Flood Attack                | 5      | FAULT_RATE (bit 7, | PASS  
+A4   | Deadman Lease Trip & Recovery    | 79     | FAULT_HEARTBEAT (b | PASS  
+A5   | Coherence Spoof Attack           | 6      | FAULT_HEARTBEAT (b | PASS  
+A6   | Sequence Replay Attack           | 7      | FAULT_SEQ (bit 2,  | PASS  
+------------------------------------------------------------------------------
+Total Ticks Evaluated     : 105
+Total Keep-Out Intrusions : 0 (Envelopes Breached: 0.0%)
+Execution Wall Time       : 0.024 s
+================================================================================
+
+UNIVERSAL SAFETY CRITERIA AUDIT:
+  [CRITERION 1] Zero Keep-Out Envelope Intrusions (0% Breach Rate): SATISFIED
+  [CRITERION 2] Deterministic Microkernel Fault Detection         : SATISFIED
+  [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
+  [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
+--------------------------------------------------------------------------------
+[SUITE VERDICT] ALL 5 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
+

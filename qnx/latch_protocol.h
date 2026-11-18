@@ -3,7 +3,7 @@
  *
  * LATCH — Last Authority for Trusted Control Handoff (QNX SDP 8.0)
  *
- * 32-byte packed little-endian wire protocol, internal IPC proposal message,
+ * 32-byte packed little-endian wire protocol, versioned IPC proposal message,
  * resource-manager devctl() commands, integer kinematic safety envelope
  * constants, Simplex mode/fault bitmasks, and 4096-entry .bss cycle tape.
  *
@@ -74,11 +74,11 @@ extern "C" {
  * 0       magic     uint32_t  0x4C415448 ('LATH')
  * 4       version   uint16_t  1
  * 6       joint     uint8_t   0 only in this build
- * 7       flags     uint8_t   Guest demo bits; ignored by host for safety
+ * 7       flags/kind uint8_t  v1 demo bits; v2 version-gated message kind
  * 8       seq       uint32_t  Must strictly exceed last_accepted (seq > last_seq)
  * 12      u_mrad    int32_t   Proposed position in manifest units (integer)
- * 16      crc32     uint32_t  IEEE 802.3 CRC32 over bytes [0, 16)
- * 20      reserved  uint8[12] Must be all zero; non-zero is a fault
+ * 16      crc32     uint32_t  v1 [0,16); v2 concatenated [0,16)+[20,32)
+ * 20..31  metadata  uint8[12] v1 zero; v2 kind-specific fields, CRC covered
  * ========================================================================== */
 
 #define LATCH_WIRE_MAGIC         0x4C415448u  /* "LATH" little-endian u32    */
@@ -154,6 +154,11 @@ typedef enum latch_mode {
 #define LATCH_FAULT_I2C          (1u << 9)   /* PCA9685 I2C transfer error    */
 #define LATCH_FAULT_OPERATOR     (1u << 10)  /* Operator GPIO / devctl HOLD   */
 #define LATCH_FAULT_EPERM        (1u << 11)  /* Unauthorized actuator devctl  */
+#define LATCH_FAULT_UNIT         (1u << 12)  /* Unknown or invalid unit metadata   */
+#define LATCH_FAULT_HEARTBEAT    (1u << 13)  /* Guest lease/coherence fault    */
+#define LATCH_FAULT_WIDEN        (1u << 14)  /* Guest requested wider limits  */
+#define LATCH_FAULT_DOSE         (1u << 15)  /* Dose rate exceeds ladder rung limit or envelope */
+#define LATCH_FAULT_CONSIST      LATCH_FAULT_DOSE /* Backward compatibility alias */
 
 #define LATCH_FAULT_WIRE_MASK \
     (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_SEQ | \
@@ -198,6 +203,54 @@ typedef struct __attribute__((packed)) latch_ipc_proposal {
 _Static_assert(sizeof(latch_ipc_proposal_t) == 24,
                "latch_ipc_proposal_t must be 24 bytes packed");
 
+#define LATCH_IPC_PROPOSAL_V2_MAGIC 0x4C505232u /* "LPR2" */
+
+typedef struct __attribute__((packed)) latch_ipc_proposal_v2 {
+    uint32_t ipc_magic;
+    uint32_t seq;
+    int32_t  u_mrad;
+    uint16_t wire_flags;
+    uint16_t pre_fault_bits;
+    uint64_t ingest_cycles;
+    uint16_t ipc_version;
+    uint8_t  wire_version;
+    uint8_t  kind;
+    uint8_t  confidence_q8;
+    uint8_t  agent_state;
+    uint16_t reserved0;
+    uint32_t coherence_ctr;
+    uint32_t shrink_v;
+    uint32_t shrink_scale_q8;
+    uint32_t unit_id;
+} latch_ipc_proposal_v2_t;
+
+_Static_assert(sizeof(latch_ipc_proposal_v2_t) == 48u,
+               "latch_ipc_proposal_v2_t must be exactly 48 bytes");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, ipc_version) == 24u,
+               "LPR2 ipc_version offset changed");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, coherence_ctr) == 32u,
+               "LPR2 coherence counter offset changed");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, unit_id) == 44u,
+               "LPR2 unit_id offset changed");
+
+/* Native supervisor-side representation; never sent across the IPC boundary. */
+typedef struct latch_proposal {
+    uint32_t ipc_magic;
+    uint32_t seq;
+    int32_t  u_mrad;
+    uint16_t wire_flags;
+    uint16_t pre_fault_bits;
+    uint64_t ingest_cycles;
+    uint8_t  wire_version;
+    uint8_t  kind;
+    uint8_t  confidence_q8;
+    uint8_t  agent_state;
+    uint32_t coherence_ctr;
+    uint32_t shrink_v;
+    uint32_t shrink_scale_q8;
+    uint32_t unit_id;
+} latch_proposal_t;
+
 /* ==========================================================================
  * 7. Actuator Node (/dev/latch/actuator) devctl() Payloads & Commands
  * ========================================================================== */
@@ -236,6 +289,26 @@ typedef struct latch_status_reply {
     uint8_t  manifest_sha256[32];
 } latch_status_reply_t;
 
+/* Versioned extension; legacy GET_STATUS remains byte-for-byte unchanged. */
+typedef struct latch_governor_status_reply {
+    latch_status_reply_t latch;
+    uint32_t extension_version;
+    uint32_t enabled;
+    uint32_t rung;
+    uint32_t v2_session;
+    uint32_t lease_ticks_remaining;
+    uint32_t lease_age_ticks;
+    uint32_t warmup_heartbeats_seen;
+    uint32_t agent_state;
+    uint32_t rate_tokens_remaining;
+    uint32_t shrink_active;
+    uint32_t shrink_v_max;
+    uint32_t shrink_scale_q8;
+    uint32_t coherence_ctr;
+    uint32_t coherence_valid;
+    uint32_t clean_command_streak;
+} latch_governor_status_reply_t;
+
 #define LATCH_DUMP_MAX_ENTRIES   128u
 
 typedef struct latch_tape_dump {
@@ -246,12 +319,56 @@ typedef struct latch_tape_dump {
     latch_tape_entry_t entries[LATCH_DUMP_MAX_ENTRIES];
 } latch_tape_dump_t;
 
+/* GOVERNOR event ABI is separate from the frozen legacy tape/status ABI. */
+#define LATCH_GOV_EVENT_CAPACITY 4096u
+#define LATCH_GOV_EVENT_DUMP_MAX 64u
+
+typedef struct __attribute__((packed)) latch_gov_event {
+    uint64_t event_index;
+    uint64_t tick;
+    uint64_t cycles;
+    uint32_t seq;
+    int32_t raw_u_mrad;
+    int32_t normalized_u_mrad;
+    int32_t theta_applied_mrad;
+    uint32_t unit_id;
+    uint32_t coherence_ctr;
+    uint32_t lease_remaining;
+    uint16_t fault_bits;
+    uint8_t mode;
+    uint8_t rung_before;
+    uint8_t rung_after;
+    uint8_t kind;
+    uint8_t verdict;
+    uint8_t agent_state;
+    uint8_t confidence_q8;
+    uint8_t coherence_valid;
+} latch_gov_event_t;
+
+_Static_assert(sizeof(latch_gov_event_t) == 62u,
+               "latch_gov_event_t must be 62 bytes packed");
+
+typedef struct latch_gov_event_dump {
+    uint64_t start_index;
+    uint64_t latest_index;
+    uint32_t count;
+    uint32_t dropped;
+    uint32_t overflow;
+    uint32_t record_version;
+    uint8_t manifest_sha256[32];
+    latch_gov_event_t entries[LATCH_GOV_EVENT_DUMP_MAX];
+} latch_gov_event_dump_t;
+
 #define DCMD_LATCH_FORCE_HOLD \
     __DIOT(_DCMD_MISC, 0x40, latch_force_hold_cmd_t)
 #define DCMD_LATCH_GET_STATUS \
     __DIOF(_DCMD_MISC, 0x41, latch_status_reply_t)
 #define DCMD_LATCH_DUMP_TAPE \
     __DIOTF(_DCMD_MISC, 0x42, latch_tape_dump_t)
+#define DCMD_LATCH_GET_GOV_STATUS \
+    __DIOF(_DCMD_MISC, 0x43, latch_governor_status_reply_t)
+#define DCMD_LATCH_DUMP_GOV_EVENTS \
+    __DIOTF(_DCMD_MISC, 0x44, latch_gov_event_dump_t)
 
 /* ==========================================================================
  * Cross-Process Payload Layout Asserts
@@ -283,6 +400,11 @@ _Static_assert(offsetof(latch_status_reply_t, manifest_sha256) +
                    sizeof(((latch_status_reply_t *)0)->manifest_sha256) <=
                sizeof(latch_status_reply_t),
                "latch_status_reply_t: manifest_sha256 must be the last field");
+_Static_assert(offsetof(latch_governor_status_reply_t, extension_version) ==
+                   sizeof(latch_status_reply_t),
+               "GOVERNOR status extension must preserve the legacy status prefix");
+_Static_assert(sizeof(latch_governor_status_reply_t) % 8u == 0u,
+               "latch_governor_status_reply_t must be 8-byte aligned in size");
 
 _Static_assert(sizeof(latch_tape_dump_t) % 8u == 0u,
                "latch_tape_dump_t must be a multiple of its 8-byte alignment");

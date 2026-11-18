@@ -200,10 +200,59 @@ def verify_guest_burst_fits_queue():
         fail(f"manifest timing.max_backlog_ticks ({max_backlog}) exceeds the "
              f"supervisor's ring capacity ({ring_size})")
 
+    governor_frames_match = re.search(
+        r"#define\s+LATCH_GOVERNOR_SUITE_FRAMES\s+(\d+)u", guest_txt)
+    if not governor_frames_match:
+        fail("guest/latch_guest_init.c: GOVERNOR suite frame count is not declared")
+    governor_frames = int(governor_frames_match.group(1))
+    def guest_uint_macro(name: str) -> int:
+        match = re.search(r"#define\s+" + re.escape(name) + r"\s+(\d+)u", guest_txt)
+        if not match:
+            fail(f"guest/latch_guest_init.c: {name} is not declared as an unsigned constant")
+        return int(match.group(1))
+
+    with open(os.path.join(REPO_ROOT, "qnx", "contracts", "governor_servo.manifest"),
+              "r", encoding="utf-8") as f:
+        governor_manifest = json.load(f)
+    governor_queue = governor_manifest.get("ingest", {}).get("queue_depth")
+    governor_backlog = governor_manifest.get("timing", {}).get("max_backlog_ticks")
+    if (governor_manifest.get("schema_version") != 3 or
+        governor_manifest.get("governor", {}).get("enabled") != 1 or
+        not isinstance(governor_queue, int) or governor_queue < governor_frames or
+        not isinstance(governor_backlog, int) or governor_backlog < governor_frames or
+        governor_queue > ring_size or governor_backlog > ring_size):
+        fail("enabled GOVERNOR profile's queue/backlog bounds do not fit its guest scenario")
+    deadman = governor_manifest.get("governor", {}).get("deadman", {})
+    period_us = governor_manifest.get("timing", {}).get("period_us")
+    lease_ticks = deadman.get("lease_ticks")
+    if (not isinstance(period_us, int) or period_us <= 0 or
+        not isinstance(lease_ticks, int) or lease_ticks <= 0 or
+        guest_uint_macro("LATCH_GOVERNOR_DEMO_LEASE_TICKS") != lease_ticks):
+        fail("GOVERNOR guest scenario lease timing does not match its enabled contract")
+    tick_ms = (period_us + 999) // 1000
+    if guest_uint_macro("LATCH_GOVERNOR_A4_DELAY_MS") <= lease_ticks * tick_ms:
+        fail("GOVERNOR A4 scripted heartbeat delay must exceed the configured host lease")
+    heartbeat_hold_ms = guest_uint_macro("LATCH_GOVERNOR_HEARTBEAT_HOLD_MS")
+    heartbeat_hold_frames = guest_uint_macro("LATCH_GOVERNOR_HEARTBEAT_HOLD_FRAMES")
+    # Keep the heartbeat stream observable while preserving the lease; this is
+    # a host-facing demo window, not a policy timer.
+    if heartbeat_hold_ms < tick_ms or heartbeat_hold_frames * heartbeat_hold_ms < 100 * tick_ms:
+        fail("GOVERNOR heartbeat-only observation window is too short for live QNX status sampling")
+    if guest_uint_macro("LATCH_GOVERNOR_FINAL_SILENCE_MS") < 4 * lease_ticks * tick_ms:
+        fail("GOVERNOR final silence must span enough lease windows to reach LATCH")
+    component_frames = sum(guest_uint_macro(name) for name in (
+        "LATCH_GOVERNOR_WARMUP_HEARTBEATS", "LATCH_GOVERNOR_A4_RESUME_COMMANDS",
+        "LATCH_GOVERNOR_HEARTBEAT_HOLD_FRAMES", "LATCH_GOVERNOR_RECOVERY_COMMANDS",
+        "LATCH_GOVERNOR_NOMINAL_COMMANDS", "LATCH_GOVERNOR_POLICY_SAMPLE_FRAMES"))
+    if component_frames != governor_frames:
+        fail(f"GOVERNOR scenario declares {governor_frames} frames but its components total {component_frames}")
+
     pass_check(f"guest suite ({suite_frames} frames, flush granularity {flush_frames}) "
                f"fits the manifest ingest.queue_depth ({queue_depth}) and "
                f"timing.max_backlog_ticks ({max_backlog}) <= ring capacity "
                f"({ring_size})")
+    pass_check(f"GOVERNOR guest suite ({governor_frames} frames) fits its enabled schema-3 queue/backlog contract")
+    pass_check("GOVERNOR A4 delay, recovery, and final silence are consistent with contract lease ticks")
 
 
 def verify_evidence_archive():
@@ -475,25 +524,36 @@ def main():
     sha256_path = os.path.join(REPO_ROOT, "qnx", "latch.manifest.sha256")
     syringe_manifest_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_pump_bolus.manifest")
     syringe_sha256_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_pump_bolus.manifest.sha256")
+    syringe_gov_manifest_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_governor.manifest")
+    syringe_gov_sha256_path = os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_governor.manifest.sha256")
+    governor_manifest_path = os.path.join(REPO_ROOT, "qnx", "contracts", "governor_servo.manifest")
+    governor_sha256_path = os.path.join(REPO_ROOT, "qnx", "contracts", "governor_servo.manifest.sha256")
     header_path = os.path.join(REPO_ROOT, "qnx", "latch_protocol.h")
     qemu_build_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu.build")
+    governor_qemu_build_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu_governor.build")
     rpi4_build_path = os.path.join(REPO_ROOT, "qnx", "latch_rpi4.build")
     secpol_path = os.path.join(REPO_ROOT, "qnx", "latch.secpol")
     qvmconf_path = os.path.join(REPO_ROOT, "qnx", "latch.qvmconf")
     qvm_virt_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu_virt.qvmconf")
+    governor_qvm_virt_path = os.path.join(REPO_ROOT, "qnx", "latch_qemu_governor.qvmconf")
     makefile_path = os.path.join(REPO_ROOT, "qnx", "Makefile")
     readme_path = os.path.join(REPO_ROOT, "README.md")
     impl_doc_path = os.path.join(REPO_ROOT, "docs", "LATCH-implementation.md")
 
     for p in [manifest_path, sha256_path, syringe_manifest_path, syringe_sha256_path,
-              header_path, qemu_build_path, rpi4_build_path, secpol_path, qvmconf_path,
-              qvm_virt_path, makefile_path, readme_path, impl_doc_path]:
+              syringe_gov_manifest_path, syringe_gov_sha256_path,
+              governor_manifest_path, governor_sha256_path,
+              header_path, qemu_build_path, governor_qemu_build_path, rpi4_build_path,
+              secpol_path, qvmconf_path, qvm_virt_path, governor_qvm_virt_path,
+              makefile_path, readme_path, impl_doc_path]:
         if not os.path.isfile(p):
             fail(f"Required artifact missing: {p}")
 
     # 1. Verify Manifest Content & SHA-256 Sidecars
     verify_manifest_sidecar(manifest_path, sha256_path, "Default Plant (latch.manifest)")
     verify_manifest_sidecar(syringe_manifest_path, syringe_sha256_path, "Medical Syringe Plant")
+    verify_manifest_sidecar(syringe_gov_manifest_path, syringe_gov_sha256_path, "Medical Syringe Governor schema-3 contract")
+    verify_manifest_sidecar(governor_manifest_path, governor_sha256_path, "Enabled GOVERNOR schema-3 servo contract")
     verify_guest_burst_fits_queue()
 
     # The offline viewer's embedded copy of the evidence tape must not drift
@@ -507,6 +567,61 @@ def main():
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
+
+    with open(governor_manifest_path, "r", encoding="utf-8") as f:
+        governor_manifest = json.load(f)
+    with open(syringe_gov_manifest_path, "r", encoding="utf-8") as f:
+        syringe_gov_manifest = json.load(f)
+
+    for gov_manifest_obj, label in [
+        (governor_manifest, "Enabled GOVERNOR schema-3 servo contract"),
+        (syringe_gov_manifest, "Medical Syringe Governor schema-3 contract"),
+    ]:
+        governor = gov_manifest_obj.get("governor")
+        governor_sections = {"enabled", "ladder", "deadman", "units", "rate"}
+        ladder_required = {
+            "advise_fault_mask", "clamp_max_step", "slow_scale_pct", "safe_stop_decel",
+            "demote_faults_per_rung", "promote_clean_frames", "min_confidence_q8",
+        }
+        deadman_required = {"lease_ticks", "coherence_max_gap", "warmup_heartbeats"}
+        units_required = {
+            "enabled", "canonical_unit_id", "alternate_unit_ids",
+            "conversion_numerators", "conversion_denominators",
+        }
+        rate_required = {"enabled", "burst_tokens", "refill_per_tick", "sustain_per_tick"}
+        if gov_manifest_obj.get("schema_version") != 3 or not isinstance(governor, dict):
+            fail(f"{label} must use schema_version 3 and contain an object")
+        if set(governor) != governor_sections or type(governor.get("enabled")) is not int:
+            fail(f"{label} sections must be exact and enabled must be an integer")
+        ladder = governor.get("ladder")
+        deadman = governor.get("deadman")
+        units = governor.get("units")
+        rate = governor.get("rate")
+        if (not isinstance(ladder, dict) or set(ladder) != ladder_required or
+            not isinstance(deadman, dict) or set(deadman) != deadman_required or
+            not isinstance(units, dict) or set(units) != units_required or
+            not isinstance(rate, dict) or set(rate) != rate_required):
+            fail(f"{label} nested policy sections have missing or unknown keys")
+        unit_array_keys = {"alternate_unit_ids", "conversion_numerators", "conversion_denominators"}
+        if any(type(v) is not int for v in ladder.values()) or any(type(v) is not int for v in deadman.values()) or any(type(v) is not int for k, v in units.items() if k not in unit_array_keys) or any(type(v) is not int for v in rate.values()):
+            fail(f"{label} policy scalar values must be integers")
+        alternate_ids = units.get("alternate_unit_ids")
+        numerators = units.get("conversion_numerators")
+        denominators = units.get("conversion_denominators")
+        if (type(units.get("canonical_unit_id")) is not int or units["canonical_unit_id"] <= 0 or
+            not isinstance(alternate_ids, list) or not alternate_ids or len(alternate_ids) > 4 or
+            not isinstance(numerators, list) or not isinstance(denominators, list) or
+            len(alternate_ids) != len(numerators) or len(numerators) != len(denominators) or
+            any(type(v) is not int or v <= 0 for values in (alternate_ids, numerators, denominators) for v in values) or
+            len(set(alternate_ids)) != len(alternate_ids) or units["canonical_unit_id"] in alternate_ids):
+            fail(f"{label} unit IDs and rational conversion arrays must be complete and unambiguous")
+        if governor.get("enabled") != 1:
+            fail(f"{label} must opt in to the integrated runtime policy")
+        governor_proto = gov_manifest_obj.get("protocol", {})
+        if (governor_proto.get("version") != 2 or governor_proto.get("crc") != "ieee32-v2" or
+            governor_proto.get("coverage") != 28):
+            fail(f"{label} must select the exact v2 CRC profile")
+        pass_check(f"{label} is complete and selects wire protocol v2")
 
     schema_ver = manifest.get("schema_version")
     if schema_ver not in (1, 2):
@@ -549,6 +664,8 @@ def main():
         fail("LATCH_WIRE_MAGIC 0x4C415448 ('LATH') not found in latch_protocol.h")
     if "DCMD_LATCH_PROBE_ABILITY" not in hdr:
         fail("Dedicated read-only probe DCMD_LATCH_PROBE_ABILITY not declared in latch_protocol.h")
+    if "DCMD_LATCH_GET_GOV_STATUS" not in hdr:
+        fail("Versioned GOVERNOR status devctl is missing from latch_protocol.h")
     if proposal_path not in hdr or actuator_path not in hdr:
         fail("Device pathstrings in latch_protocol.h do not match manifest")
     pass_check("C protocol header constants, devctls & paths aligned")
@@ -595,6 +712,35 @@ def main():
         if req not in qemu_build:
             fail(f"qnx/latch_qemu.build missing required boot dependency '{req}'")
     pass_check("QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified")
+
+    with open(governor_qemu_build_path, "r", encoding="utf-8") as f:
+        governor_qemu_build = f.read()
+    if "-m /proc/boot/governor_servo.manifest" not in governor_qemu_build:
+        fail("GOVERNOR QEMU startup must load the schema-3 contract in latchd and latchlog")
+    if "governor_servo.manifest.sha256" not in governor_qemu_build:
+        fail("GOVERNOR QEMU IFS must package the schema-3 contract sidecar")
+    if "governor_servo.manifest = ./contracts/governor_servo.manifest" not in governor_qemu_build:
+        fail("GOVERNOR QEMU IFS must package the enabled contract at its runtime path")
+    if "governor-linux-guest.initrd = ${GOVERNOR_GUEST_INITRD}" not in governor_qemu_build:
+        fail("GOVERNOR QEMU IFS must package the dedicated v2 guest initrd")
+    if "latch_qemu_governor.qvmconf" not in governor_qemu_build:
+        fail("GOVERNOR QEMU IFS must start the matching profile qvmconf")
+    if "latch.manifest" in strip_comments(governor_qemu_build):
+        fail("GOVERNOR QEMU IFS must not accidentally select the legacy schema-2 contract")
+    check_sdp_payloads(governor_qemu_build, "qnx/latch_qemu_governor.build")
+
+    with open(governor_qvm_virt_path, "r", encoding="utf-8") as f:
+        governor_qvm = f.read()
+    if ("-m /proc/boot/governor_servo.manifest" not in governor_qvm or
+        "initrd load /proc/boot/governor-linux-guest.initrd" not in governor_qvm):
+        fail("GOVERNOR qvmconf must select the same schema-3 contract and v2 guest initrd")
+    if "latch.manifest" in strip_comments(governor_qvm):
+        fail("GOVERNOR qvmconf must not start ingest with the legacy schema-2 contract")
+    with open(makefile_path, "r", encoding="utf-8") as f:
+        makefile_text = f.read()
+    if "ifs-qemu-governor" not in makefile_text or "-DLATCH_GOVERNOR_V2" not in makefile_text:
+        fail("Makefile must provide a separate GOVERNOR IFS and v2 guest policy build")
+    pass_check("Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd")
 
     # 4. Verify RPi4 Buildfile Configuration
     with open(rpi4_build_path, "r", encoding="utf-8") as f:

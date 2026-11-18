@@ -5,8 +5,9 @@
  *
  * Zero libc dependencies: direct AArch64 Linux syscalls (`svc #0`).
  * Mounts proc/sysfs/devtmpfs, creates /dev/hvc0 (229:0) & /dev/console (5:1),
- * prints status to /dev/kmsg, and streams an 84-frame LATH wire-frame fault
- * suite to /dev/hvc0.
+ * prints status to /dev/kmsg, and streams either the legacy 84-frame LATH
+ * fault suite or (when built with LATCH_GOVERNOR_V2) the 235-frame GOVERNOR
+ * lease/recovery scenario to /dev/hvc0.
  *
  * THE GUEST POLICY IS THIS BINARY.
  * guest/liar.py is a WORKSTATION-ONLY generator used by `make check` through a
@@ -14,9 +15,9 @@
  * shell in the cpio archive that `make guest-initrd` builds. Do not describe
  * liar.py as the in-guest policy in the README, the codelab or the video.
  *
- * Fault classes, in order. Each phase prints a marker on /dev/console (the
- * guest's DEBUG console, not the black channel) so a judge can narrate it,
- * and the host-side evidence tape shows the corresponding state transition.
+ * The legacy v1 mode below retains its established fault-suite pacing and
+ * sequence. GOVERNOR mode has its own A4 lease/recovery sequence, selected at
+ * compile time; neither mode introduces a second policy process.
  *
  * PACING -- WHY THERE IS NO PAUSE BETWEEN PHASES:
  *   The host's watchdog is `watchdog_ticks = 2`, i.e. 2 ms of host time at
@@ -270,6 +271,7 @@ static uint32_t ieee_crc32(const uint8_t *buf, size_t len) {
     return ~crc;
 }
 
+#ifndef LATCH_GOVERNOR_V2
 static void pack_frame(lath_frame_t *f, uint32_t seq, int32_t u_mrad,
                        uint8_t flags, int corrupt_bit) {
     uint8_t *p = (uint8_t *)f;
@@ -285,9 +287,10 @@ static void pack_frame(lath_frame_t *f, uint32_t seq, int32_t u_mrad,
         f->u_mrad ^= 0x00000100;
     }
 }
+#endif
 
 /*
- * TRANSPORT PACING -- the guest produces FASTER than the host consumes.
+ * LEGACY V1 TRANSPORT PACING -- the guest produces FASTER than the host consumes.
  *
  * The supervisor's 1 kHz loop drains exactly ONE proposal per tick from a
  * ring bounded by the manifest's `ingest.queue_depth`. The guest therefore
@@ -316,12 +319,23 @@ static void pack_frame(lath_frame_t *f, uint32_t seq, int32_t u_mrad,
 #define LATCH_GUEST_PACE_US      200u
 
 /*
- * Total number of frames this policy emits (9 phases). The guest can run
+ * Total number of frames the legacy v1 policy emits (9 phases). The guest can run
  * ahead of the host's 1 kHz consumption, so the supervisor's ring must be
  * able to hold the WHOLE suite: `ingest.queue_depth >= LATCH_GUEST_SUITE_FRAMES`.
  * tools/consistency_check.py asserts that cross-file invariant.
  */
 #define LATCH_GUEST_SUITE_FRAMES 84u
+#define LATCH_GOVERNOR_SUITE_FRAMES 235u
+#define LATCH_GOVERNOR_DEMO_LEASE_TICKS 100u
+#define LATCH_GOVERNOR_A4_DELAY_MS 110u
+#define LATCH_GOVERNOR_HEARTBEAT_HOLD_MS 1u
+#define LATCH_GOVERNOR_FINAL_SILENCE_MS 600u
+#define LATCH_GOVERNOR_WARMUP_HEARTBEATS 4u
+#define LATCH_GOVERNOR_A4_RESUME_COMMANDS 1u
+#define LATCH_GOVERNOR_HEARTBEAT_HOLD_FRAMES 150u
+#define LATCH_GOVERNOR_RECOVERY_COMMANDS 25u
+#define LATCH_GOVERNOR_NOMINAL_COMMANDS 50u
+#define LATCH_GOVERNOR_POLICY_SAMPLE_FRAMES 5u
 
 static uint8_t tx_buf[1024];
 static size_t  tx_len = 0;
@@ -364,6 +378,140 @@ static void send_frame(int hvc_fd, const lath_frame_t *f) {
     }
 }
 
+#ifdef LATCH_GOVERNOR_V2
+enum {
+    GOV_WIRE_HEARTBEAT = 1u,
+    GOV_WIRE_CMD_V2 = 2u,
+    GOV_WIRE_SHRINK_REQ = 3u
+};
+
+static void store_le16(uint8_t *p, uint16_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+}
+
+static void store_le24(uint8_t *p, uint32_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+}
+
+static void store_le32(uint8_t *p, uint32_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
+/* Keep this byte layout aligned with docs/GOVERNOR_PROTOCOL_V2.md. */
+static void pack_governor_frame(lath_frame_t *frame, uint8_t kind, uint32_t seq,
+                                uint32_t coherence, int32_t value,
+                                uint8_t confidence_q8, uint8_t agent_state,
+                                uint32_t unit_id) {
+    uint8_t *p = (uint8_t *)frame;
+    uint8_t crc_input[28];
+    for (size_t i = 0; i < sizeof(*frame); ++i) p[i] = 0;
+    store_le32(p + 0, LATCH_WIRE_MAGIC);
+    store_le16(p + 4, 2u);
+    p[6] = LATCH_WIRE_JOINT;
+    p[7] = kind;
+    store_le32(p + 8, seq);
+    store_le32(p + 12, (uint32_t)value);
+    store_le32(p + 20, confidence_q8);
+    p[24] = agent_state;
+    store_le24(p + 25, coherence);
+    store_le32(p + 28, unit_id);
+    for (size_t i = 0; i < 16u; ++i) crc_input[i] = p[i];
+    for (size_t i = 0; i < 12u; ++i) crc_input[16u + i] = p[20u + i];
+    store_le32(p + 16, ieee_crc32(crc_input, sizeof(crc_input)));
+}
+
+static void send_governor_frame(int hvc_fd, lath_frame_t *frame, uint8_t kind,
+                                uint32_t *seq, uint32_t *coherence, int32_t value,
+                                uint8_t confidence_q8, uint32_t unit_id) {
+    pack_governor_frame(frame, kind, (*seq)++, ++(*coherence), value,
+                        confidence_q8, 1u, unit_id);
+    send_frame(hvc_fd, frame);
+}
+
+static void run_governor_demo(int hvc_fd) {
+    lath_frame_t frame;
+    uint32_t seq = 1u;
+    uint32_t coherence = 0u;
+
+    phase_marker("[GOVERNOR] v2 demo: four liveness heartbeats, then commands\n");
+    for (uint32_t i = 0u; i < LATCH_GOVERNOR_WARMUP_HEARTBEATS; ++i) {
+        send_governor_frame(hvc_fd, &frame, GOV_WIRE_HEARTBEAT, &seq,
+                            &coherence, 0, 0u, 0u);
+    }
+    flush_frames(hvc_fd);
+
+    phase_marker("[A4] guest CPU spinner, then scripted 55 ms heartbeat delay\n");
+    volatile uint32_t spin_state = 0xA4u;
+    for (uint32_t i = 0u; i < 1000u; ++i) {
+        spin_state = (spin_state * 1664525u) + 1013904223u;
+    }
+    (void)spin_state;
+    sys_sleep_ms(LATCH_GOVERNOR_A4_DELAY_MS);
+
+    phase_marker("[A4] one command renews lease; heartbeat-only traffic must not recover rung\n");
+    for (uint32_t i = 0u; i < LATCH_GOVERNOR_A4_RESUME_COMMANDS; ++i) {
+        send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                            &coherence, 100, 255u, 1u);
+    }
+    flush_frames(hvc_fd);
+    for (uint32_t i = 0u; i < LATCH_GOVERNOR_HEARTBEAT_HOLD_FRAMES; ++i) {
+        send_governor_frame(hvc_fd, &frame, GOV_WIRE_HEARTBEAT, &seq,
+                            &coherence, 0, 0u, 0u);
+        /* Hold the scenario open for external QNX status sampling. The
+         * heartbeat keeps the lease alive but cannot earn recovery credit. */
+        sys_sleep_ms(LATCH_GOVERNOR_HEARTBEAT_HOLD_MS);
+    }
+    flush_frames(hvc_fd);
+
+    phase_marker("[GOVERNOR] 25 coherent commands recover the lease demotion\n");
+    for (uint32_t i = 0u; i < LATCH_GOVERNOR_RECOVERY_COMMANDS; ++i) {
+        send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                            &coherence, 100, 255u, 1u);
+        sys_sleep_ms(1);
+    }
+    flush_frames(hvc_fd);
+
+    phase_marker("[GOVERNOR] recovered rung accepts fresh canonical commands\n");
+    for (uint32_t i = 0u; i < LATCH_GOVERNOR_NOMINAL_COMMANDS; ++i) {
+        send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                            &coherence, 100, 255u, 1u);
+        sys_sleep_ms(1);
+    }
+    flush_frames(hvc_fd);
+
+    phase_marker("[GOVERNOR] low-confidence command and explicit milli-unit conversion\n");
+    send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                        &coherence, 120, 96u, 1u);
+    send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                        &coherence, 37000, 255u, 3u);
+    flush_frames(hvc_fd);
+
+    phase_marker("[GOVERNOR] unknown unit rejected; tighten request accepted\n");
+    send_governor_frame(hvc_fd, &frame, GOV_WIRE_CMD_V2, &seq,
+                        &coherence, 120, 255u, 999u);
+    send_governor_frame(hvc_fd, &frame, GOV_WIRE_SHRINK_REQ, &seq,
+                        &coherence, 12, 128u, 0u);
+    flush_frames(hvc_fd);
+
+    phase_marker("[GOVERNOR] widening request vetoed; guest stops sending\n");
+    send_governor_frame(hvc_fd, &frame, GOV_WIRE_SHRINK_REQ, &seq,
+                        &coherence, 13, 150u, 0u);
+    flush_frames(hvc_fd);
+    /* LATCH_GOVERNOR_SUITE_FRAMES is cross-checked against the components
+     * above, the selected manifest lease, and the QVM ring by consistency_check. */
+    /* The trusted host owns lease time. Silence demonstrates expiry. */
+    sys_sleep_ms(LATCH_GOVERNOR_FINAL_SILENCE_MS);
+    sys_close(hvc_fd);
+    for (;;) sys_sleep_ms(60000);
+}
+#endif
+
 void _start(void) {
     sys_mkdir("/proc", 0555);
     sys_mkdir("/sys", 0555);
@@ -381,12 +529,14 @@ void _start(void) {
     /* The kernel log ring buffer: non-blocking, unlike the slow PL011 path. */
     g_kmsg_fd = (int)sys_open("/dev/kmsg", O_WRONLY);
 
-    /* An optional dedicated marker port. With the single-virtio-console
-     * configuration there is no hvc1, and this open simply fails: the guest
-     * then uses the kernel log, which is non-blocking. (A second virtio-console
-     * vdev was tried here and REJECTED: it corrupted the frame channel on the
-     * black channel -- the guest then delivered 26 of 84 frames.) */
+    /* Never open a second marker port in the GOVERNOR profile. The only
+     * virtio-console is the safety-relevant black channel; all markers stay
+     * on the non-blocking kernel log path. */
+#ifdef LATCH_GOVERNOR_V2
+    g_marker_fd = -1;
+#else
     g_marker_fd = (int)sys_open("/dev/hvc1", O_WRONLY | O_NOCTTY);
+#endif
 
     int cfd = (int)sys_open("/dev/console", O_RDWR);
     if (cfd >= 0) {
@@ -412,9 +562,16 @@ void _start(void) {
         for (;;) sys_sleep_ms(10000);
     }
 
+#ifdef LATCH_GOVERNOR_V2
+    phase_marker("[guest] /dev/hvc0 opened! Configuring raw mode for GOVERNOR wire v2...\n");
+#else
     phase_marker("[guest] /dev/hvc0 opened! Configuring raw mode & streaming the 84-frame LATH suite...\n");
+#endif
     set_tty_raw(hvc_fd);
 
+#ifdef LATCH_GOVERNOR_V2
+    run_governor_demo(hvc_fd);
+#else
     uint32_t seq = 1u;
     int32_t theta = 0;
     lath_frame_t f;
@@ -508,5 +665,6 @@ void _start(void) {
     for (;;) {
         sys_sleep_ms(60000);
     }
+#endif
     sys6(SYS_exit, 0, 0, 0, 0, 0, 0);
 }

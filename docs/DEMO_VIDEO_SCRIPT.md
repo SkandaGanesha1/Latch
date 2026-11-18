@@ -1,0 +1,40 @@
+# GOVERNOR — 3-Minute Demo Video Script & Storyboard
+
+**Title:** GOVERNOR — Deterministic Safety Interlock & Dead Man's Switch for Physical AI  
+**Target Duration:** 2 minutes 35 seconds (hard rule: under 3 minutes; ~365 narration words at 130–140 wpm)  
+**Format:** Split-screen video featuring on-target QNX terminal sessions, architecture diagrams, HTML5 Canvas radar visualization, and live cyber-physical attack demonstrations.  
+**Tagline:** *"The AI may propose. Only QNX may move."*
+
+**Honesty captions (on-screen text, mandatory):**
+- During QEMU segments: *"QEMU AArch64 virt take — mock I²C, no physical actuator motion."*
+- During architecture segment: *"QEMU TCG software emulation; guest policy is scripted deterministic C (PID 1), not a live LLM."*
+
+---
+
+## Detailed Storyboard & Time-Coded Breakdown
+
+| Timestamp | Visual / Screen Layout | Actions & Terminal Commands | Narration & Audio Script |
+|:---:|:---|:---|:---|
+| **0:00 – 0:13**<br>*(13 sec)* | **Title Card & Historical Visual**<br>Side-by-side juxtaposition: 1788 technical engraving of James Watt's Centrifugal Flyball Governor next to a high-speed humanoid robotic arm. | Fade in bold text:<br>`GOVERNOR`<br>*The AI May Propose. Only QNX May Move.* | *"In 1788, James Watt tamed runaway steam engines with a physical flyball governor that throttled the valve the moment speed exceeded safe limits. Physical AI needs the same instinct, in software."* |
+| **0:13 – 0:29**<br>*(16 sec)* | **The Modern Problem: Lethal Trifecta**<br>Animated graphic highlighting: Probabilistic Neural Reasoning + Direct Actuator Handles + Non-Deterministic OS. | Red warning box flashes: *"Prompt Injection / Hallucinated Coordinates / Thread Hang"*. | *"Today's robots and medical pumps are driven by probabilistic models. When a model hallucinates or a thread hangs, what stops the machine? Wrappers on general-purpose operating systems fail under pressure. We built the answer on QNX 8.0."* |
+| **0:29 – 0:48**<br>*(19 sec)* | **Architecture: QNX Hypervisor 8.0 Isolation**<br>Split screen: Left side shows QNX host; Right side shows Linux guest VM. | Terminal 1 (QNX host):<br>`pidin -p qvm threads`<br>Shows vCPU threads `cy-guest-qemu-virt/0` and `/1` pinned to physical CPUs 2 & 3. | *"Here is QNX SDP 8.0 running under QEMU's TCG software emulation. On CPUs two and three, an untrusted Linux guest runs a scripted policy — a deterministic stand-in for an AI agent. It has no direct access to actuators; every frame crosses a single virtio-console channel."* |
+| **0:48 – 1:00**<br>*(12 sec)* | **Microkernel Safety Core on CPU 0**<br>Diagram zooming into `latchd` on CPU 0 at `SCHED_FIFO 63`. | Terminal 2 (QNX host):<br>`pidin -p latchd threads`<br>Shows priority 63 decision thread on CPU 0 with pulse pool channel. | *"On CPU zero, latchd runs at SCHED_FIFO priority 63. Every millisecond, a microkernel pulse triggers it to evaluate Control Barrier Functions before permitting a single micro-step of motion."* |
+| **1:00 – 1:15**<br>*(15 sec)* | **Attack A1: Rogue Unit Injection**<br>Left: HTML5 console (`console.html`) radar view.<br>Right: Terminal running `attack_a1_unit_injection.py`. | Inject $u = 370000$ with unmapped `unit_id=999`.<br>Microkernel asserts `LATCH_FAULT_UNIT` (`0x1000`).<br>Ladder demotes: `HP` → `ADVISE` → `CLAMP`. | *"Watch an attack. The guest sends an out-of-scale command — three hundred seventy thousand in an unmapped unit. QNX asserts LATCH_FAULT_UNIT and demotes authority from High Performance down to CLAMP. The plant never enters the forbidden zone."* |
+| **1:15 – 1:29**<br>*(14 sec)* | **Attack A2: Rate Flood Attack**<br>Left: Velocity step chart.<br>Right: Terminal running `attack_a2_rate_flood.py`. | Inject sudden step $\Delta u = 500\text{ mrad}$ in 1 ms.<br>Asserts `LATCH_FAULT_RATE` (`0x0080`).<br>Output step clamped to $0\text{ mrad} \le v_{\text{max}}$. | *"A prompt injection then orders a violent five-hundred-milliradian burst in one millisecond. The token-bucket rate limiter catches the spike, clamps the step to zero, and the keep-out breach rate stays at zero percent."* |
+| **1:29 – 1:48**<br>*(19 sec)* | **Attack A4: Deadman Lease Trip & Recovery**<br>Left: Lease countdown progress bar.<br>Right: Terminal running `attack_a4_deadman.py`. | 110 ms silence trips lease (`0x2000`) → `ADVISE`.<br>150 heartbeats sent: clean streak remains 0.<br>25 clean commands sent: streak reaches 25 → promotes to `HP`. | *"Now the railway dead man's switch. The guest hangs for a hundred ten milliseconds; the twenty-four-bit coherence lease expires and authority drops to ADVISE. The guest wakes and spams a hundred fifty heartbeats — authority refuses to budge. Only twenty-five consecutive clean commands promote it back."* |
+| **1:48 – 2:02**<br>*(14 sec)* | **Attacks A5 & A6: Coherence Spoof & Replay**<br>Left: Fault bit matrix LEDs.<br>Right: Terminal running `run_attacks.py`. | Frozen counter ($\Delta c = 0$) trips heartbeat lease.<br>Replayed sequence number trips `FAULT_SEQ` (`0x0004`) → fail-closed `LATCH`. | *"Attacks five and six probe counter spoofing and sequence replay. A frozen counter or a duplicate frame trips a fault and drops straight into fail-closed LATCH. Zero keep-out breaches across the whole suite."* |
+| **2:02 – 2:15**<br>*(13 sec)* | **Dual-Domain: Medical Infusion Pump**<br>Visual: Linear syringe pump contract (`syringe_governor.manifest`). Graphic showing microlitre drug delivery. | Terminal command:<br>`CCACHE_DISABLE=1 make -C latch/qnx check`<br>Scenario 7 outputs: `DOSE fault, rate clamping, and ladder degradation verified`. | *"GOVERNOR is zero-hardcoded. Swap the signed SHA-256 manifest, and the same microkernel binary guards a medical syringe pump in integer microlitres. An excessive bolus trips LATCH_FAULT_DOSE and clamps the plunger."* |
+| **2:15 – 2:35**<br>*(20 sec)* | **Blackbox Forensics, EU AI Act & Closing**<br>Visual: Rolling SHA-256 event chain validation in `gov_replay.py`.<br>Closing logo banner: QNX SDP 8.0 + GOVERNOR. | Terminal command:<br>`python3 latch/tools/gov_replay.py --test`<br>12 cryptographic tamper detection tests passing (`ALL TESTS PASSED`). | *"Every event is sealed into a rolling SHA-256 hash chain — tamper-evident forensics aligned with EU AI Act audit expectations, whose obligations phase in during twenty-twenty-seven and twenty-twenty-eight. On Linux, AI safety is a paper. On QNX, it is enforced. The AI may propose. Only QNX may move."* |
+
+---
+
+## Technical Production Notes for Voiceover & Capture
+
+1. **Audio Pace:** Crisp, authoritative, and energetic pacing (approx. 130–140 words per minute). The narration above is ~365 words, which reads in ~2:35 — comfortably under the 3-minute hard limit.
+2. **Terminal Displays:** 
+   - High-contrast dark theme (Solarized Dark or Monokai) with 18pt font.
+   - Terminal 1: QNX AArch64 QEMU serial console showing real-time `latchctl status` and `pidin`.
+   - Terminal 2: Host simulation test suite executing `run_attacks.py` and `gov_replay.py`.
+3. **Browser Visualizer:** Screen capture of `latch/host/console.html` displaying the animated radar dial, ladder badges, and fault LEDs during Attack A1 and Attack A4.
+4. **Real Captures Only (replaces any stock hardware footage):** Every visual in this script is a recording of something that actually exists in the repo — the QEMU serial console, `console.html`, the attack terminals, and `make check` output. Do **not** stage hardware footage: the Raspberry Pi 4B profile is build-verified only, and the QEMU take runs mock I²C, so no physical servo motion exists to film.
+5. **EU AI Act phrasing:** Say *"aligned with … obligations phase in during 2027 and 2028"* — never *"compliant"* (Annex III high-risk obligations apply from Dec 2, 2027; Annex I machinery/medical from Aug 2, 2028).
