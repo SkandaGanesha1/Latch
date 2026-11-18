@@ -131,6 +131,7 @@ typedef struct latch_simplex_state {
     uint8_t        gov_agent_state;
     bool           gov_v2_session;
     bool           gov_coherence_valid;
+    uint32_t       gov_deadline_misses;
 
     bool           session_active;       /* true once proposal stream active */
     bool           retracted_home;       /* true when parked at home pose     */
@@ -1267,6 +1268,10 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         lat_ns > (g_manifest.timing.wcet_budget_us * 1000u)) {
         st->wcet_overruns++;
     }
+    uint32_t period_deadline_ns = (st->ticks_per_sec > 0) ? (1000000000u / (uint32_t)st->ticks_per_sec) : 1000000u;
+    if (lat_ns > period_deadline_ns) {
+        st->gov_deadline_misses++;
+    }
 
     /*
      * BACKLOG HEALTH (the manifest's `timing.max_backlog_ticks`).
@@ -1438,7 +1443,7 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         atomic_thread_fence(memory_order_acquire);
         if (!latch_fill_status(&out->latch)) return false;
 
-        out->extension_version = 2u;
+        out->extension_version = 3u;
         out->enabled = g_manifest.governor.enabled;
         out->rung = (uint32_t)g_simplex.gov_ladder.rung;
         out->v2_session = g_simplex.gov_v2_session ? 1u : 0u;
@@ -1456,6 +1461,7 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         out->coherence_ctr = g_simplex.gov_last_coherence;
         out->coherence_valid = g_simplex.gov_coherence_valid ? 1u : 0u;
         out->clean_command_streak = g_simplex.gov_ladder.clean_frame_streak;
+        out->deadline_misses = g_simplex.gov_deadline_misses;
 
         atomic_thread_fence(memory_order_acquire);
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
@@ -2606,7 +2612,7 @@ static int latch_run_governor_integration_test(void) {
     }
     latch_governor_status_reply_t status;
     if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_GOV_STATUS,
-                                  &status) != 0 || status.extension_version != 2u ||
+                                  &status) != 0 || status.extension_version != 3u ||
         status.enabled != 1u || status.rung != GOVERNOR_RUNG_SAFE_STOP ||
         status.v2_session != 1u || status.coherence_ctr != 14u) {
         fprintf(stderr, "FAIL: versioned GOVERNOR status did not expose a coherent policy snapshot\n");

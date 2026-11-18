@@ -307,6 +307,7 @@ typedef struct latch_governor_status_reply {
     uint32_t coherence_ctr;
     uint32_t coherence_valid;
     uint32_t clean_command_streak;
+    uint32_t deadline_misses;
 } latch_governor_status_reply_t;
 
 #define LATCH_DUMP_MAX_ENTRIES   128u

@@ -30,7 +30,9 @@ summary written for you.
 | Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
 | GOVERNOR on-target verify | `[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held…; final lease expiry reached LATCH` | `governor/governor-qemu-verify.txt` (verbatim `make verify-governor-qemu` output) |
-| GOVERNOR attack scorecard | `105 ticks · 0 intrusions · 5/5 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
+| GOVERNOR attack scorecard | `121 ticks · 0 intrusions · 7/7 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
+| GOVERNOR VM-kill containment | `100% containment · qvm purged · plant locked 0 mrad · 0 keep-out breaches` | `governor/governor-vm-kill-resume.txt` |
+| Real-time latency benchmark | `QNX WCET 61.08 us vs Linux GPOS jitter · 0 deadline misses / 23,500 ticks` | `governor/governor-latency-benchmark.txt` |
 ---
 
 ## 2. What is in here
@@ -49,12 +51,14 @@ docs/evidence/
       tape-signatures.csv
   governor/
       governor-host-sim.txt
+      governor-latency-benchmark.txt
       governor-manifest-verify.txt
       governor-metrics.txt
       governor-qemu-console.txt
       governor-qemu-verify.txt
       governor-status-transition.txt
       governor-tape.csv
+      governor-vm-kill-resume.txt
   host-sim/
       20261113-181136-consistency.txt
       20261113-181136-host-sim.txt

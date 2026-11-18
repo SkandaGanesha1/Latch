@@ -58,3 +58,60 @@ HOME -- new explicit violation ---------------------------------> HOLD
 
 - **`HA-HOLD` (`latch_ha_hold`)**: Commands zero velocity (`next_theta = theta_mrad`), freezing the servo horn in place within one tick.
 - **`HA-HOME` (`latch_ha_home`)**: Steps `theta_mrad` toward the manifest's `envelope.home_mrad` by at most `envelope.v_home` mrad per tick along the legal side of the keep-out box (a retraction that would cross a keep-out interval is refused), latching back into `HOLD` once `theta_mrad` reaches the home pose.
+
+## 5. GOVERNOR Wire v2 Framing & Supervisory Gate Pipeline
+
+When the schema-3 contract specifies `"protocol": "ieee32-v2"` with `"governor.enabled": 1`, the proposal wire interface upgrades to the 32-byte Wire v2 layout:
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                 Magic (0x4C415448 'LATH')                     |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Version (=2)         |  Kind (CMD/HB)| Agent State   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Sequence Number (seq)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  Target Proposal Value (u_raw)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    IEEE 802.3 CRC32 Digest                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   Coherence Counter (24-bit)                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    Engineering Unit ID (unit_id)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| Conf Q8 (0..255)| Wire Flags  |           Reserved            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+### 5.1 CRC32 Disjoint Coverage
+Unlike v1 which checks only the first 16 bytes, Wire v2 covers both header and metadata payloads across disjoint slices:
+$$\text{CRC32}( \text{payload}[0..16) \mathbin{\Vert} \text{payload}[20..32) )$$
+Byte slice `[16..20)` stores the CRC32 digest itself and is excluded from computation.
+
+### 5.2 Supervisory Validation Gates
+Every incoming proposal traverses four deterministic gates before touching the kinematic envelope:
+
+1. **Unit Sanity Gate**: Manifest-declared rational table transforms engineering units:
+   $$u_{\text{canonical}} = \frac{u_{\text{raw}} \times \text{num}}{\text{den}}$$
+   Any unmapped `unit_id` trips `LATCH_FAULT_UNIT` (`0x1000`) and rejects the proposal.
+2. **Token Bucket Rate Smoother**: Enforces burst and sustained slew rate limit:
+   - Capacity: `burst_tokens` (default 40).
+   - Refill: `refill_tokens_per_tick` (default 1).
+   - Exceeding burst capacity asserts `LATCH_FAULT_RATE` (`0x0080`) and clamps step.
+3. **Discrete-Time Control Barrier Function (DT-CBF)**:
+   Verifies forward invariance condition:
+   $$h(\theta_{k+1}, \dot{\theta}_{k+1}) \ge (1 - \gamma) h(\theta_k, \dot{\theta}_k), \quad \gamma \in (0, 1]$$
+   Guaranteeing zero penetration of keepout intervals under full deceleration authority.
+4. **Confidence-Driven Envelope Shrink**:
+   When AI agent confidence `confidence_q8` drops or voluntary `SHRINK_REQ` arrives:
+   $$v_{\text{max, effective}} = \frac{v_{\text{max}} \times \text{scale\_q8}}{256}$$
+   Narrowing allowable operational slew boundaries proportional to uncertainty.
+
+### 5.3 Graded Supervisory Degrade Ladder
+Faults degrade the supervisor across discrete rungs rather than causing abrupt shutdowns:
+$$\text{HP} \xrightarrow[\text{fault}]{\text{advisory}} \text{ADVISE} \xrightarrow[\Delta \ge K]{} \text{CLAMP} \xrightarrow{} \text{SLOW} \xrightarrow{} \text{SAFE\_STOP} \xrightarrow{} \text{LATCH}$$
+- **Hysteresis Recovery**: Demoted rungs require exactly 25 consecutive clean, advancing command frames to promote back up by one rung.
+- **Fail-Closed LATCH**: Hard envelope violations or sequence tampering drop immediately to `LATCH`, locking actuation in `HOLD` mode until authorized operator reset.
+

@@ -226,6 +226,23 @@ class AutonomousAgent:
                 # Bolus delivery request
                 return 200, 255, 1
 
+        elif self.scenario == "anomaly_drift":
+            # Anomaly / confidence degradation scenario (G6):
+            # Model observes sensor drift / high epistemic uncertainty.
+            if elapsed < 1.0:
+                amplitude = 100.0
+                u_mrad = int(amplitude * math.sin(2.0 * math.pi * 0.5 * elapsed))
+                return u_mrad, 255, 1
+            else:
+                # Voluntarily drops confidence Q8 and requests tighter velocity envelope
+                if self.client and tick % 8 == 0:
+                    try:
+                        self.client.send_shrink_request(shrink_v=12, shrink_scale_q8=128)
+                    except Exception:
+                        pass
+                u_mrad = 120
+                return u_mrad, 96, 1
+
         else:
             raise ValueError(f"Unknown scenario profile: {self.scenario}")
 
@@ -420,7 +437,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Autonomous Physical AI Agent Loop for GOVERNOR")
     parser.add_argument(
         "--scenario",
-        choices=["nominal", "prompt_injected", "medical_infusion"],
+        choices=["nominal", "prompt_injected", "medical_infusion", "anomaly_drift"],
         default="nominal",
         help="Agent scenario profile to execute",
     )

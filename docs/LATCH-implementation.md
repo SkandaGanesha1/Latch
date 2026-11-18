@@ -301,8 +301,8 @@ Queries real-time supervisory status, lease counters, rate tokens, and degradati
 |  - uint32_t telemetry counters (proposals, wire, env, eperm, drops, wcet, backlog)    |
 |  - uint8_t  manifest_sha256[32]                                                       |
 +---------------------------------------------------------------------------------------+
-|  GOVERNOR Extension Payload (Bytes 168 .. 227)                                        |
-|  - uint32_t extension_version        (Offset 168: ABI version = 1)                     |
+|  GOVERNOR Extension Payload (Bytes 168 .. 231)                                        |
+|  - uint32_t extension_version        (Offset 168: ABI version = 3)                     |
 |  - uint32_t enabled                  (Offset 172: 1 if governor active, 0 if disabled) |
 |  - uint32_t rung                     (Offset 176: Active rung 0..5)                    |
 |  - uint32_t v2_session               (Offset 180: 1 if v2 protocol active)             |
@@ -317,6 +317,7 @@ Queries real-time supervisory status, lease counters, rate tokens, and degradati
 |  - uint32_t coherence_ctr            (Offset 216: Last valid 24-bit coherence counter) |
 |  - uint32_t coherence_valid          (Offset 220: 1 if coherence sequence healthy)     |
 |  - uint32_t clean_command_streak     (Offset 224: Streak towards next promotion 0..25) |
+|  - uint32_t deadline_misses          (Offset 228: Tick deadline overrun count)         |
 +---------------------------------------------------------------------------------------+
 ```
 

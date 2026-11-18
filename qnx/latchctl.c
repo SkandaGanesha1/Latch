@@ -188,6 +188,9 @@ static int do_status(int fd) {
         if (gov.extension_version >= 2u) {
             printf("Recovery Clean       : %u accepted commands\n", gov.clean_command_streak);
         }
+        if (gov.extension_version >= 3u) {
+            printf("Deadline Misses      : %u overruns\n", gov.deadline_misses);
+        }
         printf("Rate / Shrink        : %u tokens | active=%u v_max=%u scale_q8=%u\n",
                gov.rate_tokens_remaining, gov.shrink_active,
                gov.shrink_v_max, gov.shrink_scale_q8);
