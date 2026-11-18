@@ -267,6 +267,28 @@ int main(void) {
             fprintf(stderr, "FAIL: cumulative dose window expiration did not reset window\n");
             failures++;
         }
+
+        /* Step 6: Defensive hardening — window tick wrap guard near UINT64_MAX */
+        state.window_start_tick = UINT64_MAX - 500u;
+        state.cumulative_window_dose_uL = 100u;
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 150, 255u);
+        input.tick = UINT64_MAX - 200u; /* elapsed = 300 < 1000, must NOT reset window */
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || (result.faults & LATCH_FAULT_DOSE) != 0u ||
+            state.window_start_tick != UINT64_MAX - 500u || state.cumulative_window_dose_uL != 150u) {
+            fprintf(stderr, "FAIL: window tick wrap guard prematurely reset window\n");
+            failures++;
+        }
+
+        /* Step 7: Defensive hardening — cumulative dose counter addition wrap guard */
+        state.cumulative_window_dose_uL = UINT64_MAX;
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 110, 255u);
+        input.tick = UINT64_MAX - 100u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 100) {
+            fprintf(stderr, "FAIL: cumulative dose counter addition wrap guard failed to raise DOSE fault or clamp\n");
+            failures++;
+        }
     }
 
     if (failures != 0) return 1;

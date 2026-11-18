@@ -210,7 +210,8 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         if (manifest->medical.cumulative_dose_window_ticks > 0u && input->tick > 0u) {
             if (state->window_start_tick == 0u) {
                 state->window_start_tick = input->tick;
-            } else if (input->tick >= state->window_start_tick + manifest->medical.cumulative_dose_window_ticks) {
+            } else if (input->tick >= state->window_start_tick &&
+                       (input->tick - state->window_start_tick) >= manifest->medical.cumulative_dose_window_ticks) {
                 state->window_start_tick = input->tick;
                 state->cumulative_window_dose_uL = 0u;
             }
@@ -223,7 +224,8 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
                 candidate = input->theta + (int32_t)manifest->medical.max_bolus_uL;
                 cand_dose = (int64_t)candidate - input->theta;
             }
-            if (state->cumulative_window_dose_uL + (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL) {
+            if (state->cumulative_window_dose_uL >= manifest->medical.max_cumulative_dose_uL ||
+                (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL - state->cumulative_window_dose_uL) {
                 result.faults |= LATCH_FAULT_DOSE;
                 candidate = input->theta; /* clamp step to 0 */
             }
