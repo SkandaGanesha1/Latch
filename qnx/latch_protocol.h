@@ -424,7 +424,7 @@ _Static_assert(offsetof(latch_tape_dump_t, entries) +
 _Static_assert(sizeof(latch_force_hold_cmd_t) == 8u,
                "latch_force_hold_cmd_t must be 8 bytes");
 #define DCMD_LATCH_PROBE_ABILITY \
-    __DION(_DCMD_MISC, 0x43)
+    __DION(_DCMD_MISC, 0x45)
 
 /* ==========================================================================
  * 8. Self-Contained IEEE 802.3 CRC32 (Reflected Polynomial 0xEDB88320)

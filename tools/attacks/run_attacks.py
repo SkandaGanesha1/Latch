@@ -35,9 +35,11 @@ if str(attacks_dir) not in sys.path:
 
 from attack_a1_unit_injection import run_attack_a1
 from attack_a2_rate_flood import run_attack_a2
+from attack_a3_prompt_note import run_attack_a3
 from attack_a4_deadman import run_attack_a4
 from attack_a5_coherence_spoof import run_attack_a5
 from attack_a6_replay import run_attack_a6
+from attack_a7_chain_tamper import run_attack_a7
 
 
 def main() -> int:
@@ -57,9 +59,11 @@ def main() -> int:
     attack_suite = [
         ("A1", "Rogue Unit Injection", run_attack_a1),
         ("A2", "Rate Flood Attack", run_attack_a2),
+        ("A3", "Prompt Injection Attack", run_attack_a3),
         ("A4", "Deadman Lease Trip & Recovery", run_attack_a4),
         ("A5", "Coherence Spoof Attack", run_attack_a5),
         ("A6", "Sequence Replay Attack", run_attack_a6),
+        ("A7", "Chain Tamper Attack", run_attack_a7),
     ]
 
     if args.filter:
@@ -127,7 +131,7 @@ def main() -> int:
     final_pass = all_passed and c1 and c2 and c3 and c4
     print("--------------------------------------------------------------------------------")
     if final_pass:
-        print("[SUITE VERDICT] ALL 5 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)\n")
+        print(f"[SUITE VERDICT] ALL {len(attack_suite)} ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)\n")
         return 0
     else:
         print("[SUITE VERDICT] ADVERSARIAL AUDIT FAILED\n", file=sys.stderr)

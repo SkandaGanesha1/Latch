@@ -1,16 +1,16 @@
 ================================================================================
 LATCH GOVERNOR — CRYPTOGRAPHIC MANIFEST SIDECAR ATTESTATION AUDIT
-Date: 2026-11-18T03:56:36Z
+Date: 2026-11-18T21:50:37Z
 Tool: latchctl manifest-verify (NIST FIPS 180-2 SHA-256)
 ================================================================================
 
 --- 1. GOVERNOR SERVO ROBOTIC CONTRACT (governor_servo.manifest) ---
-[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/governor_servo.manifest' SHA-256=0c36e2f338e31ef29c84d3fb66d06860a02e86c99b0e8ea8af2d070373e92ad0 (admissibility SATISFIED)
-Sidecar content: 0c36e2f338e31ef29c84d3fb66d06860a02e86c99b0e8ea8af2d070373e92ad0  contracts/governor_servo.manifest
+[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/governor_servo.manifest' SHA-256=a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b (admissibility SATISFIED)
+Sidecar content: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b  contracts/governor_servo.manifest
 
 --- 2. MEDICAL SYRINGE INFUSION CONTRACT (syringe_governor.manifest) ---
-[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/syringe_governor.manifest' SHA-256=3c75e015997e64dd1bbd6f8d10544c1bbd2149ca62f2d0fd3d7022c029bd37f2 (admissibility SATISFIED)
-Sidecar content: 3c75e015997e64dd1bbd6f8d10544c1bbd2149ca62f2d0fd3d7022c029bd37f2
+[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/syringe_governor.manifest' SHA-256=489fc7ca593daea7cd64d33638f5aaae38a802615807a4454616697a990f3ad8 (admissibility SATISFIED)
+Sidecar content: 489fc7ca593daea7cd64d33638f5aaae38a802615807a4454616697a990f3ad8  contracts/syringe_governor.manifest
 
 --- 3. TAMPER-EVIDENCE INTEGRITY PROOF (Modified Contract Rejection) ---
 [MANIFEST] REJECTED: Could not load or validate '/tmp/tmp.pDgphLOjNn': Missing mandatory SHA-256 sidecar '/tmp/tmp.pDgphLOjNn.sha256' (Fail-Closed)

@@ -239,3 +239,12 @@ jobs:
                 "monotone progression 51 -> 48 -> 27 -> 7 envelope vetoes.")
           PYEOF
 
+      - name: Verify GOVERNOR Gate & Scenarios
+        run: |
+          make -C qnx check-governor
+
+      - name: Verify 7-Attack Adversarial Rig
+        run: |
+          make -C qnx host-sim
+          python3 tools/attacks/run_attacks.py
+

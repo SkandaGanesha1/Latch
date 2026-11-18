@@ -3,9 +3,11 @@
 Contains standalone reproducible attack scripts for:
   - A1: Rogue Unit Injection (attack_a1_unit_injection.py)
   - A2: Rate Flood Attack (attack_a2_rate_flood.py)
+  - A3: Prompt-Injected Task Note (attack_a3_prompt_note.py)
   - A4: Standalone Deadman Lease Trip (attack_a4_deadman.py)
   - A5: Coherence Spoof Attack (attack_a5_coherence_spoof.py)
   - A6: Sequence Replay Attack (attack_a6_replay.py)
+  - A7: Forensic Chain Tamper Attack (attack_a7_chain_tamper.py)
   - Unified Runner: run_attacks.py
 """
 

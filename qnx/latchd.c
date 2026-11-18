@@ -1254,7 +1254,8 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     st->accel_mrad_tick2    = next_vel - st->velocity_mrad_tick;
     st->theta_mrad          = next_theta;
     st->velocity_mrad_tick  = next_vel;
-    st->omega_mrad_s        = next_vel * st->ticks_per_sec;
+    int64_t omega64         = (int64_t)next_vel * (int64_t)st->ticks_per_sec;
+    st->omega_mrad_s        = (int32_t)latch_clamp_i64(omega64, (int64_t)INT32_MIN, (int64_t)INT32_MAX);
     st->active_faults       = tick_faults;
     st->last_latency_cycles = latency;
     st->last_latency_ns     = lat_ns;

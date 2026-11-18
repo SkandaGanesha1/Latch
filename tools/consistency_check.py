@@ -461,6 +461,20 @@ def verify_evidence_archive():
                      "A capture that did not verify must never be the archive's "
                      "quotable numbers." % m_rc.group(1))
 
+    # --- GOVERNOR Manifest Verification Attestation Agreement -----------
+    gov_verify_path = os.path.join(ev, "governor", "governor-manifest-verify.txt")
+    if os.path.isfile(gov_verify_path):
+        with io.open(gov_verify_path, encoding="utf-8") as f:
+            gov_verify_txt = f.read()
+        with io.open(os.path.join(REPO_ROOT, "qnx", "contracts", "governor_servo.manifest.sha256"), encoding="utf-8") as f:
+            gov_servo_sha = f.read().split()[0].lower()
+        with io.open(os.path.join(REPO_ROOT, "qnx", "contracts", "syringe_governor.manifest.sha256"), encoding="utf-8") as f:
+            syr_gov_sha = f.read().split()[0].lower()
+        if gov_servo_sha not in gov_verify_txt.lower():
+            fail(f"docs/evidence/governor/governor-manifest-verify.txt does not attest current governor_servo.manifest SHA-256 {gov_servo_sha}")
+        if syr_gov_sha not in gov_verify_txt.lower():
+            fail(f"docs/evidence/governor/governor-manifest-verify.txt does not attest current syringe_governor.manifest SHA-256 {syr_gov_sha}")
+
     # --- Nothing under docs/evidence/ may be silently git-ignored --------
     # The bare `build/` pattern in .gitignore matches ANY directory of that
     # name at any depth, so docs/evidence/build/ was on disk but NOT in the

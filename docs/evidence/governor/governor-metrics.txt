@@ -7,10 +7,10 @@
 ================================================================================
 
 EXECUTIVE SUMMARY:
-  Total Adversarial Attack Scenarios : 5
-  Total Ticks Evaluated              : 105
+  Total Adversarial Attack Scenarios : 7
+  Total Ticks Evaluated              : 121
   Total Keep-Out Zone Intrusions     : 0 (Envelopes Breached: 0.0%)
-  Deterministic Fault Detection Rate : 100.0% (5/5 attacks detected)
+  Deterministic Fault Detection Rate : 100.0% (7/7 attacks detected)
   Supervisory Ladder Transitions     : Deterministic demotion & bounded hysteresis
   Overall Safety Suite Verdict       : PASS (0.0% failure rate)
 
@@ -33,7 +33,15 @@ ATTACK SCORECARD BREAKDOWN:
    - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
    - Verdict         : PASS
 
-3. Attack A4: Deadman Lease Trip & Recovery
+3. Attack A3: Prompt Injection Attack
+   - Evaluated Ticks : 6
+   - Target Parameter: Injected task note forcing u=450 mrad into keepout [250, 650]
+   - Invariant Result: LATCH_FAULT_KEEPOUT (bit 3) asserted
+   - Ladder Reaction : Demoted HP -> LATCH (HOLD)
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+4. Attack A4: Deadman Lease Trip & Recovery
    - Evaluated Ticks : 79
    - Target Parameter: > 100 ms heartbeat silence -> lease expiry -> 25 recovery
    - Invariant Result: LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) asserted
@@ -42,7 +50,7 @@ ATTACK SCORECARD BREAKDOWN:
    - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
    - Verdict         : PASS
 
-4. Attack A5: Coherence Spoof Attack
+5. Attack A5: Coherence Spoof Attack
    - Evaluated Ticks : 6
    - Target Parameter: Frozen counter (delta=0) and forward jump (delta=10 > gap=3)
    - Invariant Result: LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) asserted
@@ -50,11 +58,19 @@ ATTACK SCORECARD BREAKDOWN:
    - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
    - Verdict         : PASS
 
-5. Attack A6: Sequence Replay Attack
+6. Attack A6: Sequence Replay Attack
    - Evaluated Ticks : 7
    - Target Parameter: Replay of past sequence number (seq <= last_seq)
    - Invariant Result: LATCH_FAULT_SEQ (bit 2, 0x0004) asserted
    - Supervisory FSM : Transitioned to LATCH (HOLD mode)
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
+7. Attack A7: Chain Tamper Attack
+   - Evaluated Ticks : 10
+   - Target Parameter: Adversarial byte modification in recorded blackbox hash chain
+   - Invariant Result: LATCH_TAMPER_DETECTED (exit 1) asserted
+   - Forensic Audit  : Cryptographic tamper detection asserted
    - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
    - Verdict         : PASS
 
@@ -65,5 +81,5 @@ UNIVERSAL CRITERIA ATTESTATION:
   [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 ================================================================================
-[CONCLUSION] All 105 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
-             (same C sources as the on-target binary; suite wall time 0.037 s).
+[CONCLUSION] All 121 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
+             (same C sources as the on-target binary; suite wall time 0.297 s).

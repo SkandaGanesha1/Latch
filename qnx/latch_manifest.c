@@ -1196,9 +1196,9 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
                               m->envelope.theta_min_mrad, m->envelope.theta_max_mrad);
         return LATCH_ADMIT_VIOLATED;
     }
-    if (m->envelope.v_max <= 0 || m->envelope.a_max <= 0 ||
-        m->envelope.j_max <= 0 || m->envelope.v_home <= 0) {
-        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive (v_max=%d, a_max=%d, j_max=%d, v_home=%d)",
+    if (m->envelope.v_max <= 0 || m->envelope.v_max > 1000000000 ||
+        m->envelope.a_max <= 0 || m->envelope.j_max <= 0 || m->envelope.v_home <= 0) {
+        if (err_buf) snprintf(err_buf, err_len, "Kinematic bounds must be positive and bounded <= 1e9 (v_max=%d, a_max=%d, j_max=%d, v_home=%d)",
                               m->envelope.v_max, m->envelope.a_max, m->envelope.j_max, m->envelope.v_home);
         return LATCH_ADMIT_VIOLATED;
     }

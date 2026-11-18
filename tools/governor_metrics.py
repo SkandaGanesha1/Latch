@@ -32,9 +32,11 @@ for p in (TOOLS_DIR, ATTACKS_DIR):
 
 from attack_a1_unit_injection import run_attack_a1  # noqa: E402
 from attack_a2_rate_flood import run_attack_a2  # noqa: E402
+from attack_a3_prompt_note import run_attack_a3  # noqa: E402
 from attack_a4_deadman import run_attack_a4  # noqa: E402
 from attack_a5_coherence_spoof import run_attack_a5  # noqa: E402
 from attack_a6_replay import run_attack_a6  # noqa: E402
+from attack_a7_chain_tamper import run_attack_a7  # noqa: E402
 
 MANIFEST_PATH = ROOT_DIR / "qnx" / "contracts" / "governor_servo.manifest"
 
@@ -44,9 +46,11 @@ MANIFEST_PATH = ROOT_DIR / "qnx" / "contracts" / "governor_servo.manifest"
 ATTACK_LABELS = {
     "A1": "u=370000 mrad with unmapped unit_id=999",
     "A2": "Delta u = 500 mrad in 1 ms (exceeding v_max={v_max} mrad/tick)",
+    "A3": "Injected task note forcing u=450 mrad into keepout [{lo}, {hi}]",
     "A4": "> {lease_ms} ms heartbeat silence -> lease expiry -> 25 recovery",
     "A5": "Frozen counter (delta=0) and forward jump (delta=10 > gap={gap})",
     "A6": "Replay of past sequence number (seq <= last_seq)",
+    "A7": "Adversarial byte modification in recorded blackbox hash chain",
 }
 
 
@@ -74,6 +78,8 @@ def detail_lines(attack_id: str, report: dict, bounds: dict) -> list[str]:
     elif attack_id == "A2":
         lines.append(f"   - Actuator Control: Clamped to {report['max_step_observed_mrad']} mrad step "
                      "(within legal boundary)")
+    elif attack_id == "A3":
+        lines.append(f"   - Ladder Reaction : Demoted {report.get('demotion_verified', 'HP -> LATCH')}")
     elif attack_id == "A4":
         lines.append(f"   - Hold Invariant  : {report['hold_verified']}")
         lines.append(f"   - Recovery Proof  : {report['recovery_verified']}")
@@ -81,6 +87,8 @@ def detail_lines(attack_id: str, report: dict, bounds: dict) -> list[str]:
         lines.append(f"   - Ladder Reaction : {report['demotions_verified']}")
     elif attack_id == "A6":
         lines.append(f"   - Supervisory FSM : {report['fail_closed_verified']}")
+    elif attack_id == "A7":
+        lines.append(f"   - Forensic Audit  : Cryptographic tamper detection asserted")
     lines.append(f"   - Envelope Safety : Keep-out [{bounds['lo']}, {bounds['hi']}] mrad "
                  f"breach count = {report['keepout_intrusions']}")
     lines.append(f"   - Verdict         : {report['status']}")
@@ -97,9 +105,11 @@ def main() -> int:
     suite = [
         ("A1", "Rogue Unit Injection", run_attack_a1),
         ("A2", "Rate Flood Attack", run_attack_a2),
+        ("A3", "Prompt Injection Attack", run_attack_a3),
         ("A4", "Deadman Lease Trip & Recovery", run_attack_a4),
         ("A5", "Coherence Spoof Attack", run_attack_a5),
         ("A6", "Sequence Replay Attack", run_attack_a6),
+        ("A7", "Chain Tamper Attack", run_attack_a7),
     ]
 
     started = time.monotonic()

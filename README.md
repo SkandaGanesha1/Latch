@@ -8,7 +8,7 @@ When an AI policy hallucinates out-of-scale coordinates, commands lethal acceler
 
 - **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (AArch64 EL2 VHE host + GICv2 guest support)
 - **Primary Verified Target:** QEMU AArch64 `virt` (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) hosting a **Linux 6.12 ARM64** guest VM
-- **Dual-Domain Applications:** Industrial Robotics (1-DoF servo keep-out containment $[-1000, +1000]$ mrad with forbidden person interval $[250, 650]$ mrad) & Medical Infusion (linear bolus syringe pump $[0, 5000]$ mm with cumulative DOSE limit interlock)
+- **Dual-Domain Applications:** Industrial Robotics (1-DoF servo keep-out containment $[-1000, +1000]$ mrad with forbidden person interval $[250, 650]$ mrad) & Medical Infusion (linear bolus syringe pump $[0, 50000]\ \mu\text{L}$ with per-tick DOSE rate interlock & saturation clamping; cumulative windowing: future work)
 - **Actuator Bus:** PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (`/dev/i2c1` on hardware; `-n` mock mode on QEMU)
 - **Zero-Hardcoding Architecture:** Plant kinematics, unit conversion ratios, rate limits, ladder thresholds, and deadman leases are fully configured via NIST FIPS 180-2 SHA-256 attested schema-3 manifests (`governor_servo.manifest`, `syringe_governor.manifest`).
 - **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 256`) with atomic Seqlock snapshot protection covering the 1 kHz decision tick.
@@ -109,17 +109,19 @@ Transferred from `latch-ingest` to `latchd` via `/dev/latch/proposal` (`_Static_
 
 ## Adversarial Evaluation Scorecard
 
-GOVERNOR was evaluated against five named cyber-physical attacks using the unified adversarial test harness (`latch/tools/attacks/run_attacks.py`), which drives the **host-sim build of the same C sources** cross-compiled for the QNX target (on-target proof is archived separately under `docs/evidence/governor/`). Across **105 executed ticks**, the system achieved a **0.0% keep-out breach rate** and a **5/5 deterministic fault detection rate**:
+GOVERNOR was evaluated against seven named cyber-physical attacks using the unified adversarial test harness (`latch/tools/attacks/run_attacks.py`), which drives the **host-sim build of the same C sources** cross-compiled for the QNX target (on-target proof is archived separately under `docs/evidence/governor/`). Across **121 executed ticks**, the system achieved a **0.0% keep-out breach rate** and a **7/7 deterministic fault detection rate**:
 
 | ID | Attack Scenario | Evaluated Ticks | Target Vulnerability Probed | Fault Bit Verified | Outcome & Ladder Verdict |
 |:---:|:---|:---:|:---|:---|:---:|
 | **A1** | **Rogue Unit Injection** | 8 | AI hallucinates unmapped unit (`unit_id=999`, $u=370000$) | `LATCH_FAULT_UNIT` (bit 12, `0x1000`) | Proposals rejected; demoted `HP` → `ADVISE` → `CLAMP`. Valid unit 3 ($1/1000$) admitted cleanly. **PASS** |
 | **A2** | **Rate Flood Attack** | 5 | Velocity step burst ($\Delta u = 500\text{ mrad}$) to breach keep-out | `LATCH_FAULT_RATE` (bit 7, `0x0080`) | Token bucket exhausted; actuator step clamped to 0 mrad ($\le v_{\text{max}}$). Zero keep-out breach. **PASS** |
+| **A3** | **Prompt Injection Attack** | 6 | Malicious prompt note forces $u=450$ into keepout $[250, 650]$ | `LATCH_FAULT_KEEPOUT` (bit 5, `0x0020`) | Keepout breach intercepted; fail-closed drop to `LATCH` (`HOLD`). Plant unmoved. **PASS** |
 | **A4** | **Deadman Trip & Recovery** | 79 | Agent CPU stalls ($> 100\text{ ms}$ silence); sends 150 heartbeats | `LATCH_FAULT_HEARTBEAT` (bit 13, `0x2000`) | Lease expires → demotes to `ADVISE`; 150 heartbeats hold without recovery; 25 clean cmds restore `HP`. **PASS** |
 | **A5** | **Coherence Spoof Attack**| 6 | Frozen counter ($\Delta c = 0$) or jump ($\Delta c = 10 > 3$) | `LATCH_FAULT_HEARTBEAT` (bit 13, `0x2000`) | Lease renewal refused; ladder demotes `HP` → `ADVISE` → `CLAMP`; plant held stationary. **PASS** |
 | **A6** | **Sequence Replay Attack** | 7 | Attacker replays captured frame ($seq \le last\_seq$) | `LATCH_FAULT_SEQ` (bit 2, `0x0004`) | Replay detected; supervisor triggers immediate fail-closed transition to `LATCH` (`HOLD`). **PASS** |
+| **A7** | **Chain Tamper Attack** | 10 | Adversary modifies recorded blackbox flight recorder | `TAMPER_DETECTED` (exit code 1) | Rolling SHA-256 chain detects payload/hash mismatch; cryptographic non-repudiation verified. **PASS** |
 
-**Adversarial Audit Summary:** 105 ticks evaluated · 0 keep-out breaches · 0% failure rate (regenerate with `python3 latch/tools/governor_metrics.py`).
+**Adversarial Audit Summary:** 121 ticks evaluated · 0 keep-out breaches · 0% failure rate · 7/7 attacks passed (regenerate with `python3 latch/tools/governor_metrics.py`).
 
 ---
 
