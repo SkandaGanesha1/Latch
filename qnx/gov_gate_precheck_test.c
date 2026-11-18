@@ -198,6 +198,77 @@ int main(void) {
         failures++;
     }
 
+    /* Cumulative dose window tracking and clamping */
+    {
+        latch_manifest_t med_manifest = manifest;
+        med_manifest.medical_present = true;
+        strncpy(med_manifest.medical.drug_name, "insulin-lispro", sizeof(med_manifest.medical.drug_name) - 1);
+        med_manifest.medical.drug_id = 1u;
+        med_manifest.medical.concentration_uL_per_unit = 10u;
+        med_manifest.medical.max_bolus_uL = 100u;
+        med_manifest.medical.min_bolus_interval_ticks = 10u;
+        med_manifest.medical.cumulative_dose_window_ticks = 1000u;
+        med_manifest.medical.max_cumulative_dose_uL = 150u;
+        med_manifest.envelope.v_max = 100;
+        med_manifest.envelope.a_max = 100;
+
+        latch_manifest_governor_t med_config = config;
+        med_config.rate_burst_tokens = 500u;
+        med_config.rate_refill_per_tick = 100u;
+        med_config.rate_sustain_per_tick = 100u;
+
+        gov_gate_init(&med_config, &state);
+
+        /* Step 1: 50 uL at tick 1 (within limit) */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 50, 255u);
+        input.tick = 1u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 50 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 50u) {
+            fprintf(stderr, "FAIL: cumulative dose step 1 not accepted\n");
+            failures++;
+        }
+
+        /* Step 2: +50 uL at tick 2 (within limit, cumulative = 100) */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 50, 100, 255u);
+        input.tick = 2u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 100 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 100u) {
+            fprintf(stderr, "FAIL: cumulative dose step 2 not accepted\n");
+            failures++;
+        }
+
+        /* Step 3: +50 uL at tick 3 (within limit, cumulative = 150) */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 150, 255u);
+        input.tick = 3u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 150 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 150u) {
+            fprintf(stderr, "FAIL: cumulative dose step 3 not accepted\n");
+            failures++;
+        }
+
+        /* Step 4: +10 uL at tick 4 (exceeds 150 max_cumulative_dose_uL) -> assert DOSE fault and clamp step to 0 */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 150, 160, 255u);
+        input.tick = 4u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 150) {
+            fprintf(stderr, "FAIL: cumulative dose exceedance did not raise LATCH_FAULT_DOSE or clamp step to 0\n");
+            failures++;
+        }
+
+        /* Step 5: window expiration at tick 1005 (after 1000 ticks) -> resets window and accepts step */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 150, 160, 255u);
+        input.tick = 1005u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 160 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 10u) {
+            fprintf(stderr, "FAIL: cumulative dose window expiration did not reset window\n");
+            failures++;
+        }
+    }
+
     if (failures != 0) return 1;
     puts("[GOV_GATE] PASS: metadata-driven unit, rate, confidence and shrink prechecks");
     return 0;

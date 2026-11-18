@@ -393,7 +393,7 @@ def run_selftest() -> bool:
     # Bind the synthetic chain's genesis to the real contract's SHA-256 so the
     # self-test can never drift from the manifest it claims to attest. Falls
     # back to a fixed seed only if the contract is absent from the tree.
-    default_manifest_sha256 = "0c36e2f338e31ef29c84d3fb66d06860a02e86c99b0e8ea8af2d070373e92ad0"
+    default_manifest_sha256 = "a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b"
     contract = pathlib.Path(__file__).resolve().parent.parent / "qnx" / "contracts" / "governor_servo.manifest"
     if contract.is_file():
         manifest_sha256 = hashlib.sha256(contract.read_bytes()).hexdigest()

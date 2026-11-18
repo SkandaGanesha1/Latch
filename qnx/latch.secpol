@@ -115,6 +115,7 @@ allow qvm_host_t self:ability {
 # 4. Pathspace Ownership (allow_attach)
 allow_attach latchd_t /dev/latch/proposal;
 allow_attach latchd_t /dev/latch/actuator;
+allow_attach latchd_t /dev/governor;
 allow_attach i2c_t /dev/i2c1;
 allow_attach slogger2_t /dev/slog;
 allow_attach slogger2_t /dev/slog2;

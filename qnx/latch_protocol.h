@@ -61,6 +61,7 @@ extern "C" {
 
 #define LATCH_DEV_PROPOSAL       "/dev/latch/proposal"
 #define LATCH_DEV_ACTUATOR       "/dev/latch/actuator"
+#define LATCH_DEV_GOVERNOR       "/dev/governor"
 #define LATCH_ABILITY_ACTUATOR   "latch/actuator"
 
 #define LATCH_I2C_DEFAULT_BUS    "/dev/i2c1"

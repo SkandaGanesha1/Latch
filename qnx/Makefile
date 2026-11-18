@@ -59,7 +59,7 @@ VERIFY_BIN    := $(OUT_DIR)/latch_verify
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-e2e-check gov-replay-check verify-governor-qemu
+.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt
 
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN)
 
@@ -240,6 +240,11 @@ ifs-qemu-governor: aarch64 secpol guest-governor-initrd check-guest-image check-
 	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs -v latch_qemu_governor.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_governor.ifs
 
 verify-governor-qemu: ifs-qemu-governor
+	python3 ../tools/verify_governor_qemu.py
+
+# Run live QEMU AArch64 test directly against the committed prebuilt IFS image
+# without requiring QNX SDP host cross-compilation tools (qcc, mkifs).
+verify-governor-qemu-prebuilt:
 	python3 ../tools/verify_governor_qemu.py
 
 verify-qemu:

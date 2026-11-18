@@ -156,3 +156,30 @@ pre-loaded 200-tick run). Verify:
 - The applied angle `theta_applied` never enters the shaded `[250, 650]` mrad keep-out zone.
 - `HP` mode is only restored after 25 consecutive clean frames (`ticks 33..57`).
 - After the guest is killed at tick 85, `latchd` transitions from `HOLD` to `HOME` after 50 ticks and steps monotonically back to `0` mrad (which `latch_verify` explicitly asserts via `DCMD_LATCH_DUMP_TAPE`).
+
+---
+
+## 6. Next Level: The GOVERNOR v2 Protocol & Policy Engine
+
+For production Physical AI, LATCH includes **GOVERNOR** — an advanced supervisory runtime featuring:
+
+1. **Wire Protocol v2:** 32-byte frame layout with 28-byte disjoint CRC32 covering metadata tails `[0,16) ‖ [20,32)`, kind rules, integer unit whitelist IDs, and Q8 fixed-point confidence scores.
+2. **6-Rung Degradation Ladder:** Finite-state degradation (`HP → ADVISE → CLAMP → SLOW → SAFE_STOP → LATCH`) with a strict 25-clean-command recovery hysteresis.
+3. **Deadman Lease & Coherence:** 100 ms countdown lease combined with modulo-$2^{24}$ coherence sequence tracking ($\Delta c \le 3$). Heartbeat chatter renews leases but earns zero recovery credit.
+4. **Cryptographic Blackbox Flight Recorder:** 4096-entry circular event ring in `.bss`, dumped via devctl `0x44` and verified offline with manifest-bound rolling SHA-256 hash chains (`gov_replay.py`).
+5. **Universal Path Namespace:** Attaches `/dev/latch/proposal`, `/dev/latch/actuator`, and `/dev/governor` with capability-gated access enforced via QNX Mandatory Access Control (`secpolpush`).
+
+### 6.1 Run the 7-Attack Adversarial Rig
+```bash
+python3 tools/attacks/run_attacks.py
+```
+Asserts 7/7 cyber-physical attacks (A1 unit injection, A2 rate flood, A3 prompt injection, A4 deadman lease trip, A5 coherence spoof, A6 sequence replay, A7 chain tamper) with **0 keep-out breaches (0.0% breach rate)**.
+
+### 6.2 Run the GOVERNOR Gate Suite & QEMU AArch64 Target Test
+```bash
+# Host-sim 7-scenario gate
+make -C qnx check-governor
+
+# Live QEMU AArch64 target verification (235 v2 proposals)
+make -C qnx verify-governor-qemu-prebuilt
+```

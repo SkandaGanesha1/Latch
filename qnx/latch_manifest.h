@@ -134,6 +134,16 @@ typedef struct latch_manifest_governor {
     uint32_t min_confidence_q8;
 } latch_manifest_governor_t;
 
+typedef struct latch_manifest_medical {
+    char     drug_name[64];
+    uint32_t drug_id;
+    uint32_t concentration_uL_per_unit;
+    uint32_t max_bolus_uL;
+    uint32_t min_bolus_interval_ticks;
+    uint32_t cumulative_dose_window_ticks;
+    uint32_t max_cumulative_dose_uL;
+} latch_manifest_medical_t;
+
 typedef struct latch_manifest {
     uint32_t                  schema_version;
     char                      plant_name[64];
@@ -150,6 +160,8 @@ typedef struct latch_manifest {
     latch_manifest_protocol_t protocol;
     latch_manifest_governor_t governor;
     bool                      governor_present;
+    latch_manifest_medical_t  medical;
+    bool                      medical_present;
     uint8_t                   sha256[32];
     char                      sha256_hex[65];
 } latch_manifest_t;

@@ -206,6 +206,30 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         }
     }
 
+    if (manifest->medical_present) {
+        if (manifest->medical.cumulative_dose_window_ticks > 0u && input->tick > 0u) {
+            if (state->window_start_tick == 0u) {
+                state->window_start_tick = input->tick;
+            } else if (input->tick >= state->window_start_tick + manifest->medical.cumulative_dose_window_ticks) {
+                state->window_start_tick = input->tick;
+                state->cumulative_window_dose_uL = 0u;
+            }
+        }
+        int64_t cand_dose = (int64_t)candidate - input->theta;
+        if (cand_dose > 0) {
+            if (manifest->medical.max_bolus_uL > 0u &&
+                (uint64_t)cand_dose > manifest->medical.max_bolus_uL) {
+                result.faults |= LATCH_FAULT_DOSE;
+                candidate = input->theta + (int32_t)manifest->medical.max_bolus_uL;
+                cand_dose = (int64_t)candidate - input->theta;
+            }
+            if (state->cumulative_window_dose_uL + (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL) {
+                result.faults |= LATCH_FAULT_DOSE;
+                candidate = input->theta; /* clamp step to 0 */
+            }
+        }
+    }
+
     if (!gov_apply_rate_bucket(config, state, input->rung, input->theta,
                                &candidate, &result.faults)) {
         result.candidate = candidate;
@@ -213,5 +237,14 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
     }
     result.candidate = candidate;
     result.command_valid = 1u;
+    if (manifest->medical_present) {
+        int64_t accepted_step = (int64_t)result.candidate - input->theta;
+        if (accepted_step > 0) {
+            state->cumulative_window_dose_uL += (uint64_t)accepted_step;
+            if (input->tick > 0u) {
+                state->last_bolus_tick = input->tick;
+            }
+        }
+    }
     return result;
 }

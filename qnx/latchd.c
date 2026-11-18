@@ -985,12 +985,13 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                 .rung = st->gov_ladder.rung,
                 .kind = prop.kind,
                 .confidence_q8 = prop.confidence_q8,
-                    .unit_id = prop.unit_id,
+                .unit_id = prop.unit_id,
                 .has_v2_metadata = 1u,
                 .theta = st->theta_mrad,
                 .velocity = st->velocity_mrad_tick,
                 .acceleration = st->accel_mrad_tick2,
-                .candidate = prop.u_mrad
+                .candidate = prop.u_mrad,
+                .tick = st->tick
             };
             gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
                                                        &g_manifest.governor,
@@ -1018,7 +1019,8 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                     .theta = st->theta_mrad,
                     .velocity = st->velocity_mrad_tick,
                     .acceleration = st->accel_mrad_tick2,
-                    .candidate = u_candidate
+                    .candidate = u_candidate,
+                    .tick = st->tick
                 };
                 gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
                                                            &g_manifest.governor,
@@ -2110,7 +2112,10 @@ int main(int argc, char *argv[]) {
     int id_actuator = resmgr_attach(dpp, &rattr, g_manifest.paths.actuator,
                                     _FTYPE_ANY, 0, &connect_funcs,
                                     &io_funcs, &g_actuator_attr.attr);
-    if (id_proposal == -1 || id_actuator == -1) {
+    int id_governor = resmgr_attach(dpp, &rattr, LATCH_DEV_GOVERNOR,
+                                    _FTYPE_ANY, 0, &connect_funcs,
+                                    &io_funcs, &g_actuator_attr.attr);
+    if (id_proposal == -1 || id_actuator == -1 || id_governor == -1) {
         perror("latchd: resmgr_attach");
         return EXIT_FAILURE;
     }
@@ -2134,6 +2139,7 @@ int main(int argc, char *argv[]) {
     }
 
     pthread_join(decision_tid, NULL);
+    resmgr_detach(dpp, id_governor, _RESMGR_DETACH_ALL);
     resmgr_detach(dpp, id_actuator, _RESMGR_DETACH_ALL);
     resmgr_detach(dpp, id_proposal, _RESMGR_DETACH_ALL);
     dispatch_context_free(ctp);

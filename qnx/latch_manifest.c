@@ -755,6 +755,8 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     const char *tape_sec  = json_find_section(buf, "tape", &tape_end);
     const char *plant_sec = json_find_section(buf, "plant", &plant_end);
     const char *gov_sec   = json_find_section(buf, "governor", &gov_end);
+    const char *med_end   = NULL;
+    const char *med_sec   = json_find_section(buf, "medical", &med_end);
 
     if (!plant_sec || !env_sec || !tim_sec || !rec_sec || !dec_sec ||
         !ing_sec || !paths_sec || !act_sec || !tape_sec || !proto_sec) {
@@ -1131,6 +1133,46 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
         out_m->governor_present = true;
     }
 
+    if (med_sec != NULL) {
+        if (out_m->schema_version != LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len, "Medical section is only supported in schema 3");
+            return -EINVAL;
+        }
+        static const char *const medical_keys[] = {
+            "drug_name", "drug_id", "concentration_uL_per_unit",
+            "max_bolus_uL", "min_bolus_interval_ticks",
+            "cumulative_dose_window_ticks", "max_cumulative_dose_uL"
+        };
+        if (!json_object_has_only_keys(med_sec, med_end, medical_keys,
+                                       sizeof(medical_keys) / sizeof(medical_keys[0]))) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 medical section contains unknown or duplicate keys");
+            return -EINVAL;
+        }
+        const char *np = json_find_key_bounded(med_sec, med_end, "drug_name");
+        if (!np || !json_match_str(&np, out_m->medical.drug_name, sizeof(out_m->medical.drug_name)) ||
+            out_m->medical.drug_name[0] == '\0') {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len, "Schema 3 medical section missing valid drug_name string");
+            return -EINVAL;
+        }
+        bool med_ok =
+            json_get_uint(med_sec, med_end, "drug_id", &out_m->medical.drug_id) &&
+            json_get_uint(med_sec, med_end, "concentration_uL_per_unit", &out_m->medical.concentration_uL_per_unit) &&
+            json_get_uint(med_sec, med_end, "max_bolus_uL", &out_m->medical.max_bolus_uL) &&
+            json_get_uint(med_sec, med_end, "min_bolus_interval_ticks", &out_m->medical.min_bolus_interval_ticks) &&
+            json_get_uint(med_sec, med_end, "cumulative_dose_window_ticks", &out_m->medical.cumulative_dose_window_ticks) &&
+            json_get_uint(med_sec, med_end, "max_cumulative_dose_uL", &out_m->medical.max_cumulative_dose_uL);
+        if (!med_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len, "Schema 3 medical numeric values are missing or invalid");
+            return -EINVAL;
+        }
+        out_m->medical_present = true;
+    }
+
     free(buf);
 
     /* Enforce strict Anti-Silent-Defaults: all required safety & binding keys must be present */
@@ -1295,6 +1337,20 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
             if (err_buf) snprintf(err_buf, err_len,
                                   "GOVERNOR enabled state and protocol version must agree");
             return LATCH_ADMIT_VIOLATED;
+        }
+        if (m->medical_present) {
+            if (m->medical.drug_name[0] == '\0' ||
+                m->medical.drug_id == 0u ||
+                m->medical.concentration_uL_per_unit == 0u ||
+                m->medical.max_bolus_uL == 0u ||
+                m->medical.min_bolus_interval_ticks == 0u ||
+                m->medical.cumulative_dose_window_ticks == 0u ||
+                m->medical.max_cumulative_dose_uL == 0u ||
+                m->medical.max_cumulative_dose_uL < m->medical.max_bolus_uL) {
+                if (err_buf) snprintf(err_buf, err_len,
+                                      "Schema 3 medical parameters are invalid or outside supported safety bounds");
+                return LATCH_ADMIT_VIOLATED;
+            }
         }
     }
     for (uint32_t i = 0; i < m->envelope.num_keepouts; ++i) {

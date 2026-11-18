@@ -53,13 +53,17 @@ def main() -> int:
     if init[4] != 2 or init[5] != 1 or struct.unpack_from("<H", init, 18)[0] != 183:
         print("[GUEST_INITRD FAIL] /init is not a little-endian AArch64 ELF64 binary", file=sys.stderr)
         return 1
-    required = (b"[GOVERNOR] v2 demo", b"four liveness heartbeats",
-                b"[A4] guest CPU spinner", b"scripted 55 ms heartbeat delay",
+    has_delay_marker = (b"scripted 110 ms heartbeat delay" in init or
+                        b"scripted 55 ms heartbeat delay" in init)
+    required = [b"[GOVERNOR] v2 demo", b"four liveness heartbeats",
+                b"[A4] guest CPU spinner",
                 b"heartbeat-only traffic must not recover rung",
                 b"25 coherent commands recover", b"recovered rung accepts fresh canonical commands",
                 b"unknown unit rejected",
-                b"guest stops sending")
+                b"guest stops sending"]
     missing = [marker.decode() for marker in required if marker not in init]
+    if not has_delay_marker:
+        missing.append("scripted 55/110 ms heartbeat delay")
     if missing:
         print(f"[GUEST_INITRD FAIL] /init lacks v2 scenario markers: {missing}", file=sys.stderr)
         return 1

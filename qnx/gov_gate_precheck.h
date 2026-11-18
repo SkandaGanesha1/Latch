@@ -13,6 +13,9 @@ typedef struct gov_gate_state {
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
     uint8_t shrink_active;
+    uint64_t cumulative_window_dose_uL;
+    uint64_t window_start_tick;
+    uint64_t last_bolus_tick;
 } gov_gate_state_t;
 
 typedef struct gov_gate_input {
@@ -25,6 +28,7 @@ typedef struct gov_gate_input {
     int32_t velocity;
     int32_t acceleration;
     int32_t candidate;
+    uint64_t tick;
 } gov_gate_input_t;
 
 typedef struct gov_gate_result {

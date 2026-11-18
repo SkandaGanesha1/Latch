@@ -19,6 +19,10 @@ This major release introduces the **GOVERNOR** safety supervisor layer to the LA
 - **Tamper-Evident Blackbox Event Ring (`qnx/latchd.c`, `qnx/latchctl.c`, `tools/gov_replay.py`)**: 4096-event circular memory buffer, devctl `0x44` (`DCMD_LATCH_DUMP_GOV_EVENTS`), `latchctl events` CLI, and rolling SHA-256 blackbox hash chain with cryptographic tamper detection.
 - **Schema-3 Manifests & Rational Unit Conversion (`qnx/latch_manifest.c`, `contracts/`)**: Fail-closed parser with exact-key sets, $O(N^2)$ keepout overlap validation, integer rational unit normalization ($N/D$), and SHA-256 sidecar validation.
 - **Medical Syringe Governor Contract & DOSE Fault (`contracts/syringe_governor.manifest`)**: Linear infusion contract ($0..50000\ \mu\text{L}$) with `LATCH_FAULT_DOSE` (bit 15) and single-step rate saturation clamping.
+- **Extended Medical Drug Library Schema & Cumulative Dose Limiter (`contracts/syringe_governor.manifest`, `qnx/latch_manifest.c/.h`, `qnx/gov_gate_precheck.c/.h`)**: Additive schema-3 `medical` section (`drug_name`, `concentration_uL_per_unit`, `max_bolus_uL`, `cumulative_dose_window_ticks`, `max_cumulative_dose_uL`) and windowed cumulative dose tracking asserting `LATCH_FAULT_DOSE` (bit 15) and clamping step to 0 upon window exceedance.
+- **`/dev/governor` Path Alias (`qnx/latch_protocol.h`, `qnx/latchd.c`, `qnx/latch.secpol`)**: Dynamic attachment of `/dev/governor` alongside `/dev/latch/proposal` and `/dev/latch/actuator`, authorized under QNX Mandatory Access Control.
+- **Regulatory & Functional Safety Architecture Alignment (`docs/DEVPOST_SUBMISSION.md`, `docs/GOVERNOR_JUDGE_READINESS.md`)**: Formal architecture mappings to ISO 26262 ASIL D, IEC 61508 SIL 3, IEC 62304 Class C, EU AI Act Article 12, explicit architectural statement on the intentional discontinuation of APS in SDP 8.0, and certification transparency with QOS/QHS 8.0.
+- **Prebuilt IFS Makefile Target (`qnx/Makefile`)**: Added `verify-governor-qemu-prebuilt` target enabling direct live QEMU AArch64 testing without requiring `mkifs`.
 - **7-Scenario Integration & Adversarial Rig (`tools/governor_e2e.py`, `tools/attacks/`)**: Dedicated 7-scenario E2E test gate and 7-attack cyber-physical attack suite (A1-A7) achieving a 0.0% keepout breach rate across 121 evaluated ticks.
 - **Python Client SDK & Autonomous Agent Loop (`tools/governor_client.py`, `tools/agent_loop.py`)**: Wire v2 client library and poka-yoke agent loop with fail-closed planner liveness watchdog.
 - **Interactive Operator Console (`host/console.html`)**: Self-contained offline HTML5 Canvas dashboard with real-time ladder indicators and flight recorder replay.
@@ -29,6 +33,9 @@ This major release introduces the **GOVERNOR** safety supervisor layer to the LA
 - **Scheduling Comment (`qnx/latch_ingest.c:405`)**: Corrected stale comment from `sched 40` to `sched 60`.
 - **Keep-Out Overlap Validation (`qnx/latch_manifest.c`)**: Added $O(N^2)$ pairwise overlap checks to prevent conflicting keepout boundaries.
 - **Devctl Command Code Uniqueness (`qnx/latch_protocol.h`)**: Renumbered `DCMD_LATCH_PROBE_ABILITY` to `0x45` to eliminate code sharing with `0x43`.
+
+#### Removed
+- **Foreign Packaging Template (PB-6)**: Removed unrelated Alpine Linux `aports` porting template `TARGET.md` from repository root.
 
 ---
 

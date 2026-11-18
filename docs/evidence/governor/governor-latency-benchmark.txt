@@ -14,21 +14,21 @@ LATENCY & JITTER METRICS SUMMARY (microseconds):
 | Platform / Configuration          | Median  | p95     | p99     | Max WCET| Deadlines |
 +-----------------------------------+---------+---------+---------+---------+-----------+
 | QNX SDP 8.0 (SCHED_FIFO 63, Cores)|    2.12 |    4.85 |    8.40 |   61.08 | 0 / 23500 |
-| Linux 6.x CFS (Idle Workstation)  |   20.59 |   30.34 |   37.51 |   49.00 | 0 / 1000  |
-| Linux 6.x CFS (CPU Stress Contend)|   16.10 |   26.97 |   34.56 |   60.06 | High Jitt |
+| Linux 6.x CFS (Idle Workstation)  |   12.89 |   17.59 |   21.05 |   23.38 | 0 / 1000  |
+| Linux 6.x CFS (CPU Stress Contend)|    8.79 |   15.70 |   18.16 |   44.08 | High Jitt |
 +-----------------------------------+---------+---------+---------+---------+-----------+
 
 DISTRIBUTION HISTOGRAMS:
 
 1. Linux CFS (Under Contention) — Computation Latency Distribution:
-  [   11.4 us -    17.5 us] ( 720) | ########################################
-  [   17.5 us -    23.6 us] ( 138) | #######
-  [   23.6 us -    29.7 us] ( 117) | ######
-  [   29.7 us -    35.7 us] (  17) | 
-  [   35.7 us -    41.8 us] (   4) | 
-  [   41.8 us -    47.9 us] (   2) | 
-  [   47.9 us -    54.0 us] (   1) | 
-  [   54.0 us -    60.1 us] (   1) | 
+  [    6.7 us -    11.4 us] ( 886) | ########################################
+  [   11.4 us -    16.1 us] (  94) | ####
+  [   16.1 us -    20.7 us] (  14) | 
+  [   20.7 us -    25.4 us] (   4) | 
+  [   25.4 us -    30.1 us] (   0) | 
+  [   30.1 us -    34.7 us] (   1) | 
+  [   34.7 us -    39.4 us] (   0) | 
+  [   39.4 us -    44.1 us] (   1) | 
 
 2. QNX SDP 8.0 Determinism Profile (Hardware & Microkernel Isolation):
   [    1.6 us -     3.0 us] (22980) | ########################################

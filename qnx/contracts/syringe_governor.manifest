@@ -115,5 +115,14 @@
       "refill_per_tick": 10,
       "sustain_per_tick": 50
     }
+  },
+  "medical": {
+    "drug_name": "insulin-lispro",
+    "drug_id": 1,
+    "concentration_uL_per_unit": 10,
+    "max_bolus_uL": 100,
+    "min_bolus_interval_ticks": 300,
+    "cumulative_dose_window_ticks": 3600000,
+    "max_cumulative_dose_uL": 1500
   }
 }

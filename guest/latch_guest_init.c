@@ -446,7 +446,7 @@ static void run_governor_demo(int hvc_fd) {
     }
     flush_frames(hvc_fd);
 
-    phase_marker("[A4] guest CPU spinner, then scripted 55 ms heartbeat delay\n");
+    phase_marker("[A4] guest CPU spinner, then scripted 110 ms heartbeat delay\n");
     volatile uint32_t spin_state = 0xA4u;
     for (uint32_t i = 0u; i < 1000u; ++i) {
         spin_state = (spin_state * 1664525u) + 1013904223u;

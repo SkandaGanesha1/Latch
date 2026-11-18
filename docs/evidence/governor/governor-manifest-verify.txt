@@ -9,8 +9,8 @@ Tool: latchctl manifest-verify (NIST FIPS 180-2 SHA-256)
 Sidecar content: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b  contracts/governor_servo.manifest
 
 --- 2. MEDICAL SYRINGE INFUSION CONTRACT (syringe_governor.manifest) ---
-[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/syringe_governor.manifest' SHA-256=489fc7ca593daea7cd64d33638f5aaae38a802615807a4454616697a990f3ad8 (admissibility SATISFIED)
-Sidecar content: 489fc7ca593daea7cd64d33638f5aaae38a802615807a4454616697a990f3ad8  contracts/syringe_governor.manifest
+[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/syringe_governor.manifest' SHA-256=6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392 (admissibility SATISFIED)
+Sidecar content: 6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392  contracts/syringe_governor.manifest
 
 --- 3. TAMPER-EVIDENCE INTEGRITY PROOF (Modified Contract Rejection) ---
 [MANIFEST] REJECTED: Could not load or validate '/tmp/tmp.pDgphLOjNn': Missing mandatory SHA-256 sidecar '/tmp/tmp.pDgphLOjNn.sha256' (Fail-Closed)
