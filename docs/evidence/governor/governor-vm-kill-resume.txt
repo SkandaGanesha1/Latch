@@ -10,7 +10,7 @@ pidin
      pid tid name                         prio STATE          Blocked                     
        1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
        1   2 /proc/boot/procnto-smp-instr   0f READY                                      
-       1   3 /proc/boot/procnto-smp-instr   0f READY                                      
+       1   3 /proc/boot/procnto-smp-instr   0f RUNNING                                    
        1   4 /proc/boot/procnto-smp-instr   0f RUNNING                                    
        1   5 /proc/boot/procnto-smp-instr 255i INTR                                       
        1   6 /proc/boot/procnto-smp-instr 255i INTR                                       
@@ -22,7 +22,7 @@ pidin
        1  12 /proc/boot/procnto-smp-instr 254i INTR                                       
        1  13 /proc/boot/procnto-smp-instr   1f NANOSLEEP                                  
        1  14 /proc/boot/procnto-smp-instr  10r ???                                        
-       1  15 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
+       1  15 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  16 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  17 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  18 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
@@ -34,10 +34,10 @@ pidin
        1  24 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  27 /proc/boot/procnto-smp-instr  10r RUNNING                                    
-       1  28 /proc/boot/procnto-smp-instr  10r RUNNING                                    
-       1  29 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  30 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  27 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  29 /proc/boot/procnto-smp-instr  10r RUNNING                                    
+       1  30 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
        2   2 proc/boot/devc-serpl011      254i INTR                                       
     4099   1 proc/boot/slogger2            10r RECEIVE        1                           
@@ -57,16 +57,16 @@ pidin
   [VERIFIED] procnto-smp-instr, latchd (SCHED_FIFO 63), and qvm (hypervisor) running.
 
 [PHASE 3] Waiting for Linux guest VM to boot and stream telemetry (rx >= 5)...
-  [GUEST ACTIVE] Successfully received 25 proposals from Linux guest VM.
+  [GUEST ACTIVE] Successfully received 37 proposals from Linux guest VM.
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 10691 ticks
+Tick Counter         : 12493 ticks
 Current Mode         : HP (High Performance)
 Actuator Angle       : 100 mrad
 Velocity / Omega     : 0 mrad/tick | 0 mrad/s
-Last Proposed Angle  : 100 mrad (seq=25)
-Decision Latency     : last = 453 cyc (7248 ns) | max = 78621 cyc (1257936 ns)
-Proposals Received   : 25
+Last Proposed Angle  : 100 mrad (seq=37)
+Decision Latency     : last = 137 cyc (2192 ns) | max = 74628 cyc (1194048 ns)
+Proposals Received   : 37
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
 Ring Drops / WCET    : 0 drops | 2 overruns
@@ -77,11 +77,11 @@ Active Fault Bits    : 0x0000 (NONE)
 Latched Fault Bits   : 0x0000 (NONE)
 Clean Streak         : 0 frames
 GOVERNOR             : enabled | rung=ADVISE (1)
-V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
-Warm-up / Agent      : 24 heartbeats | state 1
+V2 Session / Lease   : active | 91 ticks left | lease age 9 ticks
+Warm-up / Agent      : 36 heartbeats | state 1
 Recovery Clean       : 0 accepted commands
 Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=25
+Coherence            : valid | counter=37
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
 
@@ -90,7 +90,7 @@ slay -9 qvm
 #
 
 [PHASE 5] Verifying Process Table: Guest VM Purged From Memory...
-[latch-ingest] Completed: 33 frames processed (33 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
+[latch-ingest] Completed: 45 frames processed (45 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
 pidin
      pid tid name                         prio STATE          Blocked                     
        1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
@@ -120,8 +120,8 @@ pidin
        1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  27 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
-       1  28 /proc/boot/procnto-smp-instr  10r RUNNING                                    
-       1  29 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  29 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        1  30 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
        2   2 proc/boot/devc-serpl011      254i INTR                                       
@@ -136,23 +136,23 @@ pidin
    12293   2 proc/boot/latchd              63f RECEIVE        2                           
    16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
    16392   1 proc/boot/ksh                 10r SIGSUSPEND                                 
-  237575   1 proc/boot/pidin               10r REPLY          1                           
+  262151   1 proc/boot/pidin               10r REPLY          1                           
 #
   [VERIFIED] qvm is completely purged from memory. Safety supervisor remains active.
 
 [PHASE 6] Verifying Supervisor State After Guest Loss...
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 12291 ticks
+Tick Counter         : 14095 ticks
 Current Mode         : HP (High Performance)
 Actuator Angle       : 0 mrad
 Velocity / Omega     : 0 mrad/tick | -10000 mrad/s
-Last Proposed Angle  : 100 mrad (seq=33)
-Decision Latency     : last = 2663 cyc (42608 ns) | max = 78621 cyc (1257936 ns)
-Proposals Received   : 33
+Last Proposed Angle  : 100 mrad (seq=45)
+Decision Latency     : last = 5497 cyc (87952 ns) | max = 74628 cyc (1194048 ns)
+Proposals Received   : 45
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
-Ring Drops / WCET    : 0 drops | 4 overruns
+Ring Drops / WCET    : 0 drops | 5 overruns
 Proposal Backlog     : peak 3 frames | 0 over limit
 EPERM Rejections     : 0
 Operator Hold Locked : NO
@@ -160,11 +160,11 @@ Active Fault Bits    : 0x0000 (NONE)
 Latched Fault Bits   : 0x2000 (HEARTBEAT)
 Clean Streak         : 0 frames
 GOVERNOR             : enabled | rung=LATCH (5)
-V2 Session / Lease   : active | 42 ticks left | lease age 1556 ticks
-Warm-up / Agent      : 32 heartbeats | state 1
+V2 Session / Lease   : active | 42 ticks left | lease age 1557 ticks
+Warm-up / Agent      : 44 heartbeats | state 1
 Recovery Clean       : 0 accepted commands
 Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=33
+Coherence            : valid | counter=45
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
   Current Rung   : LATCH
