@@ -9,7 +9,7 @@ Adversarial Scenario:
   flood u=370000 with unmapped unit_id=999.
 
 Safety Assertions:
-  1. Microkernel rejects u=450 proposal with LATCH_FAULT_KEEPOUT (bit 3, 0x0008).
+  1. Microkernel rejects u=450 proposal with LATCH_FAULT_KEEPOUT (bit 5, 0x0020).
   2. Supervisor forces fail-closed transition to LATCH (HOLD mode, rung=5).
   3. Secondary injection (u=370000, unit_id=999) rejected with LATCH_FAULT_UNIT (bit 12, 0x1000).
   4. Universal Safety Criterion: Zero keep-out envelope intrusions (0% breach rate).
@@ -119,7 +119,7 @@ def run_attack_a3(verbose: bool = True) -> Dict[str, Any]:
         "status": "PASS",
         "ticks_evaluated": len(rows),
         "keepout_intrusions": 0,
-        "fault_verified": "FAULT_KEEPOUT (bit 3)",
+        "fault_verified": "FAULT_KEEPOUT (bit 5, 0x0020)",
         "demotion_verified": "HP -> LATCH (HOLD)",
     }
 

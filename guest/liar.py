@@ -208,8 +208,8 @@ def main() -> int:
                 mdata = json.load(mf)
                 if args.keepout_val is None:
                     klist = mdata.get("envelope", {}).get("keepout", [])
-                    if klist:
-                        keepout_target = (klist[0].get("lo_mrad", 250) + klist[0].get("hi_mrad", 650)) // 2
+                    if klist and "lo_mrad" in klist[0] and "hi_mrad" in klist[0]:
+                        keepout_target = (klist[0]["lo_mrad"] + klist[0]["hi_mrad"]) // 2
                 if args.v_step is None:
                     v_max = mdata.get("envelope", {}).get("v_max", 25)
                     if v_max > 0:

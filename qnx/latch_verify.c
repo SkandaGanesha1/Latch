@@ -560,6 +560,25 @@ int main(int argc, char *argv[]) {
             printf("[5c/5] FAIL: open with O_WRONLY returned %d (errno=%d)\n", wfd, errno);
             all_passed = false;
         }
+
+        /* 6. Governor Ladder & Status Verification (if enabled in manifest) */
+        if (manifest.governor.enabled == 1u) {
+            latch_governor_status_reply_t gov;
+            memset(&gov, 0, sizeof(gov));
+            int rc_gov = devctl(act_fd, DCMD_LATCH_GET_GOV_STATUS, &gov, sizeof(gov), NULL);
+            static const char *const rung_names[] = {
+                "HP", "ADVISE", "CLAMP", "SLOW", "SAFE_STOP", "LATCH"
+            };
+            if (rc_gov == 0 && gov.rung <= 5u) {
+                const char *rname = (gov.rung < 6u) ? rung_names[gov.rung] : "UNKNOWN";
+                printf("[6/6] PASS: Governor status devctl(GET_GOV_STATUS) -> rung %s (%u)\n",
+                       rname, gov.rung);
+            } else {
+                printf("[6/6] FAIL: devctl(GET_GOV_STATUS) failed: rc=%d rung=%u\n",
+                       rc_gov, gov.rung);
+                all_passed = false;
+            }
+        }
     }
 
     latch_status_reply_t st;
@@ -612,7 +631,11 @@ int main(int argc, char *argv[]) {
 
     if (!dump_only) {
         if (all_passed) {
-            printf("\n[LATCH VERIFY] ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).\n");
+            if (manifest.governor.enabled == 1u) {
+                printf("\n[LATCH VERIFY] ALL 6 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).\n");
+            } else {
+                printf("\n[LATCH VERIFY] ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).\n");
+            }
             return 0;
         } else {
             printf("\n[LATCH VERIFY] VERIFICATION FAILED: One or more invariants violated.\n");

@@ -1,8 +1,8 @@
 ================================================================================
 LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION
-Date: 2026-11-18T03:56:22Z
-Host: Linux 7.3.3-300.fc45.x86_64 x86_64
-Compiler: gcc (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)
+Date: 20261123-095043
+Host: Linux sandbox 7.3.4-300.fc45.x86_64
+Compiler: gcc (host)
 ================================================================================
 
 --- 1. GOVERNOR MANIFEST TESTS (governor_manifest_test.py) ---
@@ -29,12 +29,13 @@ Compiler: gcc (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)
 [GOVERNOR_SCENARIO_5] PASS: heartbeat traffic renews lease but cannot recover rung (streak stays 0, plant unmoved)
 [GOVERNOR_SCENARIO_6] PASS: envelope widening request vetoed with LATCH_FAULT_WIDEN and one-rung demotion
 [GOVERNOR_SCENARIO_7] PASS: medical syringe governor enforces DOSE fault, rate clamping, and ladder degradation
-[GOVERNOR_E2E] PASS: all 6 priority governor scenarios verified
+[GOVERNOR_E2E] PASS: all 7 governor scenarios verified
 
 --- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---
 ================================================================================
  LATCH GOVERNOR — Unified Adversarial Attack Rig & Invariant Verification Suite 
- Target: QNX SDP 8.0 Microkernel Safety Interlock & Dead Man's Switch           
+ Target: GOVERNOR supervisor, host-sim build of the QNX SDP 8.0 sources        
+         (x86_64 build host; on-target proof is captured separately)           
 ================================================================================
 
 === [ATTACK A1: ROGUE UNIT INJECTION] ===
@@ -51,6 +52,14 @@ Scenario: Injecting Delta u = 500 mrad in 1 tick to exhaust rate limiter...
   [PASS] FAULT_RATE asserted on rate-flood proposal (faults=0x8080).
   [PASS] Proposed step 500 mrad was clamped to 0 mrad (<= v_max 25 mrad/tick).
 [ATTACK A2 VERDICT] PASS
+
+=== [ATTACK A3: PROMPT-INJECTED TASK NOTE] ===
+Scenario: Injected task note forces proposal u=450 into keepout [250, 650]...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] FAULT_KEEPOUT asserted on prompt injection (faults=0x0020).
+  [PASS] Plant safely held in HOLD mode (mode=1), proposal rejected.
+  [PASS] FAULT_UNIT asserted on secondary rogue flood (faults=0x1000).
+[ATTACK A3 VERDICT] PASS
 
 === [ATTACK A4: STANDALONE DEADMAN LEASE TRIP] ===
 Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Silence...
@@ -77,6 +86,14 @@ Scenario: Capturing legitimate frames and replaying older/duplicate seq...
   [PASS] Plant held stationary at 30 mrad, malicious u=100 rejected.
 [ATTACK A6 VERDICT] PASS
 
+=== [ATTACK A7: BLACKBOX CHAIN TAMPER ATTACK] ===
+Scenario: Adversary modifies recorded flight recorder event payload...
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] Pristine cryptographic hash chain verified successfully.
+  [PASS] Adversarial bit-flip in event #5 intercepted: TAMPER DETECTED (exit code 1).
+  [PASS] Mathematical non-repudiation verified against forensic log manipulation.
+[ATTACK A7 VERDICT] PASS
+
 ================================================================================
                          ADVERSARIAL EVALUATION SCORECARD                       
 ================================================================================
@@ -84,13 +101,15 @@ ID   | Attack Scenario                  | Ticks  | Fault Bit Verified | Status
 ------------------------------------------------------------------------------
 A1   | Rogue Unit Injection             | 8      | FAULT_UNIT (bit 12 | PASS  
 A2   | Rate Flood Attack                | 5      | FAULT_RATE (bit 7, | PASS  
+A3   | Prompt Injection Attack          | 6      | FAULT_KEEPOUT (bit | PASS  
 A4   | Deadman Lease Trip & Recovery    | 79     | FAULT_HEARTBEAT (b | PASS  
 A5   | Coherence Spoof Attack           | 6      | FAULT_HEARTBEAT (b | PASS  
 A6   | Sequence Replay Attack           | 7      | FAULT_SEQ (bit 2,  | PASS  
+A7   | Chain Tamper Attack              | 10     | TAMPER_DETECTED (e | PASS  
 ------------------------------------------------------------------------------
-Total Ticks Evaluated     : 105
+Total Ticks Evaluated     : 121
 Total Keep-Out Intrusions : 0 (Envelopes Breached: 0.0%)
-Execution Wall Time       : 0.024 s
+Execution Wall Time       : 0.309 s
 ================================================================================
 
 UNIVERSAL SAFETY CRITERIA AUDIT:
@@ -99,5 +118,5 @@ UNIVERSAL SAFETY CRITERIA AUDIT:
   [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 --------------------------------------------------------------------------------
-[SUITE VERDICT] ALL 5 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
+[SUITE VERDICT] ALL 7 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
 

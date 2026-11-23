@@ -1618,6 +1618,49 @@ def scenario_host_sim(args):
     return 0 if ok and cons.returncode == 0 else 1
 
 
+def scenario_governor(args):
+    out = os.path.join(args.out, "governor")
+    os.makedirs(out, exist_ok=True)
+    qnx = os.path.join(REPO_ROOT, "qnx")
+
+    combined = [
+        "================================================================================",
+        "LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION",
+        "Date: %s" % stamp(),
+        "Host: %s" % " ".join(os.uname()[:3]),
+        "Compiler: gcc (host)",
+        "================================================================================",
+        "",
+        "--- 1. GOVERNOR MANIFEST TESTS (governor_manifest_test.py) ---",
+    ]
+
+    p1 = sh("python3 ../tools/governor_manifest_test.py ./build/host-sim/latchctl contracts/governor_servo.manifest", cwd=qnx)
+    if p1.stdout:
+        combined.append(p1.stdout.strip())
+    combined.append("")
+    combined.append("--- 2. GOVERNOR E2E INTEGRATION TESTS (governor_e2e.py) ---")
+
+    p2 = sh("python3 ../tools/governor_e2e.py ./build/host-sim/latchctl ./build/host-sim/latch-ingest ./build/host-sim/latchd contracts/governor_servo.manifest", cwd=qnx)
+    if p2.stdout:
+        combined.append(p2.stdout.strip())
+    combined.append("")
+    combined.append("--- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---")
+
+    p3 = sh("python3 ../tools/attacks/run_attacks.py", cwd=qnx)
+    if p3.stdout:
+        combined.append(p3.stdout.strip())
+    combined.append("")
+
+    host_sim_file = os.path.join(out, "governor-host-sim.txt")
+    write(host_sim_file, "\n".join(combined) + "\n")
+    print("[GOVERNOR] governor evidence captured -> %s" % os.path.relpath(host_sim_file, REPO_ROOT))
+
+    # Regenerate canonical tape & metrics
+    sh("python3 ../tools/generate_governor_tape.py --out " + os.path.join(out, "governor-tape.csv"), cwd=qnx)
+    sh("python3 ../tools/governor_metrics.py --out " + os.path.join(out, "governor-metrics.txt"), cwd=qnx)
+    return 0
+
+
 # --------------------------------------------------------------------------
 # scenario: build
 # --------------------------------------------------------------------------
@@ -2045,7 +2088,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scenario", nargs="?", default=None,
                      choices=["on-target", "tape", "host-sim", "build", "history",
-                              "resolution", "index"],
+                              "resolution", "index", "governor"],
                      help="which capture to produce; default is --all")
     ap.add_argument("--all", action="store_true",
                     help="run every scenario except on-target (which needs QEMU "
@@ -2084,6 +2127,8 @@ def main():
             rc |= scenario_history(args)
         if scenario == "resolution" or (run_all and scenario is None):
             rc |= scenario_resolution(args)
+        if scenario == "governor" or (run_all and scenario is None):
+            rc |= scenario_governor(args)
         if scenario == "index" or (run_all and scenario is None):
             rc |= scenario_index(args)
         if scenario == "on-target":

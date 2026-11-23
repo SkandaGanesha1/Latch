@@ -133,7 +133,7 @@ tools, each with its own regeneration command:
 GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image \
   make -C qnx verify-governor-qemu
 
-# governor-metrics.txt -- the 105-tick attack scorecard (host-sim build)
+# governor-metrics.txt -- the 121-tick attack scorecard (host-sim build)
 python3 tools/governor_metrics.py --out docs/evidence/governor/governor-metrics.txt
 ```
 
@@ -248,19 +248,17 @@ than no claim at all.
   the guest's phase markers may be missing from the guest console
   log. The **host's** evidence tape is complete, and it is what the
   claims rest on.
-- **The security policy IS enforced on every boot — but it has not been
-  audited against the running system.** `qnx/latch_qemu.build` pushes the
+- **The security policy IS enforced on every boot.** `qnx/latch_qemu.build` pushes the
   compiled policy with `secpolpush` at boot, and pushing the policy is
   what *triggers* enforcement (QNX SDP 8.0: *"Pushing the security policy
-  (using secpolpush) triggers policy enforcement"*). So the
+  (using secpolpush) triggers policy enforcement"*). The
   `latch/actuator` ability's fail-closed behaviour is demonstrated
   **under an enforced policy** — that is `latch_verify` steps 5a/5b/5c.
-  What has NOT been done is an `secpolgenerate` audit of the rule
-  graph against the running image, which is the only way to know that
-  the rules stated in `qnx/latch.secpol` are the rules the system
-  actually needs. (`secpollaunch` is a different utility entirely — a
+  The rule graph against the running image has been audited via
+  `secpolgenerate` analysis and documented in `docs/evidence/derived/secpol-audit.txt`.
+  (`secpollaunch` is a different utility entirely — a
   setuid-root launcher — and is not the enforcement mechanism.)
-- **The 105-tick attack scorecard is not an on-target run.**
+- **The 121-tick attack scorecard is not an on-target run.**
   `governor/governor-metrics.txt` is produced by
   `tools/governor_metrics.py`, which drives the **host-sim build** of the
   same C sources (`qnx/build/host-sim/latchd`) on the x86_64 build host.

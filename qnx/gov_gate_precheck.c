@@ -218,14 +218,21 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         }
         int64_t cand_dose = (int64_t)candidate - input->theta;
         if (cand_dose > 0) {
-            if (manifest->medical.max_bolus_uL > 0u &&
+            if (manifest->medical.min_bolus_interval_ticks > 0u && state->last_bolus_tick > 0u &&
+                input->tick > 0u && input->tick >= state->last_bolus_tick &&
+                (input->tick - state->last_bolus_tick) < manifest->medical.min_bolus_interval_ticks) {
+                result.faults |= LATCH_FAULT_DOSE;
+                candidate = input->theta; /* lockout interval violation: clamp step to 0 */
+                cand_dose = 0;
+            }
+            if (cand_dose > 0 && manifest->medical.max_bolus_uL > 0u &&
                 (uint64_t)cand_dose > manifest->medical.max_bolus_uL) {
                 result.faults |= LATCH_FAULT_DOSE;
                 candidate = input->theta + (int32_t)manifest->medical.max_bolus_uL;
                 cand_dose = (int64_t)candidate - input->theta;
             }
-            if (state->cumulative_window_dose_uL >= manifest->medical.max_cumulative_dose_uL ||
-                (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL - state->cumulative_window_dose_uL) {
+            if (cand_dose > 0 && (state->cumulative_window_dose_uL >= manifest->medical.max_cumulative_dose_uL ||
+                (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL - state->cumulative_window_dose_uL)) {
                 result.faults |= LATCH_FAULT_DOSE;
                 candidate = input->theta; /* clamp step to 0 */
             }

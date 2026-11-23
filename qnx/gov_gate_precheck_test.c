@@ -206,7 +206,7 @@ int main(void) {
         med_manifest.medical.drug_id = 1u;
         med_manifest.medical.concentration_uL_per_unit = 10u;
         med_manifest.medical.max_bolus_uL = 100u;
-        med_manifest.medical.min_bolus_interval_ticks = 10u;
+        med_manifest.medical.min_bolus_interval_ticks = 0u;
         med_manifest.medical.cumulative_dose_window_ticks = 1000u;
         med_manifest.medical.max_cumulative_dose_uL = 150u;
         med_manifest.envelope.v_max = 100;
@@ -288,7 +288,40 @@ int main(void) {
         if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 100) {
             fprintf(stderr, "FAIL: cumulative dose counter addition wrap guard failed to raise DOSE fault or clamp\n");
             failures++;
+    
+        /* Step 8: Medical lockout interval — min_bolus_interval_ticks enforcement */
+        med_manifest.medical.min_bolus_interval_ticks = 10u;
+        gov_gate_init(&med_config, &state);
+
+        /* 8a: First bolus at tick 1: accepted */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 20, 255u);
+        input.tick = 1u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 20 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.last_bolus_tick != 1u) {
+            fprintf(stderr, "FAIL: Step 8a initial bolus not accepted\n");
+            failures++;
         }
+
+        /* 8b: Rapid bolus attempt at tick 5 (elapsed 4 < 10): lockout violation */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 20, 30, 255u);
+        input.tick = 5u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 20) {
+            fprintf(stderr, "FAIL: Step 8b rapid bolus before min_bolus_interval did not raise DOSE fault or clamp\n");
+            failures++;
+        }
+
+        /* 8c: Bolus attempt at tick 12 (elapsed 11 >= 10): lockout expired, accepted */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 20, 30, 255u);
+        input.tick = 12u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if (!result.command_valid || result.candidate != 30 ||
+            (result.faults & LATCH_FAULT_DOSE) != 0u || state.last_bolus_tick != 12u) {
+            fprintf(stderr, "FAIL: Step 8c bolus after min_bolus_interval not accepted\n");
+            failures++;
+        }
+    }
     }
 
     if (failures != 0) return 1;

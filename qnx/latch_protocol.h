@@ -73,7 +73,7 @@ extern "C" {
  * Offset  Field     Type      Rule
  * ------  --------  --------  ----------------------------------------------
  * 0       magic     uint32_t  0x4C415448 ('LATH')
- * 4       version   uint16_t  1
+ * 4       version   uint16_t  1 (legacy) or 2 (GOVERNOR v2)
  * 6       joint     uint8_t   0 only in this build
  * 7       flags/kind uint8_t  v1 demo bits; v2 version-gated message kind
  * 8       seq       uint32_t  Must strictly exceed last_accepted (seq > last_seq)
@@ -83,7 +83,8 @@ extern "C" {
  * ========================================================================== */
 
 #define LATCH_WIRE_MAGIC         0x4C415448u  /* "LATH" little-endian u32    */
-#define LATCH_WIRE_VERSION       1u
+#define LATCH_WIRE_VERSION       1u           /* Wire v1 (legacy)             */
+#define LATCH_WIRE_VERSION_V2    2u           /* Wire v2 (GOVERNOR)           */
 #define LATCH_WIRE_JOINT_DEFAULT 0u
 #define LATCH_NAN_MRAD           INT32_MIN    /* -2147483648 NaN sentinel    */
 #define LATCH_CRC32_POLY_REFL    0xEDB88320u  /* IEEE 802.3 reflected poly   */

@@ -166,16 +166,43 @@ For production Physical AI, LATCH includes **GOVERNOR** — an advanced supervis
 1. **Wire Protocol v2:** 32-byte frame layout with 28-byte disjoint CRC32 covering metadata tails `[0,16) ‖ [20,32)`, kind rules, integer unit whitelist IDs, and Q8 fixed-point confidence scores.
 2. **6-Rung Degradation Ladder:** Finite-state degradation (`HP → ADVISE → CLAMP → SLOW → SAFE_STOP → LATCH`) with a strict 25-clean-command recovery hysteresis.
 3. **Deadman Lease & Coherence:** 100 ms countdown lease combined with modulo-$2^{24}$ coherence sequence tracking ($\Delta c \le 3$). Heartbeat chatter renews leases but earns zero recovery credit.
-4. **Cryptographic Blackbox Flight Recorder:** 4096-entry circular event ring in `.bss`, dumped via devctl `0x44` and verified offline with manifest-bound rolling SHA-256 hash chains (`gov_replay.py`).
+4. **Cryptographic Blackbox Flight Recorder & Telemetry:**
+   - Devctl `0x43` (`DCMD_LATCH_GET_GOV_STATUS`): Read instantaneous 6-rung ladder state, active lease ticks, coherence counter, clean command streak, and rate token bucket.
+   - Devctl `0x44` (`DCMD_LATCH_DUMP_GOV_EVENTS`): Dump 4096-entry circular event ring from `.bss` for offline tamper-evident forensic analysis (`gov_replay.py`).
 5. **Universal Path Namespace:** Attaches `/dev/latch/proposal`, `/dev/latch/actuator`, and `/dev/governor` with capability-gated access enforced via QNX Mandatory Access Control (`secpolpush`).
 
-### 6.1 Run the 7-Attack Adversarial Rig
+### 6.1 Query Governor Status & Event Dump via devctl
+From QNX C code or operator tools:
+```c
+/* devctl 0x43: Query current Governor rung, lease, and telemetry */
+latch_governor_status_reply_t gov;
+memset(&gov, 0, sizeof(gov));
+int rc = devctl(act_fd, DCMD_LATCH_GET_GOV_STATUS, &gov, sizeof(gov), NULL);
+if (rc == EOK) {
+    printf("Ladder Rung: %u | Lease Ticks: %u | Recovery Streak: %u\n",
+           gov.rung, gov.lease_ticks_remaining, gov.clean_command_streak);
+}
+
+/* devctl 0x44: Dump cryptographic event ring */
+latch_gov_event_dump_t dump;
+memset(&dump, 0, sizeof(dump));
+dump.start_index = 0;
+dump.count = LATCH_GOV_DUMP_MAX_ENTRIES;
+rc = devctl(act_fd, DCMD_LATCH_DUMP_GOV_EVENTS, &dump, sizeof(dump), NULL);
+```
+Or use the operator utility:
+```bash
+latchctl status     # queries devctl 0x43 (or falls back to 0x40)
+latchctl dump-gov   # queries devctl 0x44 to export JSON flight events
+```
+
+### 6.2 Run the 7-Attack Adversarial Rig
 ```bash
 python3 tools/attacks/run_attacks.py
 ```
 Asserts 7/7 cyber-physical attacks (A1 unit injection, A2 rate flood, A3 prompt injection, A4 deadman lease trip, A5 coherence spoof, A6 sequence replay, A7 chain tamper) with **0 keep-out breaches (0.0% breach rate)**.
 
-### 6.2 Run the GOVERNOR Gate Suite & QEMU AArch64 Target Test
+### 6.3 Run the GOVERNOR Gate Suite & QEMU AArch64 Target Test
 ```bash
 # Host-sim 7-scenario gate
 make -C qnx check-governor

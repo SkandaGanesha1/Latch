@@ -292,6 +292,7 @@ def main():
             s_config["governor"]["deadman"]["warmup_heartbeats"] = 2
             s_config["governor"]["deadman"]["lease_ticks"] = 10
             s_config["governor"]["ladder"]["demote_faults_per_rung"] = 3
+            s_config["medical"]["min_bolus_interval_ticks"] = 1
             frames_s = [
                 # Ticks 1..2: Warmup heartbeats -> completes warmup and enters HP
                 frame_v2(HEARTBEAT, 1, 1),

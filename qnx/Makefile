@@ -14,6 +14,8 @@
 #   make qemu             -> Launch QEMU virtual machine (x86_64 QSTI / AArch64)
 # ==============================================================================
 
+export CCACHE_DISABLE ?= 1
+
 TARGET        ?= host-sim
 BUILD_DIR     := build
 COMMON_CFLAGS := -Wall -Wextra -Werror -Wpedantic -O2 -I.
@@ -129,6 +131,22 @@ check: host-sim
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify latch.manifest
 	python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv $(BUILD_DIR)/host-sim/suite_tape.csv
 	python3 ../tools/embed_default_tape.py --check
+
+check-asan:
+	@echo "=== Running AddressSanitizer & UndefinedBehaviorSanitizer Checks ==="
+	@mkdir -p $(BUILD_DIR)/asan
+	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM governor_policy.c governor_policy_test.c -o $(BUILD_DIR)/asan/governor_policy_test -lm
+	./$(BUILD_DIR)/asan/governor_policy_test
+	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM governor_wire.c governor_wire_test.c -o $(BUILD_DIR)/asan/governor_wire_test -lm
+	./$(BUILD_DIR)/asan/governor_wire_test
+	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM latch_ipc.c latch_ipc_test.c -o $(BUILD_DIR)/asan/latch_ipc_test -lm
+	./$(BUILD_DIR)/asan/latch_ipc_test
+	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM gov_gate_precheck.c governor_policy.c latch_manifest.c gov_gate_precheck_test.c -o $(BUILD_DIR)/asan/gov_gate_precheck_test -lpthread -lrt -lm
+	./$(BUILD_DIR)/asan/gov_gate_precheck_test
+	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
+
+fuzz: host-sim
+	python3 ../tools/fuzz_manifest.py --iterations 300
 
 governor-e2e-check: host-sim
 	python3 ../tools/governor_e2e.py ./$(BUILD_DIR)/host-sim/latchctl ./$(BUILD_DIR)/host-sim/latch-ingest ./$(BUILD_DIR)/host-sim/latchd contracts/governor_servo.manifest
@@ -288,6 +306,10 @@ evidence-tape:
 # The four-defect resolution record.
 evidence-resolution:
 	python3 $(EVIDENCE_TOOL) resolution
+
+# The GOVERNOR evidence: host-sim, e2e, adversarial attacks, tape, and metrics.
+evidence-governor: host-sim
+	python3 $(EVIDENCE_TOOL) governor
 
 # The index and the run-output manifest.
 evidence-index:

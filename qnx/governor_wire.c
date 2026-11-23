@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#define GOVERNOR_WIRE_V2_VERSION 2u
+#define GOVERNOR_WIRE_V2_VERSION LATCH_WIRE_VERSION_V2
 #define GOVERNOR_WIRE_FRAME_BYTES 32u
 
 static uint16_t load_le16(const uint8_t *p) {

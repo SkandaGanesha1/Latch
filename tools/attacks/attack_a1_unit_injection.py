@@ -79,7 +79,10 @@ def run_attack_a1(verbose: bool = True) -> Dict[str, Any]:
 
     # Invariant Evaluation
     # 1. Criterion 1: Zero keep-out envelope breaches
-    assert_zero_keepout_breaches(rows, keepout_lo=250, keepout_hi=650, context="Attack A1")
+    ko_list = manifest_dict.get("envelope", {}).get("keepout", [])
+    k_lo = ko_list[0]["lo_mrad"] if ko_list and "lo_mrad" in ko_list[0] else 250
+    k_hi = ko_list[0]["hi_mrad"] if ko_list and "hi_mrad" in ko_list[0] else 650
+    assert_zero_keepout_breaches(rows, keepout_lo=k_lo, keepout_hi=k_hi, context="Attack A1")
 
     by_seq = {int(r["seq"]): r for r in rows if r.get("seq") and int(r["seq"]) > 0}
 

@@ -536,9 +536,11 @@
       ctx.lineTo(xEnd, yMid);
       ctx.stroke();
 
-      // Draw Keep-Out Zone [250, 650]
-      const koX1 = mapX(250);
-      const koX2 = mapX(650);
+      // Draw Keep-Out Zone [keepout_lo, keepout_hi] (from manifest or runtime config)
+      const keepout_lo = window.LATCH_KEEPOUT_LO || 250;
+      const keepout_hi = window.LATCH_KEEPOUT_HI || 650;
+      const koX1 = mapX(keepout_lo);
+      const koX2 = mapX(keepout_hi);
       ctx.fillStyle = "rgba(239, 68, 68, 0.15)";
       ctx.fillRect(koX1, yMid - 60, koX2 - koX1, 120);
 

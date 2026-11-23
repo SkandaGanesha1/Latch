@@ -4,9 +4,11 @@
 Executes the complete suite of named cyber-physical attacks against the QNX 8.0 GOVERNOR:
   - Attack A1: Rogue Unit Injection (attack_a1_unit_injection.py)
   - Attack A2: Rate Flood Attack (attack_a2_rate_flood.py)
+  - Attack A3: Prompt Injection Attack (attack_a3_prompt_note.py)
   - Attack A4: Standalone Deadman Lease Trip & Recovery (attack_a4_deadman.py)
   - Attack A5: Coherence Spoof Attack (attack_a5_coherence_spoof.py)
   - Attack A6: Sequence Replay Attack (attack_a6_replay.py)
+  - Attack A7: Blackbox Chain Tamper Attack (attack_a7_chain_tamper.py)
 
 Evaluates Four Universal Safety Invariants:
   Criterion 1: Zero keep-out envelope intrusions (0% breach rate, theta never in [250, 650] mrad).

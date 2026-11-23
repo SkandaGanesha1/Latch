@@ -8,7 +8,7 @@ When an AI policy hallucinates out-of-scale coordinates, commands lethal acceler
 
 - **Target OS:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0.5 (AArch64 EL2 VHE host + GICv2 guest support)
 - **Primary Verified Target:** QEMU AArch64 `virt` (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) hosting a **Linux 6.12 ARM64** guest VM
-- **Dual-Domain Applications:** Industrial Robotics (1-DoF servo keep-out containment $[-1000, +1000]$ mrad with forbidden person interval $[250, 650]$ mrad) & Medical Infusion (linear bolus syringe pump $[0, 50000]\ \mu\text{L}$ with per-tick DOSE rate interlock & saturation clamping; cumulative windowing: future work)
+- **Dual-Domain Applications:** Industrial Robotics (1-DoF servo keep-out containment $[-1000, +1000]$ mrad with forbidden person interval $[250, 650]$ mrad) & Medical Infusion (linear bolus syringe pump $[0, 50000]\ \mu\text{L}$ with per-tick DOSE rate interlock, lockout interval, & windowed cumulative dose saturation clamping)
 - **Actuator Bus:** PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (`/dev/i2c1` on hardware; `-n` mock mode on QEMU)
 - **Zero-Hardcoding Architecture:** Plant kinematics, unit conversion ratios, rate limits, ladder thresholds, and deadman leases are fully configured via NIST FIPS 180-2 SHA-256 attested schema-3 manifests (`governor_servo.manifest`, `syringe_governor.manifest`).
 - **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 256`) with atomic Seqlock snapshot protection covering the 1 kHz decision tick.
@@ -52,9 +52,9 @@ GOVERNOR manages AI actuator authority through a deterministic 6-rung finite sta
 | Rung | Name | Actuator Authority | Velocity Bound ($v_{\text{applied}}$) | Demotion Conditions | Recovery Rule (Hysteresis) |
 |:---:|:---|:---|:---|:---|:---|
 | **0** | **`HP`** (High Performance) | Full autonomous AI control | $v \le v_{\text{max}}$ (25 mrad/tick) | Lease expiry ($> 100\text{ ms}$) or advisory fault | Top rung; nominal steady state |
-| **1** | **`ADVISE`** | Proposals admitted with strict rate clamps | $v \le v_{\text{advise}}$ (10 mrad/tick) | 3 consecutive advisory faults or lease expiry | 25 consecutive clean commands promote to `HP` |
-| **2** | **`CLAMP`** | Clamped to minimal actuator step | $v \le \text{clamp\_step}$ (5 mrad/tick) | Lease expiry ($> 100\text{ ms}$) | 25 consecutive clean commands promote to `ADVISE` |
-| **3** | **`SLOW`** | Limp-home safety crawl | $v \le 0.2 \cdot v_{\text{max}}$ (5 mrad/tick) | Lease expiry ($> 100\text{ ms}$) | 25 consecutive clean commands promote to `CLAMP` |
+| **1** | **`ADVISE`** | Proposals admitted with advisory rate tracking | $v \le v_{\text{max}}$ (25 mrad/tick) with burst rate | 3 consecutive advisory faults or lease expiry | 25 consecutive clean commands promote to `HP` |
+| **2** | **`CLAMP`** | Clamped to minimal actuator step | $v \le \text{clamp\_max\_step}$ (5 mrad/tick) | Lease expiry ($> 100\text{ ms}$) | 25 consecutive clean commands promote to `ADVISE` |
+| **3** | **`SLOW`** | Limp-home safety crawl | $v \le \text{clamp\_max\_step} \cdot \text{slow\_scale\_pct} = 1$ mrad/tick | Lease expiry ($> 100\text{ ms}$) | 25 consecutive clean commands promote to `CLAMP` |
 | **4** | **`SAFE_STOP`** | AI authority revoked; controlled stop | Decelerating slew ($v \to 0$) | Lease expiry ($> 100\text{ ms}$) | 25 consecutive clean commands promote to `SLOW` |
 | **5** | **`LATCH`** | Fail-closed `HOLD` (software interlock; mock I²C on the QEMU take — no physical actuation there) | Complete freeze ($v = 0$) | Terminal safe state on channel silence | Operator release required (`latchctl hold 0`) |
 
@@ -209,11 +209,16 @@ latch/
       syringe_pump_bolus.manifest.sha256 # SHA-256 sidecar for syringe pump contract
     latch_manifest.h             # Schema-3 manifest parser & SHA-256 attestation header
     latch_manifest.c             # Fail-closed JSON parser, keep-out validation, & FIPS sidecar audit
-    latch_protocol.h             # 32-byte wire struct, 48-byte LPR2 IPC, devctls 0x41..0x44, CRC32
+    latch_protocol.h             # 32-byte wire struct, 48-byte LPR2 IPC, devctls 0x40..0x45, CRC32
     latchd.c                     # Simplex supervisor, 6-rung ladder, 4096-entry event ring, devctl dispatch
+    latch_ipc.h, .c              # IPC message structures (LPRP, LPR2) and channel decoders
     governor_wire.h, .c          # Wire v2 32-byte codec, kind rules, and 28-byte CRC32 validator
     governor_policy.h, .c        # 6-rung degradation ladder FSM, advancing lease, and hysteresis
+    governor_policy_test.c       # Unit test: 6-rung ladder transition invariants
+    governor_wire_test.c         # Unit test: framing, CRC coverage, and fail-closed faults
+    latch_ipc_test.c             # Unit test: LPRP/LPR2 IPC decoding and structural rejection
     gov_gate_precheck.h, .c      # Precheck: rational units, token bucket, Q8 shrink, DOSE fault
+    gov_gate_precheck_test.c     # Unit test: precheck gates and cumulative dose windowing
     latch_ingest.c               # Unprivileged virtio-console bridge -> /dev/latch/proposal
     latchctl.c                   # Native admin CLI (status, events, hold, manifest-verify)
     latchlog.c                   # Continuous evidence tape persistence daemon
@@ -222,23 +227,31 @@ latch/
     latch_rpi4.build             # QNX SDP 8.0 mkifs buildfile for Raspberry Pi 4B
     latch_qemu.build             # QNX SDP 8.0 mkifs buildfile for QEMU AArch64 virt
     latch_qemu_governor.build    # Dedicated GOVERNOR QEMU AArch64 buildfile
+    latch_qemu_governor.qvmconf  # QNX Hypervisor 8.0 VM config for GOVERNOR virt (GICv2)
     latch_qemu_virt.qvmconf      # QNX Hypervisor 8.0 guest VM config for QEMU virt (GICv2)
     run_qemu.sh                  # QEMU launcher script
   tools/
     consistency_check.py         # Cross-file architecture & metadata invariant checker
+    capture_evidence.py          # Evidence generation & archival engine (all scenarios)
+    generate_governor_tape.py    # Merged adversarial tape generator (A1-A7, 121 ticks)
+    benchmark_qnx_vs_linux.py    # Determinism & jitter benchmark against Linux CFS
+    governor_metrics.py          # Adversarial evaluation scorecard generator
     governor_client.py           # Python SDK for wire v2 encoding, CRC32, kinds, Q8, unit conversions
     agent_loop.py                # Autonomous AI agent control loop ("plan -> propose -> observe")
     gov_replay.py                # Tamper-evident hash chain replay and verification engine
     governor_e2e.py              # End-to-end full path integration test (7 scenarios)
     governor_manifest_test.py    # Schema-3 negative test suite
+    qemu_guest_kill.py           # Guest crash and supervisor isolation test (slay -9 qvm)
     verify_governor_qemu.py      # QEMU GOVERNOR guest-to-QNX runtime verifier
     verify_qemu_aarch64.py       # Boots legacy IFS under QEMU and asserts on-target signature
     attacks/                     # Standalone adversarial attack test suite
       attack_a1_unit_injection.py
       attack_a2_rate_flood.py
+      attack_a3_prompt_note.py
       attack_a4_deadman.py
       attack_a5_coherence_spoof.py
       attack_a6_replay.py
+      attack_a7_chain_tamper.py
       run_attacks.py             # Unified adversarial attack rig runner
   guest/
     latch_guest_init.c           # THE in-guest policy: freestanding static AArch64 /init
@@ -255,6 +268,10 @@ latch/
       governor-qemu-console.txt
       governor-status-transition.txt
       governor-tape.csv
+      governor-latency-benchmark.txt
+      governor-vm-kill-resume.txt
+      governor-qemu-verify.txt
+      LATENCY.md
     GOVERNOR_JUDGE_READINESS.md  # Honest claims ledger
     GOVERNOR_PROTOCOL_V2.md      # Binding wire/IPC specification
     LATCH-implementation.md      # Technical architecture
@@ -354,7 +371,7 @@ cannot rebuild the IFS, so every console log of every run is committed.
 | **`docs/evidence/on-target/`** | The raw QNX console of every QEMU boot, numbered by the story it tells |
 | **`docs/evidence/tape/`** | The windowed evidence tapes and their analysis |
 | **`docs/evidence/resolution/`** | The four defects, each with its mechanism and its proof |
-| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived `make verify-governor-qemu` PASS log, live status transitions, 105-tick attack tape, metrics, and manifest attestations |
+| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived `make verify-governor-qemu` PASS log, live status transitions, 121-tick attack tape, metrics, and manifest attestations |
 | **`docs/evidence/host-sim/`, `build/`, `derived/`** | The workstation pipeline, what is inside the bootable image, and the machine-readable summaries |
 
 Regenerate it all with one command:

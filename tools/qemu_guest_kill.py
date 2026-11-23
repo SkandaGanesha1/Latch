@@ -7,7 +7,7 @@ Demonstrates:
   1. Microkernel Resilience: The safety supervisor (latchd) runs isolated on _cpu-0
      at SCHED_FIFO 63 while the entire AI guest VM (qvm) runs on _cpu-2/_cpu-3 at priority 8.
   2. Active Telemetry: The guest streams v2 GOVERNOR frames across virtio-console.
-  3. Fault Injection: The entire guest VM is killed abruptly via 'slay -f qvm'.
+  3. Fault Injection: The entire guest VM is killed abruptly via 'slay -9 qvm' (fallback 'slay -f qvm').
   4. Deterministic Fail-Closed: latchd immediately detects the loss of guest heartbeats,
      drops down the degrade ladder to LATCH (fault 0x2000 HEARTBEAT), locks plant in HOLD mode,
      and enforces 0.0% keep-out breaches.

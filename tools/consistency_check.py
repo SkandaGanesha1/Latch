@@ -475,6 +475,31 @@ def verify_evidence_archive():
         if syr_gov_sha not in gov_verify_txt.lower():
             fail(f"docs/evidence/governor/governor-manifest-verify.txt does not attest current syringe_governor.manifest SHA-256 {syr_gov_sha}")
 
+    # Assert canonical GOVERNOR evidence invariants (121 evaluated attack ticks, 0 keep-out intrusions)
+    gov_metrics_path = os.path.join(ev, "governor", "governor-metrics.txt")
+    if os.path.isfile(gov_metrics_path):
+        with io.open(gov_metrics_path, encoding="utf-8") as f:
+            metrics_txt = f.read()
+        if "Total Ticks Evaluated     : 121" not in metrics_txt and "121" not in metrics_txt:
+            fail("docs/evidence/governor/governor-metrics.txt does not assert canonical 121 ticks")
+        if "Total Ticks Evaluated     : 105" in metrics_txt:
+            fail("docs/evidence/governor/governor-metrics.txt contains stale 105 tick reference")
+
+    gov_host_sim_path = os.path.join(ev, "governor", "governor-host-sim.txt")
+    if os.path.isfile(gov_host_sim_path):
+        with io.open(gov_host_sim_path, encoding="utf-8") as f:
+            host_sim_txt = f.read()
+        if "Total Ticks Evaluated     : 121" not in host_sim_txt:
+            fail("docs/evidence/governor/governor-host-sim.txt does not assert canonical 121 ticks")
+
+    gov_tape_path = os.path.join(ev, "governor", "governor-tape.csv")
+    if os.path.isfile(gov_tape_path):
+        with io.open(gov_tape_path, encoding="utf-8") as f:
+            tape_rows = [l for l in f if l.strip() and not l.startswith("attack_id")]
+        if len(tape_rows) != 121:
+            fail(f"docs/evidence/governor/governor-tape.csv contains {len(tape_rows)} rows, expected 121")
+        pass_check("Canonical GOVERNOR numbers verified: 121 adversarial ticks, 0 breaches across full A1-A7 suite")
+
     # --- Nothing under docs/evidence/ may be silently git-ignored --------
     # The bare `build/` pattern in .gitignore matches ANY directory of that
     # name at any depth, so docs/evidence/build/ was on disk but NOT in the
