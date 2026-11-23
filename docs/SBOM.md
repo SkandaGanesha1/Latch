@@ -59,3 +59,4 @@ All contracts in the repository are verified prior to execution against signed S
 - `qnx/contracts/syringe_governor.manifest.sha256`: `6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392`
 - `qnx/latch.manifest.sha256`: `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823`
 - `qnx/contracts/syringe_pump_bolus.manifest.sha256`: `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e`
+

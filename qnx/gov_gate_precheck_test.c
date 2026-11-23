@@ -321,6 +321,15 @@ int main(void) {
             fprintf(stderr, "FAIL: Step 8c bolus after min_bolus_interval not accepted\n");
             failures++;
         }
+
+        /* 8d: Out-of-order / non-monotonic tick at tick 8 (last_bolus_tick=12): rejected fail-closed */
+        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 30, 40, 255u);
+        input.tick = 8u;
+        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
+        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 30) {
+            fprintf(stderr, "FAIL: Step 8d out-of-order tick did not raise DOSE fault or clamp\n");
+            failures++;
+        }
     }
     }
 

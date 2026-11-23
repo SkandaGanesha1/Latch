@@ -25,3 +25,4 @@
 3. **Zero Dynamic Allocation**:
    - The 1 kHz decision tick loop uses statically allocated `.bss` buffers (`g_pub_buf`, `g_simplex`, `g_gov_events`).
    - Zero heap allocations (`malloc`/`free`) occur in the critical path.
+

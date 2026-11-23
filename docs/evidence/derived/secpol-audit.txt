@@ -87,3 +87,4 @@ Security policy rule graph is minimal, complete, and enforces strict least privi
 No unassigned permissions or transitively escalated abilities exist.
 Audit Verdict: PASS (Compliant with ISO 26262 Part 6 Clause 7.4.12 Spatial Isolation)
 ==============================================================================
+

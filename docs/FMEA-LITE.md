@@ -46,3 +46,4 @@
 ## 4. Conclusion & Verification Record
 
 All evaluated failure modes achieve an RPN $< 100$ (target threshold) due to the deterministic detection score ($D = 1$) provided by QNX 8.0 microkernel isolation, hardware memory barriers, and mathematical precheck verification. Every failure mode corresponds directly to one of the seven verified adversarial test scenarios (`A1` through `A7`) and passes 100% of safety invariants.
+

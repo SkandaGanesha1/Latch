@@ -20,10 +20,12 @@
  *          watchdog trips -> HA-HOME retracts jerk-bounded to home_mrad.
  *   - [5/5] Process Manager Ability enforcement: devctl(FORCE_HOLD) and
  *          write-open without the 'latch/actuator' ability return EPERM.
+ *   - [6/6] (GOVERNOR schema-3 only) Microkernel degradation ladder & status
+ *          invariants verified via devctl(GET_GOV_STATUS) asserting valid rung (0..5).
  *
- * Exit codes: 0 = all five invariants verified; 1 = an invariant was
- * violated; 2 = the harness could not COMPLETE (it could not read the
- * supervisor's status or the evidence tape). Code 2 exists because a
+ * Exit codes: 0 = all microkernel invariants verified (5 for legacy, 6 for GOVERNOR);
+ * 1 = an invariant was violated; 2 = the harness could not COMPLETE (it could not read
+ * the supervisor's status or the evidence tape). Code 2 exists because a
  * verification harness that cannot verify must never be mistaken for one
  * that verified successfully.
  *

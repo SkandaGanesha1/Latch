@@ -219,10 +219,10 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         int64_t cand_dose = (int64_t)candidate - input->theta;
         if (cand_dose > 0) {
             if (manifest->medical.min_bolus_interval_ticks > 0u && state->last_bolus_tick > 0u &&
-                input->tick > 0u && input->tick >= state->last_bolus_tick &&
-                (input->tick - state->last_bolus_tick) < manifest->medical.min_bolus_interval_ticks) {
+                (input->tick < state->last_bolus_tick ||
+                 (input->tick - state->last_bolus_tick) < manifest->medical.min_bolus_interval_ticks)) {
                 result.faults |= LATCH_FAULT_DOSE;
-                candidate = input->theta; /* lockout interval violation: clamp step to 0 */
+                candidate = input->theta; /* lockout interval violation or non-monotonic tick: clamp step to 0 */
                 cand_dose = 0;
             }
             if (cand_dose > 0 && manifest->medical.max_bolus_uL > 0u &&
