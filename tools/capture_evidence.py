@@ -1634,19 +1634,19 @@ def scenario_governor(args):
         "--- 1. GOVERNOR MANIFEST TESTS (governor_manifest_test.py) ---",
     ]
 
-    p1 = sh("python3 ../tools/governor_manifest_test.py ./build/host-sim/latchctl contracts/governor_servo.manifest", cwd=qnx)
+    p1 = sh("python3 ../tools/governor_manifest_test.py ./build/host-sim/latchctl contracts/governor_servo.manifest", cwd=qnx, check=True)
     if p1.stdout:
         combined.append(p1.stdout.strip())
     combined.append("")
     combined.append("--- 2. GOVERNOR E2E INTEGRATION TESTS (governor_e2e.py) ---")
 
-    p2 = sh("python3 ../tools/governor_e2e.py ./build/host-sim/latchctl ./build/host-sim/latch-ingest ./build/host-sim/latchd contracts/governor_servo.manifest", cwd=qnx)
+    p2 = sh("python3 ../tools/governor_e2e.py ./build/host-sim/latchctl ./build/host-sim/latch-ingest ./build/host-sim/latchd contracts/governor_servo.manifest", cwd=qnx, check=True)
     if p2.stdout:
         combined.append(p2.stdout.strip())
     combined.append("")
     combined.append("--- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---")
 
-    p3 = sh("python3 ../tools/attacks/run_attacks.py", cwd=qnx)
+    p3 = sh("python3 ../tools/attacks/run_attacks.py", cwd=qnx, check=True)
     if p3.stdout:
         combined.append(p3.stdout.strip())
     combined.append("")
@@ -1656,8 +1656,8 @@ def scenario_governor(args):
     print("[GOVERNOR] governor evidence captured -> %s" % os.path.relpath(host_sim_file, REPO_ROOT))
 
     # Regenerate canonical tape & metrics
-    sh("python3 ../tools/generate_governor_tape.py --out " + os.path.join(out, "governor-tape.csv"), cwd=qnx)
-    sh("python3 ../tools/governor_metrics.py --out " + os.path.join(out, "governor-metrics.txt"), cwd=qnx)
+    subprocess.run(["python3", "../tools/generate_governor_tape.py", "--out", os.path.join(out, "governor-tape.csv")], cwd=qnx, check=True)
+    subprocess.run(["python3", "../tools/governor_metrics.py", "--out", os.path.join(out, "governor-metrics.txt")], cwd=qnx, check=True)
     return 0
 
 

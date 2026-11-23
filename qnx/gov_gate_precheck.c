@@ -37,6 +37,50 @@ void gov_gate_init(const latch_manifest_governor_t *config, gov_gate_state_t *st
     state->shrink_scale_q8 = 255u;
 }
 
+/* Window at tick t contains entries with t - entry.tick < window_ticks.
+ * A reversed clock, missing tick, or full history fails closed. */
+uint16_t gov_medical_check(const latch_manifest_t *manifest, gov_gate_state_t *state,
+                           uint64_t tick, int32_t theta, int32_t candidate) {
+    if (manifest == NULL || state == NULL) return LATCH_FAULT_DOSE;
+    if (!manifest->medical_present) return 0u;
+    if (tick == 0u || (state->dose_last_tick != 0u && tick < state->dose_last_tick) ||
+        manifest->medical.cumulative_dose_window_ticks == 0u) return LATCH_FAULT_DOSE;
+    state->dose_last_tick = tick;
+    while (state->dose_count > 0u) {
+        gov_dose_entry_t *oldest = &state->dose_history[state->dose_head];
+        if (tick < oldest->tick) return LATCH_FAULT_DOSE;
+        if (tick - oldest->tick < manifest->medical.cumulative_dose_window_ticks) break;
+        state->cumulative_window_dose_uL -= oldest->dose;
+        state->dose_head = (state->dose_head + 1u) % GOV_DOSE_HISTORY_CAPACITY;
+        state->dose_count--;
+    }
+    int64_t delta = (int64_t)candidate - theta;
+    if (delta <= 0) return 0u;
+    if (state->last_bolus_tick != 0u &&
+        (tick < state->last_bolus_tick ||
+         tick - state->last_bolus_tick < manifest->medical.min_bolus_interval_ticks))
+        return LATCH_FAULT_DOSE;
+    if ((uint64_t)delta > manifest->medical.max_bolus_uL ||
+        state->cumulative_window_dose_uL >= manifest->medical.max_cumulative_dose_uL ||
+        (uint64_t)delta > manifest->medical.max_cumulative_dose_uL - state->cumulative_window_dose_uL ||
+        state->dose_count == GOV_DOSE_HISTORY_CAPACITY) return LATCH_FAULT_DOSE;
+    return 0u;
+}
+
+/* Called only after the supervisor decides to issue a positive motion.
+ * Account an I/O failure conservatively because delivered motion is unknown. */
+void gov_medical_commit(gov_gate_state_t *state, uint64_t tick,
+                        int32_t theta, int32_t accepted) {
+    int64_t delta = (int64_t)accepted - theta;
+    if (state == NULL || delta <= 0 || state->dose_count >= GOV_DOSE_HISTORY_CAPACITY) return;
+    uint32_t index = (state->dose_head + state->dose_count) % GOV_DOSE_HISTORY_CAPACITY;
+    state->dose_history[index].tick = tick;
+    state->dose_history[index].dose = (uint64_t)delta;
+    state->dose_count++;
+    state->cumulative_window_dose_uL += (uint64_t)delta;
+    state->last_bolus_tick = tick;
+}
+
 static bool gov_apply_unit_policy(const latch_manifest_governor_t *config,
                                   uint32_t unit_id,
                                   int32_t *candidate,
@@ -206,39 +250,6 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         }
     }
 
-    if (manifest->medical_present) {
-        if (manifest->medical.cumulative_dose_window_ticks > 0u && input->tick > 0u) {
-            if (state->window_start_tick == 0u) {
-                state->window_start_tick = input->tick;
-            } else if (input->tick >= state->window_start_tick &&
-                       (input->tick - state->window_start_tick) >= manifest->medical.cumulative_dose_window_ticks) {
-                state->window_start_tick = input->tick;
-                state->cumulative_window_dose_uL = 0u;
-            }
-        }
-        int64_t cand_dose = (int64_t)candidate - input->theta;
-        if (cand_dose > 0) {
-            if (manifest->medical.min_bolus_interval_ticks > 0u && state->last_bolus_tick > 0u &&
-                (input->tick < state->last_bolus_tick ||
-                 (input->tick - state->last_bolus_tick) < manifest->medical.min_bolus_interval_ticks)) {
-                result.faults |= LATCH_FAULT_DOSE;
-                candidate = input->theta; /* lockout interval violation or non-monotonic tick: clamp step to 0 */
-                cand_dose = 0;
-            }
-            if (cand_dose > 0 && manifest->medical.max_bolus_uL > 0u &&
-                (uint64_t)cand_dose > manifest->medical.max_bolus_uL) {
-                result.faults |= LATCH_FAULT_DOSE;
-                candidate = input->theta + (int32_t)manifest->medical.max_bolus_uL;
-                cand_dose = (int64_t)candidate - input->theta;
-            }
-            if (cand_dose > 0 && (state->cumulative_window_dose_uL >= manifest->medical.max_cumulative_dose_uL ||
-                (uint64_t)cand_dose > manifest->medical.max_cumulative_dose_uL - state->cumulative_window_dose_uL)) {
-                result.faults |= LATCH_FAULT_DOSE;
-                candidate = input->theta; /* clamp step to 0 */
-            }
-        }
-    }
-
     if (!gov_apply_rate_bucket(config, state, input->rung, input->theta,
                                &candidate, &result.faults)) {
         result.candidate = candidate;
@@ -246,14 +257,5 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
     }
     result.candidate = candidate;
     result.command_valid = 1u;
-    if (manifest->medical_present) {
-        int64_t accepted_step = (int64_t)result.candidate - input->theta;
-        if (accepted_step > 0) {
-            state->cumulative_window_dose_uL += (uint64_t)accepted_step;
-            if (input->tick > 0u) {
-                state->last_bolus_tick = input->tick;
-            }
-        }
-    }
     return result;
 }

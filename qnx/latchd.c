@@ -242,7 +242,11 @@ static void latch_governor_new_session(latch_simplex_state_t *state) {
     state->gov_agent_state = 0u;
     state->gov_v2_session = false;
     state->gov_coherence_valid = false;
-    gov_gate_init(&g_manifest.governor, &state->gov_gate);
+    /* Reconnecting a producer must not erase dose already delivered. */
+    state->gov_gate.rate_tokens = g_manifest.governor.rate_burst_tokens;
+    state->gov_gate.shrink_v = 0u;
+    state->gov_gate.shrink_scale_q8 = 255u;
+    state->gov_gate.shrink_active = 0u;
 }
 
 static void latch_record_eperm_fault(void) {
@@ -833,12 +837,12 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     }
 
     if (!st->session_active) {
-        /* Idle before any client session begins: remain cleanly at home_mrad in HP with 0 faults */
-        st->mode = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u)
+        /* Idle must preserve the current position and any Governor latch. */
+        st->mode = (atomic_load_explicit(&st->operator_hold_locked, memory_order_acquire) != 0u ||
+                    (g_manifest.governor.enabled && st->gov_ladder.rung == GOVERNOR_RUNG_LATCH))
                        ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
         st->active_faults = 0u;
         st->clean_streak = 0u;
-        st->theta_mrad = g_manifest.envelope.home_mrad;
         st->velocity_mrad_tick = 0;
         st->accel_mrad_tick2 = 0;
         (void)latch_pca9685_write_angle(st->i2c_fd, st->theta_mrad);
@@ -1102,6 +1106,16 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         }
     }
 
+    if (gov_enabled && g_manifest.medical_present && has_new && gov_command_valid &&
+        !gov_message_only && gov_medical_check(&g_manifest, &st->gov_gate, st->tick,
+                                               st->theta_mrad, u_candidate) != 0u) {
+        tick_faults |= LATCH_FAULT_DOSE;
+        gov_command_valid = false;
+        gov_frame_accepted = false;
+        u_candidate = st->theta_mrad;
+        has_new = false;
+    }
+
     governor_ladder_result_t gov_ladder_result = {
         .rung_before = st->gov_ladder.rung,
         .rung_after = st->gov_ladder.rung,
@@ -1115,6 +1129,9 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         bool demotion_event = gov_lease_expired ||
             (tick_faults & (LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN)) != 0u;
         governor_ladder_config_t ladder_config = latch_governor_ladder_config();
+        if (g_manifest.medical_present) {
+            ladder_config.advisory_fault_mask &= (uint16_t)~LATCH_FAULT_DOSE;
+        }
         governor_ladder_input_t ladder_input = {
             .fault_bits = ladder_faults,
             .frame_accepted = gov_frame_accepted ? 1u : 0u,
@@ -1129,6 +1146,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         gov_ladder_result = governor_ladder_step(&ladder_config, &st->gov_ladder, &ladder_input);
         uint16_t non_hard = (uint16_t)(g_manifest.governor.advise_fault_mask |
                                        LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN);
+        if (g_manifest.medical_present) non_hard &= (uint16_t)~LATCH_FAULT_DOSE;
         gov_legacy_hard_fault = gov_ladder_result.hard_fault != 0u ||
             (tick_faults & (uint16_t)~non_hard) != 0u ||
             st->gov_ladder.rung == GOVERNOR_RUNG_LATCH;
@@ -1242,7 +1260,22 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         }
     }
 
+    /* Also guard supervisor-generated HOME and SAFE_STOP motion. */
+    if (gov_enabled && g_manifest.medical_present &&
+        gov_medical_check(&g_manifest, &st->gov_gate, st->tick,
+                          st->theta_mrad, next_theta) != 0u) {
+        tick_faults |= LATCH_FAULT_DOSE;
+        st->latched_faults |= LATCH_FAULT_DOSE;
+        st->mode = (uint8_t)LATCH_MODE_HOLD;
+        next_theta = st->theta_mrad;
+        next_vel = 0;
+    }
+
     /* 7. Actuation */
+    if (gov_enabled && g_manifest.medical_present) {
+        /* Failed writes have uncertain physical outcome: count conservatively. */
+        gov_medical_commit(&st->gov_gate, st->tick, st->theta_mrad, next_theta);
+    }
     if (latch_pca9685_write_angle(st->i2c_fd, next_theta) != 0) {
         tick_faults        |= LATCH_FAULT_I2C;
         st->latched_faults |= LATCH_FAULT_I2C;
@@ -2604,6 +2637,14 @@ static int latch_run_governor_integration_test(void) {
         fprintf(stderr, "FAIL: LATCH recovered without an operator release\n");
         goto fail;
     }
+    g_simplex.session_active = false;
+    latch_simplex_tick(&g_simplex, &g_pub_buf);
+    if (g_simplex.mode != LATCH_MODE_HOLD || g_simplex.theta_mrad != 240 ||
+        g_simplex.gov_ladder.rung != GOVERNOR_RUNG_LATCH) {
+        fprintf(stderr, "FAIL: idle Governor LATCH changed mode or position\n");
+        goto fail;
+    }
+    g_simplex.session_active = true;
     latch_force_hold_cmd_t release = { .lock_hold = 0u, .reason_code = 7u };
     if (latch_sim_devctl_actuator(true, (unsigned int)DCMD_LATCH_FORCE_HOLD, &release) != 0) {
         fprintf(stderr, "FAIL: authorized operator release command failed\n");

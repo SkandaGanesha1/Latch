@@ -1,7 +1,7 @@
 # GOVERNOR — Deterministic Safety Interlock & Dead Man's Switch for Physical AI
 
 **The AI may propose. Only QNX may move.**  
-*A microkernel safety gate, dead man's lease, and tamper-evident blackbox for autonomous physical agents on QNX SDP 8.0 & QNX Hypervisor 8.0.*
+*A QNX resource-manager safety gate, dead man's lease, and exported event log for autonomous physical agents on QNX SDP 8.0 & QNX Hypervisor 8.0.*
 
 ---
 
@@ -35,13 +35,13 @@ We resurrected all three industrial safety inventions natively inside **QNX SDP 
 
 ## What It Does: "The AI May Propose. Only QNX May Move."
 
-GOVERNOR acts as an unbypassable microkernel safety interlock sitting between untrusted AI control policies and physical hardware actuators. 
+GOVERNOR acts as a prototype safety supervisor sitting between untrusted AI control policies and physical hardware actuators.
 
 1. **Wire Protocol v2 Black Channel:**  
    The untrusted AI policy resides in an isolated virtual machine (e.g. Linux 6.12 under QNX Hypervisor 8.0) or an unprivileged user process. It communicates solely by sending 32-byte wire frames across a virtio-console black channel. Every frame carries an advancing 24-bit coherence counter, an AI confidence score (Q8), a manifest rational unit ID, and a CRC32 computed over a 28-byte split buffer (IEEE 802.3 polynomial).
 
 2. **Watt's Governor Reborn — Kinematic Policy Gate:**  
-   Running inside a `SCHED_FIFO` priority 63 decision loop on dedicated safety core 0, the QNX resource manager (`latchd`) evaluates every proposal against formal **Discrete-Time Control Barrier Functions (DT-CBF)**:
+   Running inside a `SCHED_FIFO` priority 63 decision loop on dedicated safety core 0, the QNX resource manager (`latchd`) evaluates every proposal against an integer safety envelope:
    - **Rational Unit Normalization:** Proposals in unmapped units (or unit spoofing attacks) are rejected fail-closed with `LATCH_FAULT_UNIT` (`0x1000`). Declared units are converted using 64-bit integer rational arithmetic ($u_{\text{canonical}} = u_{\text{raw}} \cdot N / D$), eliminating floating-point non-determinism.
    - **Token-Bucket Rate Burst Smoother:** Velocity step attacks and acceleration spikes are smoothed and clamped via a discrete leaky token bucket.
    - **Confidence-Driven Envelope Contraction:** The effective velocity and acceleration limits scale with the reported AI confidence (Q8) — lower confidence yields a strictly smaller motion envelope — while keep-out intervals are re-validated on every applied step, so actuators cannot tunnel through them.
@@ -60,7 +60,7 @@ GOVERNOR acts as an unbypassable microkernel safety interlock sitting between un
 5. **Aviation Flight Data Recorder — Tamper-Evident SHA-256 Blackbox:**  
    The supervisor maintains a 4096-entry circular event ring in pre-allocated `.bss` memory, written non-blockingly on every tick. Events are dumped out-of-band via devctl `0x44` without disrupting the 1 kHz decision tick, and the offline verifier `gov_replay.py` seals the dump into a manifest-bound rolling hash chain,
    $$H_0 = \text{SHA-256}(\text{manifest\_sha256}), \quad H_k = \text{SHA-256}\left(H_{k-1} \mathbin{\Vert} \text{EventBytes}_k\right)$$
-   validating chain continuity and flagging any post-incident tampering (12 tamper-injection tests). The on-target recorder stores raw records only — hashing happens at dump/verify time, never inside the decision tick.
+   checking chain continuity after offline sealing (12 tamper-injection tests). The on-target recorder stores raw records only — hashing happens at dump/verify time, never inside the decision tick.
 
 6. **Dual-Domain Mission Support:**  
    - **Robotic Servo (`governor_servo.manifest`):** Angular position tracking with forbidden person keep-out zones.
@@ -99,7 +99,7 @@ We evaluated GOVERNOR against a dedicated adversarial attack suite (`latch/tools
 |:---:|:---|:---:|:---|:---:|:---:|
 | **A1** | **Rogue Unit Injection** | 8 | AI proposes $u=370000$ with unmapped `unit_id=999` | `LATCH_FAULT_UNIT` (`0x1000`) | **PASS** (Demoted to `CLAMP`; 0% keepout breach) |
 | **A2** | **Rate Flood Attack** | 5 | Velocity step burst $\Delta u = 500\text{ mrad}$ to smash keepout | `LATCH_FAULT_RATE` (`0x0080`) | **PASS** (Step clamped to 0; 0% keepout breach) |
-| **A3** | **Prompt Injection Attack** | 6 | Malicious prompt note forces $u=450$ into keepout $[250, 650]$ | `LATCH_FAULT_KEEPOUT` (`0x0020`) | **PASS** (Fail-closed drop to `LATCH`/`HOLD`; plant held safe) |
+| **A3** | **Prompt Injection Attack** | 6 | Scripted injection-like proposal sends $u=450$ into keepout $[250, 650]$ | `LATCH_FAULT_KEEPOUT` (`0x0020`) | **PASS** (Fail-closed drop to `LATCH`/`HOLD`; plant held safe) |
 | **A4** | **Deadman Trip & Recovery** | 79 | AI CPU hangs ($>100\text{ ms}$ silence); sends 150 heartbeats | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Demoted to `ADVISE`; 25 clean cmds restored `HP`) |
 | **A5** | **Coherence Spoof Attack** | 6 | Frozen counter ($\Delta c = 0$) or jump ($\Delta c = 10 > 3$) | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Lease renewal refused; plant held stationary) |
 | **A6** | **Sequence Replay Attack** | 7 | Attacker replays captured frame ($seq \le last\_seq$) | `LATCH_FAULT_SEQ` (`0x0004`) | **PASS** (Fail-closed transition to `LATCH`) |
@@ -127,35 +127,13 @@ In full compliance with QNX Global Hackathon rules, this project builds upon fou
 
 ---
 
-## Regulatory & Functional Safety Architecture Alignment
+## Safety and evidence limitations
 
-Physical AI operating actuators in automotive, industrial, and medical domains must align with rigorous functional safety standards. GOVERNOR implements the canonical supervisory runtime pattern (1oo2 architecture) across four critical standards frameworks:
+This is a research prototype. No functional safety certification, standards conformance, clinical suitability, or worst-case execution time bound has been established. The syringe contract is a simulated demonstration. The event ring is volatile and its records are hashed after export; edits before sealing and truncation without an independent checkpoint cannot be detected. The QEMU profile uses mock I²C and does not demonstrate physical actuation.
 
-### 1. ISO 26262 ASIL D (Automotive Functional Safety)
-- **1oo2 Supervisory Architecture (Part 4 Clause 6.4.4):** Segregates the untrusted primary channel (AI neural planner in Linux guest) from the secondary supervisory barrier (`latchd` on QNX microkernel) which enforces Discrete-Time Control Barrier Functions (DT-CBF).
-- **Temporal Freedom from Interference (Part 6 Clause 7.4.11):** Binds the safety supervisor exclusively to Core 0 (`_cpu-0`) via `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)` at `SCHED_FIFO` priority 63, while untrusted guest vCPUs are confined to Cores 2 & 3 at low priority (`sched 8r`). Zero deadline misses across 23,500 evaluated ticks.
-- **Spatial Isolation & Mandatory Access Control (Part 6 Clause 7.4.12):** Hardware memory protection via ARMv8 MMU and QNX Hypervisor EL2 VHE. Actuator device node `/dev/latch/actuator` is restricted via `secpolpush` to processes holding custom ability `latch/actuator` (`flags=0`, default-deny).
+### Scheduling and isolation
 
-### 2. IEC 61508 SIL 3 (Industrial Functional Safety)
-- **Deterministic Microkernel Micro-Architecture (Part 2 Clause 7.4.3):** Eliminates systematic failure modes via layered fail-closed gate prechecks (framing -> rational unit scaling -> rate burst token bucket -> Q8 confidence contraction -> keepout barrier).
-- **Bounded Worst-Case Execution Time (Part 3 Clause 7.4.2.7):** Statically allocated `.bss` memory structures; zero dynamic allocation (`malloc`/`free`) in the 1 kHz decision tick path; measured WCET of 61.08 µs against a 1,000 µs period.
-- **Fail-Safe Multi-Rung Degradation (Part 2 Clause 7.4.4):** Deterministic 6-rung ladder (`HP -> ADVISE -> CLAMP -> SLOW -> SAFE_STOP -> LATCH`) with a strict 25-clean-frame recovery hysteresis.
-
-### 3. IEC 62304 Class C (Medical Device Software — Software Safety Lifecycle)
-- **SOUP Segregation (Clause 5.3.5):** Untrusted complex AI is classified as Software of Unknown Provenance (SOUP) and confined inside QNX Hypervisor 8.0 with virtual devices. Physical actuators are completely unmapped from the guest.
-- **Risk Control Measures for Hazardous Output (Clause 5.3.4):** High-precision syringe infusion pump contract (`syringe_governor.manifest`) enforces integer-microlitre units, per-tick step saturation clamping, and cumulative volumetric dose window limits (`LATCH_FAULT_DOSE`, bit 15, `0x8000`).
-
-### 4. EU AI Act Article 12 (High-Risk AI Record-Keeping & Traceability)
-- **4096-Entry Tamper-Evident Flight Recorder:** Continuous, non-blocking `.bss` circular event ring recording 62-byte packed records, dumped via devctl `0x44` and verified offline with manifest-bound rolling SHA-256 cryptographic hash chains ($H_i = \text{SHA256}(H_{i-1} \mathbin{\Vert} \text{event}_i)$) providing mathematical non-repudiation.
-
-### Architectural Statement on QNX SDP 8.0 vs 7.x (APS Discontinuation)
-In QNX SDP 8.0, the legacy Adaptive Partitioning Scheduler (APS) from SDP 7.x was intentionally discontinued in favor of a next-generation constant-time $O(1)$ scheduler redesign optimized for massive multi-core scalability (up to 64 cores). GOVERNOR achieves canonical hard real-time temporal isolation without APS by combining:
-1. `SCHED_FIFO` priority ceiling (priority 63), ensuring safety pulses preempt all background tasks immediately;
-2. Physical core affinity pinning via `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)` to dedicated CPU cores;
-3. QNX Hypervisor vCPU core partitioning (`cpu cluster _cpu-2`, `_cpu-3`), preventing guest CPU exhaustion from starving safety cores.
-
-### Certification Transparency & Drop-In Safety Path
-Prototype development and test verification were executed on standard QNX SDP 8.0 and QNX Hypervisor 8.0 under the free non-commercial QNX Everywhere tier. While standard SDP 8.0 is non-certified, it maintains 100% microkernel API, ABI, and architectural parity with TÜV Rheinland-certified **QNX OS for Safety 8.0 (ISO 26262 ASIL D, IEC 61508 SIL 3, IEC 62304 Class C)** and **QNX Hypervisor for Safety 8.0**, providing an immediate, drop-in commercial path to safety certification.
+The demonstration configures QNX priorities, CPU affinity, security policy, and guest vCPU placement. These settings are implementation choices, not a proof of temporal isolation or a guaranteed deadline bound. Measurements from QEMU TCG are observations of the emulated configuration.
 
 ---
 
@@ -175,7 +153,7 @@ Prototype development and test verification were executed on standard QNX SDP 8.
 - **Mathematical Determinism:** A 0.0% keep-out violation rate across 121 adversarial attack ticks (host-sim rig), with the on-target QEMU governor run archived alongside it.
 - **Genuine QNX 8.0 Target Deployment:** A fully bootable QNX 8.0 image running the QNX Hypervisor, isolating a Linux 6.12 guest, and passing all runtime assertions under QEMU AArch64. (The Raspberry Pi 4B profile builds cleanly but is not hardware-verified.)
 - **Dual Safety Domains:** Successfully applying the identical supervisory binary to industrial robotics (servo motor) and healthcare (linear infusion pump).
-- **Zero-Rot Evidence Trail:** Every single claim and test result is backed by committed, authentic console logs and metrics in `latch/docs/evidence/`.
+- **Zero-Rot Evidence Trail:** Selected results are backed by console logs and metrics in `latch/docs/evidence/`.
 
 ---
 

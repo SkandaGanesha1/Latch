@@ -287,6 +287,8 @@ def main():
         # ---------------------------------------------------------------------
         pass_s7 = None
         syringe_path = fixture.parent / "syringe_governor.manifest"
+        if not syringe_path.exists():
+            raise SystemExit(f"[GOVERNOR_E2E] FAIL missing medical contract: {syringe_path}")
         if syringe_path.exists():
             s_config = json.loads(syringe_path.read_bytes())
             s_config["governor"]["deadman"]["warmup_heartbeats"] = 2
@@ -326,37 +328,15 @@ def main():
             if int(by_seq_s[3]["theta_applied"]) != 40 or int(by_seq_s[3]["fault_bits"], 16) != 0:
                 raise SystemExit("[GOVERNOR_E2E] FAIL syringe nominal injection command failed")
 
-            # Assert DOSE fault raised in CLAMP
-            row9 = by_seq_s[9]
-            if int(row9["fault_bits"], 16) & DOSE_FAULT == 0:
-                raise SystemExit("[GOVERNOR_E2E] FAIL excessive dose rate in CLAMP did not raise DOSE_FAULT")
-            if int(row9["rung"]) != RUNG_CLAMP:
-                raise SystemExit(f"[GOVERNOR_E2E] FAIL expected CLAMP rung at seq 9, got {row9['rung']}")
-
-            # Assert 3 DOSE faults demoted CLAMP -> SLOW
-            row11 = by_seq_s[11]
-            if int(row11["fault_bits"], 16) & DOSE_FAULT == 0:
-                raise SystemExit("[GOVERNOR_E2E] FAIL seq 11 did not raise DOSE_FAULT")
-            if int(row11["rung"]) != RUNG_SLOW:
-                raise SystemExit(f"[GOVERNOR_E2E] FAIL 3 DOSE faults did not demote CLAMP to SLOW (got {row11['rung']})")
-
-            # Assert SLOW scaled clamping (12 uL step)
-            row12 = by_seq_s[12]
-            delta12 = int(row12["theta_applied"]) - int(row11["theta_applied"])
-            if delta12 != 12:
-                raise SystemExit(f"[GOVERNOR_E2E] FAIL SLOW rung did not clamp step to 12 uL (got delta={delta12})")
-            if int(row12["fault_bits"], 16) & DOSE_FAULT == 0:
-                raise SystemExit("[GOVERNOR_E2E] FAIL SLOW excessive step did not raise DOSE_FAULT")
-
-            # Assert compliant nL rational conversion in SLOW
-            row13 = by_seq_s[13]
-            delta13 = int(row13["theta_applied"]) - int(row12["theta_applied"])
-            if delta13 != 10:
-                raise SystemExit(f"[GOVERNOR_E2E] FAIL rational nL conversion in SLOW did not advance 10 uL (got delta={delta13})")
-            if int(row13["fault_bits"], 16) & DOSE_FAULT != 0:
-                raise SystemExit("[GOVERNOR_E2E] FAIL compliant command in SLOW raised DOSE_FAULT")
-
-            pass_s7 = "[GOVERNOR_SCENARIO_7] PASS: medical syringe governor enforces DOSE fault, rate clamping, and ladder degradation"
+            # A dose fault in a medical contract must freeze motion in HOLD.
+            first = next((i for i in range(4, 14)
+                          if int(by_seq_s[i]["fault_bits"], 16) & DOSE_FAULT), None)
+            if first is None:
+                raise SystemExit("[GOVERNOR_E2E] FAIL no medical DOSE fault observed")
+            row = by_seq_s[first]
+            if int(row["mode"]) != 1 or int(row["theta_applied"]) != int(by_seq_s[first - 1]["theta_applied"]):
+                raise SystemExit("[GOVERNOR_E2E] FAIL DOSE fault did not hold the prior position")
+            pass_s7 = "[GOVERNOR_SCENARIO_7] PASS: medical DOSE fault holds the plant"
 
         # Print all scenario pass lines in numerical order
         print(pass_s1)

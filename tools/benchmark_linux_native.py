@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-"""benchmark_linux_native.py — Standalone Linux GPOS Real-Time Baseline Harness.
+"""Measure a synthetic Python periodic workload on the current Linux host.
 
-Empirically benchmarks a 1 kHz physical control loop on standard Linux GPOS
-to provide the experimental baseline for the QNX SDP 8.0 determinism claims.
-
-Evaluates:
-  1. Linux CFS Idle Workstation Jitter
-  2. Linux CFS Contention Jitter (background worker thread stress)
-  3. Deadline Miss Rate against a 1,000 us (1 ms) control period
-  4. Worst-Case Execution Time (WCET) tail latency
+This is not the LATCH control loop, a QNX comparison, or a WCET analysis.
 """
 
 from __future__ import annotations
@@ -19,6 +12,7 @@ import json
 import math
 import os
 import pathlib
+import platform
 import sys
 import threading
 import time
@@ -39,7 +33,7 @@ def run_linux_benchmark(
     period_us: int = 1000,
     stress: bool = False,
 ) -> Dict[str, Any]:
-    """Runs a 1 kHz periodic loop under Linux CFS and measures jitter."""
+    """Runs a synthetic periodic loop using the inherited scheduler."""
     stop_stress = threading.Event()
 
     def stress_worker():
@@ -114,9 +108,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.iterations <= 0:
+        parser.error("--iterations must be positive")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("[BASELINE] Running Linux 1 kHz CFS Control Loop Benchmark...")
+    print("[BASELINE] Running a synthetic Python periodic-loop experiment...")
     print("  1. Idle workstation test...")
     idle_res = run_linux_benchmark(iterations=args.iterations, stress=False)
 
@@ -126,23 +122,23 @@ def main() -> int:
     # Format report
     report = []
     report.append("================================================================================")
-    report.append(" LINUX GPOS CONTROL LOOP BASELINE TELEMETRY & JITTER EVALUATION                 ")
-    report.append(" Target: Linux CFS (Completely Fair Scheduler), 1 kHz Periodic Safety Task       ")
+    report.append(" LINUX SYNTHETIC PYTHON LOOP EXPERIMENT                                        ")
+    report.append(" Current Linux host; synthetic Python loop; scheduler inherited                   ")
     report.append("================================================================================")
     report.append("")
+    report.append(f"Host: {platform.platform()}, machine={platform.machine()}, Python={platform.python_version()}")
+    report.append(f"Scheduler policy: {os.sched_getscheduler(0) if hasattr(os, 'sched_getscheduler') else 'unknown'}; affinity: {sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else 'unknown'}")
+    report.append("Workload: synthetic Python busy loop, period 1000 us; stress uses Python threads")
     report.append("SUMMARY RESULTS TABLE (Microseconds):")
     report.append("+-----------------------------------+---------+---------+---------+---------+-----------+")
-    report.append("| Benchmark Configuration           | Median  | p95     | p99     | Max WCET| Deadlines |")
+    report.append("| Benchmark Configuration           | Median  | p95     | p99     | Max loop| Deadlines |")
     report.append("+-----------------------------------+---------+---------+---------+---------+-----------+")
-    report.append(f"| Linux CFS (Idle Workstation)      | {idle_res['p50_us']:7.2f} | {idle_res['p95_us']:7.2f} | {idle_res['p99_us']:7.2f} | {idle_res['max_us']:7.2f} | {idle_res['deadline_misses']:4d}/{args.iterations} |")
-    report.append(f"| Linux CFS (CPU Contention Stress) | {stress_res['p50_us']:7.2f} | {stress_res['p95_us']:7.2f} | {stress_res['p99_us']:7.2f} | {stress_res['max_us']:7.2f} | {stress_res['deadline_misses']:4d}/{args.iterations} |")
+    report.append(f"| Linux Python (Idle)             | {idle_res['p50_us']:7.2f} | {idle_res['p95_us']:7.2f} | {idle_res['p99_us']:7.2f} | {idle_res['max_us']:7.2f} | {idle_res['deadline_misses']:4d}/{args.iterations} |")
+    report.append(f"| Linux Python (Thread Stress)      | {stress_res['p50_us']:7.2f} | {stress_res['p95_us']:7.2f} | {stress_res['p99_us']:7.2f} | {stress_res['max_us']:7.2f} | {stress_res['deadline_misses']:4d}/{args.iterations} |")
     report.append("+-----------------------------------+---------+---------+---------+---------+-----------+")
     report.append("")
-    report.append("COMPARISON AGAINST QNX SDP 8.0 MICROKERNEL:")
-    report.append("  - QNX SDP 8.0 Max WCET: 61.08 us (Budget: 100 us, Period: 1000 us)")
-    report.append("  - QNX SDP 8.0 Deadline Misses: 0 / 23,500 evaluated ticks (0.00%)")
-    report.append("  - Linux CFS under contention exhibits unconstrained tail latency spikes due to")
-    report.append("    GPOS scheduling quantum jitter, interrupt preemption, and lack of core-isolation guarantees.")
+    report.append("Synthetic Python workload; not the LATCH loop or a QNX comparison.")
+    report.append("Deadline misses count iterations already late before sleep; max is observed, not WCET.")
     report.append("================================================================================")
 
     out_file = args.out_dir / "linux_baseline_metrics.txt"

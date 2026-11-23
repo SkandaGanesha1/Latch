@@ -8,14 +8,25 @@
 #include "latch_manifest.h"
 #include "latch_protocol.h"
 
+/* Fixed memory budget; a full history rejects additional positive motion. */
+#define GOV_DOSE_HISTORY_CAPACITY 256u
+
+typedef struct gov_dose_entry {
+    uint64_t tick;
+    uint64_t dose;
+} gov_dose_entry_t;
+
 typedef struct gov_gate_state {
     uint32_t rate_tokens;
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
     uint8_t shrink_active;
     uint64_t cumulative_window_dose_uL;
-    uint64_t window_start_tick;
     uint64_t last_bolus_tick;
+    uint64_t dose_last_tick;
+    uint32_t dose_head;
+    uint32_t dose_count;
+    gov_dose_entry_t dose_history[GOV_DOSE_HISTORY_CAPACITY];
 } gov_gate_state_t;
 
 typedef struct gov_gate_input {
@@ -42,6 +53,10 @@ typedef struct gov_gate_result {
 } gov_gate_result_t;
 
 void gov_gate_init(const latch_manifest_governor_t *config, gov_gate_state_t *state);
+uint16_t gov_medical_check(const latch_manifest_t *manifest, gov_gate_state_t *state,
+                           uint64_t tick, int32_t theta, int32_t candidate);
+void gov_medical_commit(gov_gate_state_t *state, uint64_t tick,
+                        int32_t theta, int32_t accepted);
 gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
                                     const latch_manifest_governor_t *config,
                                     gov_gate_state_t *state,

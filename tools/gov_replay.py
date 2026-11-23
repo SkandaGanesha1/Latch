@@ -9,7 +9,7 @@ Specifications:
 
 Capabilities:
   --verify   Recomputes SHA-256 chain from genesis, checks cryptographic
-             continuity, detects any bit flip, sequence gap, or truncation.
+             continuity and sequence gaps. Tail truncation requires an independent checkpoint.
   --replay   Simulates supervisor state machine from events, asserts ladder
              invariants (rungs descend on fault/expiry, only promote on
              consecutive clean commands, plant never moves on heartbeat).
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -82,10 +83,11 @@ VERDICT_NAMES = {
 FAULT_MAGIC = 1 << 0
 FAULT_CRC = 1 << 1
 FAULT_SEQ = 1 << 2
-FAULT_RATE = 1 << 3
-FAULT_NAN = 1 << 4
+FAULT_NAN = 1 << 3
+FAULT_RESERVED = 1 << 4
 FAULT_KEEPOUT = 1 << 5
 FAULT_BOUNDS = 1 << 6
+FAULT_RATE = 1 << 7
 FAULT_WATCHDOG = 1 << 8
 FAULT_I2C = 1 << 9
 FAULT_OPERATOR = 1 << 10
@@ -172,6 +174,8 @@ def compute_genesis_hash(manifest_sha256: str | bytes) -> bytes:
         manifest_bytes = bytes.fromhex(manifest_sha256)
     else:
         manifest_bytes = manifest_sha256
+    if len(manifest_bytes) != 32:
+        raise ValueError("manifest SHA-256 must be exactly 32 bytes")
     return hashlib.sha256(b"GOVERNOR_CHAIN_GENESIS:" + manifest_bytes).digest()
 
 
@@ -207,9 +211,7 @@ def verify_hash_chain(
     detects any bit flip, sequence gap, payload mismatch, unhashed event, or truncation.
     """
     if not events:
-        if expected_count is not None and expected_count > 0:
-            return False, f"TAMPER DETECTED: Truncation (expected {expected_count} events, found 0)"
-        return True, "No events to verify"
+        return False, "No events to verify"
 
     if expected_count is not None and len(events) != expected_count:
         return False, f"TAMPER DETECTED: event count mismatch (header count={expected_count} != actual={len(events)})"
@@ -249,7 +251,7 @@ def verify_hash_chain(
 
         try:
             ev_bytes = pack_event(ev)
-        except ValueError as exc:
+        except (ValueError, TypeError, KeyError, struct.error, OverflowError) as exc:
             return False, f"TAMPER DETECTED at event index {curr_idx}: {exc}"
 
         curr_hash = hashlib.sha256(curr_hash + ev_bytes).digest()
@@ -289,7 +291,7 @@ def replay_events(
     }
 
     if not events:
-        return True, "No events to replay", stats
+        return False, "No events to replay", stats
 
     clean_streak = 0
 
@@ -326,10 +328,7 @@ def replay_events(
                 if theta_applied != prev_theta:
                     return False, (f"INVARIANT VIOLATION: Plant moved on heartbeat at event {idx}: "
                                    f"theta changed from {prev_theta} to {theta_applied} mrad"), stats
-            else:
-                if theta_applied != 0:
-                    return False, (f"INVARIANT VIOLATION: Plant moved on initial heartbeat at event 0: "
-                                   f"theta_applied_mrad is {theta_applied} != 0"), stats
+            # The first retained event has no prior position to compare against.
         else:
             stats["commands"] += 1
 
@@ -365,7 +364,7 @@ def replay_events(
             stats["demotions"] += 1
             stats["transitions"].append((r_before, r_after))
             clean_streak = 0
-            hard_faults = fault_bits & ~advisory_mask
+            hard_faults = fault_bits & ~(advisory_mask | FAULT_HEARTBEAT | FAULT_WIDEN)
             if hard_faults != 0:
                 stats["hard_faults"] += 1
                 if r_after != RUNG_LATCH:
@@ -377,7 +376,7 @@ def replay_events(
                                    f"{RUNG_NAMES.get(r_before)} -> {RUNG_NAMES.get(r_after)}"), stats
 
         # Invariant 6: Hard fault fallback rule
-        hard_faults = fault_bits & ~advisory_mask
+        hard_faults = fault_bits & ~(advisory_mask | FAULT_HEARTBEAT | FAULT_WIDEN)
         if hard_faults != 0 and r_after != RUNG_LATCH:
             return False, f"INVARIANT VIOLATION: Hard fault present but rung is {RUNG_NAMES.get(r_after)} at event {idx}", stats
 
@@ -528,14 +527,15 @@ def run_selftest() -> bool:
         return False
     print(f"  [PASS] Sub-test 7: Plant motion during heartbeat caught: '{msg}'")
 
-    # Sub-test 8: Initial heartbeat movement caught at event 0
+    # Sub-test 8: An initial heartbeat may start at a nonzero position.
     init_hb = [dict(e) for e in raw_events]
-    init_hb[0]["theta_applied_mrad"] = 50
+    for event in init_hb:
+        event["theta_applied_mrad"] += 50
     ok, msg, _ = replay_events(init_hb)
-    if ok or "Plant moved on initial heartbeat" not in msg:
-        print(f"[FAIL] Sub-test 8 expected initial plant move violation, got: ok={ok}, msg='{msg}'")
+    if not ok:
+        print(f"[FAIL] Sub-test 8 nonzero initial position rejected: {msg}")
         return False
-    print(f"  [PASS] Sub-test 8: Initial plant motion at event 0 caught: '{msg}'")
+    print("  [PASS] Sub-test 8: Nonzero initial position accepted")
 
     # Sub-test 9: Premature ladder recovery (< 25 clean frames) rejected
     premature_events = [dict(e) for e in raw_events[:10]]
@@ -610,7 +610,7 @@ def run_selftest() -> bool:
 
         # 12c. CLI --replay on pristine chained file exits 0 with [REPLAY PASS]
         res = subprocess.run(
-            [sys.executable, __file__, "--file", chained_path, "--replay"],
+            [sys.executable, __file__, "--file", chained_path, "--replay", "--hysteresis", "25"],
             capture_output=True, text=True
         )
         if res.returncode != 0 or "[REPLAY PASS]" not in res.stdout:
@@ -710,7 +710,7 @@ def run_selftest() -> bool:
         with open(premature_path, "w", encoding="utf-8") as f:
             json.dump(premature_data, f)
         res = subprocess.run(
-            [sys.executable, __file__, "--file", premature_path, "--replay"],
+            [sys.executable, __file__, "--file", premature_path, "--replay", "--hysteresis", "25"],
             capture_output=True, text=True
         )
         if res.returncode != 1 or "INVARIANT VIOLATION" not in (res.stdout + res.stderr):
@@ -727,12 +727,42 @@ def load_events_source(args) -> tuple[str, list[dict], dict]:
     """Loads manifest_sha256, events, and root data dict from --file, --dev, or stdin."""
     if args.dev:
         # Query device via latchctl
-        latchctl_path = os.environ.get("LATCHCTL_BIN", "./qnx/build/host-sim/latchctl")
-        if not os.path.exists(latchctl_path):
-            latchctl_path = "build/host-sim/latchctl"
-        res = subprocess.run([latchctl_path, "-d", args.dev, "events", "--json"],
-                             capture_output=True, text=True, check=True)
-        data = json.loads(res.stdout)
+        latchctl_path = os.environ.get("LATCHCTL_BIN") or shutil.which("latchctl")
+        if not latchctl_path:
+            raise ValueError("latchctl not found; set LATCHCTL_BIN to the target CLI")
+        # Pin the end of the capture to the first page's write index. A later
+        # overwrite or restart is an error, never a silently incomplete dump.
+        data = None
+        events = []
+        cursor = 0
+        end = None
+        while end is None or cursor < end:
+            res = subprocess.run([latchctl_path, "-d", args.dev, "--", "events", "--json",
+                                  "-s", str(cursor)], capture_output=True, text=True, check=True)
+            page = json.loads(res.stdout)
+            if data is None:
+                data = page
+                cursor = int(page["start_index"])
+                end = int(page["latest_index"])
+                if page["record_version"] != 1:
+                    raise ValueError("unsupported event record version")
+            elif (int(page["start_index"]) != cursor or
+                  int(page["latest_index"]) < end or
+                  page["manifest_sha256"] != data["manifest_sha256"] or
+                  page["record_version"] != data["record_version"]):
+                raise ValueError("event ring changed or overwrote unread records during pagination")
+            page_events = page["events"][:end - cursor]
+            if int(page["count"]) != len(page["events"]) or len(page_events) != min(int(page["count"]), end - cursor) or not page_events:
+                if cursor == end:
+                    break
+                raise ValueError("incomplete event page")
+            if any(int(ev["event_index"]) != cursor + i for i, ev in enumerate(page_events)):
+                raise ValueError("event index discontinuity during pagination")
+            events.extend(page_events)
+            cursor += len(page_events)
+        data["events"] = events
+        data["count"] = len(events)
+        data["latest_index"] = end
     elif args.file:
         with open(args.file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -744,8 +774,15 @@ def load_events_source(args) -> tuple[str, list[dict], dict]:
     else:
         raise ValueError("Must specify --file, --dev, or pipe JSON via stdin")
 
-    manifest_sha256 = data.get("manifest_sha256", "0" * 64)
+    if not isinstance(data, dict) or "manifest_sha256" not in data:
+        raise ValueError("event document must include manifest_sha256")
+    if data.get("record_version", 1) != 1:
+        raise ValueError("unsupported event record version")
+    manifest_sha256 = data["manifest_sha256"]
     events = data.get("events", [])
+    if not isinstance(events, list) or not events:
+        raise ValueError("event document must contain at least one event")
+    compute_genesis_hash(manifest_sha256)
     return manifest_sha256, events, data
 
 
@@ -756,7 +793,9 @@ def main():
     parser.add_argument("--test", action="store_true", help="Run standalone self-test with genuine tamper detection")
     parser.add_argument("--verify", action="store_true", help="Verify cryptographic hash chain continuity and integrity")
     parser.add_argument("--replay", action="store_true", help="Replay events and assert supervisor ladder invariants")
-    parser.add_argument("--hysteresis", type=int, default=25, help="Consecutive clean frames required for ladder promotion (default: 25)")
+    parser.add_argument("--hysteresis", type=int, help="Explicit clean-frame threshold; prefer --manifest")
+    parser.add_argument("--manifest", help="Contract whose SHA-256 must match the event document")
+    parser.add_argument("--checkpoint", help="Independently retained JSON containing manifest_sha256, count, terminal_hash")
     parser.add_argument("--json", action="store_true", help="Output JSON with rolling hash chain attached")
     parser.add_argument("--file", type=str, help="Path to input JSON file from latchctl events --json")
     parser.add_argument("--dev", type=str, help="Device node to query via latchctl (e.g. /dev/latch/actuator)")
@@ -780,6 +819,21 @@ def main():
         expected_terminal = root_data.get("terminal_hash")
         expected_count = root_data.get("count")
         expected_genesis = root_data.get("genesis_hash")
+        if args.checkpoint:
+            try:
+                with open(args.checkpoint, "r", encoding="utf-8") as f:
+                    checkpoint = json.load(f)
+                if checkpoint["manifest_sha256"].lower() != manifest_sha256.lower():
+                    raise ValueError("checkpoint manifest digest does not match event document")
+                expected_terminal = checkpoint["terminal_hash"]
+                expected_count = checkpoint["count"]
+                if not isinstance(expected_terminal, str) or len(bytes.fromhex(expected_terminal)) != 32:
+                    raise ValueError("checkpoint terminal_hash must be 32 bytes")
+                if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 1:
+                    raise ValueError("checkpoint count must be a positive integer")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                print(f"[VERIFY FAIL] Invalid checkpoint: {exc}", file=sys.stderr)
+                sys.exit(1)
         ok, msg = verify_hash_chain(
             manifest_sha256,
             events,
@@ -789,12 +843,37 @@ def main():
         )
         if ok:
             print(f"[VERIFY PASS] {msg}")
+            if not args.checkpoint:
+                print("[VERIFY NOTE] No independent checkpoint: completeness and authenticity are not established.")
         else:
             print(f"[VERIFY FAIL] {msg}", file=sys.stderr)
             exit_code = 1
 
     if args.replay:
-        ok, msg, stats = replay_events(events, hysteresis_clean_frames=args.hysteresis)
+        advisory_mask = DEFAULT_ADVISORY_MASK
+        threshold = args.hysteresis
+        if args.manifest:
+            try:
+                manifest_bytes = pathlib.Path(args.manifest).read_bytes()
+                if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256.lower():
+                    raise ValueError("manifest digest does not match event document")
+                ladder = json.loads(manifest_bytes)["governor"]["ladder"]
+                threshold = ladder["promote_clean_frames"]
+                advisory_mask = ladder["advise_fault_mask"]
+                if (not isinstance(advisory_mask, int) or isinstance(advisory_mask, bool)
+                        or not 0 <= advisory_mask <= 0xffff):
+                    raise ValueError("invalid manifest advisory fault mask")
+                if args.hysteresis is not None and args.hysteresis != threshold:
+                    raise ValueError("--hysteresis conflicts with manifest")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                print(f"[REPLAY FAIL] Invalid manifest: {exc}", file=sys.stderr)
+                sys.exit(1)
+        if not isinstance(threshold, int) or threshold < 1:
+            print("[REPLAY FAIL] Provide --manifest or a positive --hysteresis", file=sys.stderr)
+            sys.exit(1)
+        if not args.manifest:
+            print("[REPLAY NOTE] Using explicitly supplied hysteresis and default advisory mask.", file=sys.stderr)
+        ok, msg, stats = replay_events(events, advisory_mask=advisory_mask, hysteresis_clean_frames=threshold)
         if ok:
             print(f"[REPLAY PASS] {msg}")
             print(f"Replay Summary: {stats['total_events']} events | {stats['commands']} commands | "
@@ -813,6 +892,10 @@ def main():
             "terminal_hash": chained_events[-1]["hash"] if chained_events else genesis_hash.hex(),
             "events": chained_events
         }
+        # Preserve capture provenance and loss indicators when sealing a dump.
+        for key in ("start_index", "latest_index", "dropped", "overflow", "record_version"):
+            if key in root_data:
+                output[key] = root_data[key]
         print(json.dumps(output, indent=2))
 
     sys.exit(exit_code)

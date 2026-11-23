@@ -198,139 +198,35 @@ int main(void) {
         failures++;
     }
 
-    /* Cumulative dose window tracking and clamping */
+    /* Sliding window tracks only supervisor-committed positive motion. */
     {
-        latch_manifest_t med_manifest = manifest;
-        med_manifest.medical_present = true;
-        strncpy(med_manifest.medical.drug_name, "insulin-lispro", sizeof(med_manifest.medical.drug_name) - 1);
-        med_manifest.medical.drug_id = 1u;
-        med_manifest.medical.concentration_uL_per_unit = 10u;
-        med_manifest.medical.max_bolus_uL = 100u;
-        med_manifest.medical.min_bolus_interval_ticks = 0u;
-        med_manifest.medical.cumulative_dose_window_ticks = 1000u;
-        med_manifest.medical.max_cumulative_dose_uL = 150u;
-        med_manifest.envelope.v_max = 100;
-        med_manifest.envelope.a_max = 100;
-
-        latch_manifest_governor_t med_config = config;
-        med_config.rate_burst_tokens = 500u;
-        med_config.rate_refill_per_tick = 100u;
-        med_config.rate_sustain_per_tick = 100u;
-
-        gov_gate_init(&med_config, &state);
-
-        /* Step 1: 50 uL at tick 1 (within limit) */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 50, 255u);
-        input.tick = 1u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 50 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 50u) {
-            fprintf(stderr, "FAIL: cumulative dose step 1 not accepted\n");
-            failures++;
+        latch_manifest_t m = manifest;
+        m.medical_present = true;
+        m.medical.max_bolus_uL = 100u;
+        m.medical.max_cumulative_dose_uL = 150u;
+        m.medical.cumulative_dose_window_ticks = 10u;
+        m.medical.min_bolus_interval_ticks = 0u;
+        gov_gate_init(&config, &state);
+        if (gov_medical_check(&m, &state, 1, 0, 50) != 0u || state.cumulative_window_dose_uL != 0u) failures++;
+        if (gov_medical_check(&m, &state, 2, 0, 50) != 0u || state.cumulative_window_dose_uL != 0u) failures++;
+        gov_medical_commit(&state, 2, 0, 50);
+        if (gov_medical_check(&m, &state, 5, 50, 150) != 0u) failures++;
+        gov_medical_commit(&state, 5, 50, 150);
+        if (gov_medical_check(&m, &state, 11, 150, 160) != LATCH_FAULT_DOSE) failures++;
+        if (gov_medical_check(&m, &state, 12, 150, 200) != 0u || state.cumulative_window_dose_uL != 100u) failures++;
+        gov_medical_commit(&state, 12, 150, 200);
+        if (gov_medical_check(&m, &state, 11, 200, 201) != LATCH_FAULT_DOSE) failures++;
+        m.medical.min_bolus_interval_ticks = 4u;
+        if (gov_medical_check(&m, &state, 13, 200, 201) != LATCH_FAULT_DOSE || gov_medical_check(&m, &state, 16, 200, 201) != 0u) failures++;
+        gov_gate_init(&config, &state);
+        m.medical.min_bolus_interval_ticks = 0u;
+        m.medical.max_cumulative_dose_uL = 10000u;
+        m.medical.cumulative_dose_window_ticks = 10000u;
+        for (uint32_t i = 1; i <= GOV_DOSE_HISTORY_CAPACITY; i++) {
+            if (gov_medical_check(&m, &state, i, 0, 1) != 0u) failures++;
+            gov_medical_commit(&state, i, 0, 1);
         }
-
-        /* Step 2: +50 uL at tick 2 (within limit, cumulative = 100) */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 50, 100, 255u);
-        input.tick = 2u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 100 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 100u) {
-            fprintf(stderr, "FAIL: cumulative dose step 2 not accepted\n");
-            failures++;
-        }
-
-        /* Step 3: +50 uL at tick 3 (within limit, cumulative = 150) */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 150, 255u);
-        input.tick = 3u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 150 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 150u) {
-            fprintf(stderr, "FAIL: cumulative dose step 3 not accepted\n");
-            failures++;
-        }
-
-        /* Step 4: +10 uL at tick 4 (exceeds 150 max_cumulative_dose_uL) -> assert DOSE fault and clamp step to 0 */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 150, 160, 255u);
-        input.tick = 4u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 150) {
-            fprintf(stderr, "FAIL: cumulative dose exceedance did not raise LATCH_FAULT_DOSE or clamp step to 0\n");
-            failures++;
-        }
-
-        /* Step 5: window expiration at tick 1005 (after 1000 ticks) -> resets window and accepts step */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 150, 160, 255u);
-        input.tick = 1005u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 160 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.cumulative_window_dose_uL != 10u) {
-            fprintf(stderr, "FAIL: cumulative dose window expiration did not reset window\n");
-            failures++;
-        }
-
-        /* Step 6: Defensive hardening — window tick wrap guard near UINT64_MAX */
-        state.window_start_tick = UINT64_MAX - 500u;
-        state.cumulative_window_dose_uL = 100u;
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 150, 255u);
-        input.tick = UINT64_MAX - 200u; /* elapsed = 300 < 1000, must NOT reset window */
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || (result.faults & LATCH_FAULT_DOSE) != 0u ||
-            state.window_start_tick != UINT64_MAX - 500u || state.cumulative_window_dose_uL != 150u) {
-            fprintf(stderr, "FAIL: window tick wrap guard prematurely reset window\n");
-            failures++;
-        }
-
-        /* Step 7: Defensive hardening — cumulative dose counter addition wrap guard */
-        state.cumulative_window_dose_uL = UINT64_MAX;
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 100, 110, 255u);
-        input.tick = UINT64_MAX - 100u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 100) {
-            fprintf(stderr, "FAIL: cumulative dose counter addition wrap guard failed to raise DOSE fault or clamp\n");
-            failures++;
-    
-        /* Step 8: Medical lockout interval — min_bolus_interval_ticks enforcement */
-        med_manifest.medical.min_bolus_interval_ticks = 10u;
-        gov_gate_init(&med_config, &state);
-
-        /* 8a: First bolus at tick 1: accepted */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 20, 255u);
-        input.tick = 1u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 20 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.last_bolus_tick != 1u) {
-            fprintf(stderr, "FAIL: Step 8a initial bolus not accepted\n");
-            failures++;
-        }
-
-        /* 8b: Rapid bolus attempt at tick 5 (elapsed 4 < 10): lockout violation */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 20, 30, 255u);
-        input.tick = 5u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 20) {
-            fprintf(stderr, "FAIL: Step 8b rapid bolus before min_bolus_interval did not raise DOSE fault or clamp\n");
-            failures++;
-        }
-
-        /* 8c: Bolus attempt at tick 12 (elapsed 11 >= 10): lockout expired, accepted */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 20, 30, 255u);
-        input.tick = 12u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if (!result.command_valid || result.candidate != 30 ||
-            (result.faults & LATCH_FAULT_DOSE) != 0u || state.last_bolus_tick != 12u) {
-            fprintf(stderr, "FAIL: Step 8c bolus after min_bolus_interval not accepted\n");
-            failures++;
-        }
-
-        /* 8d: Out-of-order / non-monotonic tick at tick 8 (last_bolus_tick=12): rejected fail-closed */
-        input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 30, 40, 255u);
-        input.tick = 8u;
-        result = gov_gate_precheck(&med_manifest, &med_config, &state, &input);
-        if ((result.faults & LATCH_FAULT_DOSE) == 0u || result.candidate != 30) {
-            fprintf(stderr, "FAIL: Step 8d out-of-order tick did not raise DOSE fault or clamp\n");
-            failures++;
-        }
-    }
+        if (gov_medical_check(&m, &state, 257, 0, 1) != LATCH_FAULT_DOSE || gov_medical_check(&m, &state, 10001, 0, 1) != 0u) failures++;
     }
 
     if (failures != 0) return 1;

@@ -153,6 +153,10 @@ governor-e2e-check: host-sim
 
 gov-replay-check:
 	python3 ../tools/gov_replay.py --test
+	python3 ../tools/gov_replay_hardening_test.py
+	python3 ../tools/benchmark_report_test.py
+	python3 ../tools/governor_host_replay_test.py
+	python3 ../tools/llama_governor_agent_test.py
 
 $(BUILD_DIR)/host-sim/governor_policy_test: governor_policy.c governor_policy.h governor_policy_test.c | dirs
 	$(CC) $(CFLAGS) governor_policy.c governor_policy_test.c -o $@ $(LDFLAGS)
@@ -319,6 +323,7 @@ evidence-index:
 # against the archived one. A mismatch means the code has drifted away from
 # the committed evidence, and CI must fail.
 evidence-check: host-sim
+	@python3 ../tools/check_governor_evidence.py
 	@# The previous revision of this target regenerated the signature file and
 	@# then grepped its OWN fresh output -- so it overwrote the committed
 	@# archive instead of comparing against it, and could never detect drift.

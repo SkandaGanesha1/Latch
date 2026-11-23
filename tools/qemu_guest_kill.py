@@ -32,7 +32,7 @@ def main() -> int:
     ifs = Path(os.environ.get(
         "GOVERNOR_QEMU_IFS",
         root / "qnx/build/nto-aarch64-le/latch_qemu_governor.ifs"))
-    evidence_path = root / "docs/evidence/governor/governor-vm-kill-resume.txt"
+    evidence_path = Path(os.environ.get("GOVERNOR_VM_KILL_LOG", "/tmp/latch-governor-vm-kill.txt"))
 
     if not ifs.is_file():
         print(f"[FAIL] Missing IFS: {ifs}", file=sys.stderr)
@@ -86,8 +86,7 @@ def main() -> int:
     try:
         log("================================================================================")
         log(" QNX HYPERVISOR 8.0 — GUEST VM TERMINATION & FAIL-CLOSED CONTAINMENT DEMO (G2)  ")
-        log(" Platform: QNX OS for Safety 8.0 (procnto-smp-instr) on ARMv8-A QEMU virt       ")
-        log(" Architecture: Mixed-Criticality Microkernel Partitioning (Zero Shared-Fate)   ")
+        log(" Platform: QNX OS 8.0 (procnto-smp-instr) on ARMv8-A QEMU TCG               ")
         log("================================================================================")
 
         # 1. Wait for QNX boot prompt
@@ -125,6 +124,9 @@ def main() -> int:
             time.sleep(0.5)
 
         log(pre_kill_status.strip())
+        if rx_before < 5:
+            log("[FAIL] Guest did not reach the required proposal count before termination.")
+            return 1
 
         # 4. Simulate Catastrophic Guest Crash / Abrupt Slay
         log("\n[PHASE 4] Executing Catastrophic Guest Termination: 'slay -9 qvm'...")
@@ -173,6 +175,10 @@ def main() -> int:
             log(f"[FAIL] Expected supervisory rung LATCH, got {current_rung}")
             return 1
 
+        if not current_mode.startswith("HOLD"):
+            log(f"[FAIL] Expected HOLD mode with LATCH, got {current_mode}")
+            return 1
+
         if "HEARTBEAT" not in latched_faults:
             log(f"[FAIL] Expected HEARTBEAT fault in latched faults, got {latched_faults}")
             return 1
@@ -186,17 +192,13 @@ def main() -> int:
         log(grant_check.strip())
 
         log("\n================================================================================")
-        log(" [DEMO RESULT] GUEST VM TERMINATION EXPERIMENT: SUCCESS (100% CONTAINMENT)      ")
-        log("   1. Hypervisor guest killed instantly without affecting safety microkernel   ")
-        log("   2. LATCH detected channel EOF and deadman lease silence within deadline       ")
-        log("   3. Graded ladder dropped directly into fail-closed LATCH (HEARTBEAT fault)   ")
-        log("   4. Physical plant held locked at 0 mrad (0.0% keep-out breaches)             ")
-        log("   5. QNX 8.0 microkernel continues 1 kHz loop with zero deadline misses         ")
+        log(" [DEMO RESULT] Guest termination observed; status reports LATCH and HEARTBEAT.")
+        log(" Mock actuator reports zero angle. Recovery and timing bounds were not tested.")
         log("================================================================================")
 
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
-        print(f"\n[SUCCESS] Authentic evidence transcript recorded to: {evidence_path}")
+        print(f"\n[SUCCESS] Transcript recorded to: {evidence_path}")
         return 0
 
     finally:
