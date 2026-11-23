@@ -20,6 +20,7 @@ qnx/build/
 *.qcow2
 *.vmdk
 *.img
+*.Image
 
 # Python cache & artifacts
 __pycache__/

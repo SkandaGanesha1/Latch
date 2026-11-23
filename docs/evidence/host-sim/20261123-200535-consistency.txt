@@ -1,0 +1,36 @@
+==============================================================================
+LATCH cross-file consistency gate
+==============================================================================
+$ python3 tools/consistency_check.py
+
+exit status: 0
+
+=== LATCH Architectural Consistency & Invariant Verification ===
+[CONSISTENCY PASS] Default Plant (latch.manifest) sidecar SHA-256 match verified: 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+[CONSISTENCY PASS] Medical Syringe Plant sidecar SHA-256 match verified: a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract sidecar SHA-256 match verified: d7e052db9732786a3bd90643954a3a1173f12d8c461777fd377a2dd795a072d6
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract sidecar SHA-256 match verified: 5f1e1f7f8285f6de16768f91726986428a622e321d08366a4681224c5f691ffe
+[CONSISTENCY PASS] guest suite (84 frames, flush granularity 4) fits the manifest ingest.queue_depth (256) and timing.max_backlog_ticks (256) <= ring capacity (256)
+[CONSISTENCY PASS] GOVERNOR guest suite (235 frames) fits its enabled schema-3 queue/backlog contract
+[CONSISTENCY PASS] GOVERNOR A4 delay, recovery, and final silence are consistent with contract lease ticks
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Manifest schema version 2 valid
+[CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
+[CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
+[CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
+[CONSISTENCY PASS] qnx/latch_qemu.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
+[CONSISTENCY PASS] qnx/latch_qemu_governor.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd
+[CONSISTENCY PASS] qnx/latch_rpi4.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] RPi4 buildfile el1-host, BCM2711 I2C IRQ 149, secpolpush, qvm unconstrained runmask, pipe/slogger2, guest image/initrd verified
+[CONSISTENCY PASS] Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified
+[CONSISTENCY PASS] Hypervisor qvmconf split, static vCPU pins, initrd/rdinit/console cmdline & Makefile verified
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced
+[CONSISTENCY PASS] README.md's reproducibility card still quotes the archived on-target signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)
+[CONSISTENCY PASS] GOVERNOR finite host-simulation run verified: 121 ticks and 7 named scenario checks
+[CONSISTENCY PASS] The committed evidence tape carries the exact signature (wire=12, envelope=7, last_seq=80, 17 HA-HOME rows)
+[CONSISTENCY PASS] Evidence archive complete and self-consistent; exactly one canonical on-target family, the derived numbers agree with the session they name, and nothing in the archive is git-ignored
+
+[SUCCESS] All architectural consistency checks PASSED with 0 errors.
