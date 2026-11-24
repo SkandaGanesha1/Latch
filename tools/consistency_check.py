@@ -1144,6 +1144,268 @@ def main():
     pass_check("No phantom manifest keys: every manifest key named in a source "
                "comment exists in a signed contract")
 
+    # 6e. PHYSICAL-TARGET CLAIMS MUST HAVE AN IMPLEMENTING BUILDFILE.
+    #
+    # `docs/plan/03_RESEARCH_LINKS_AND_TECH_STACK.md` listed the physical
+    # target as "Raspberry Pi 4 Model B (BCM2711) / Pi 5", but this
+    # repository contains exactly ONE Raspberry Pi buildfile --
+    # `qnx/latch_rpi4.build`, for the Raspberry Pi 4 (BCM2711). A doc that
+    # names a board the project cannot build is a judge-visible
+    # contradiction: a judge who asks "show me the Pi 5 build" finds
+    # nothing, and the project looks like it overstated its target.
+    #
+    # The rule is generic, not hardcoded to one model: every board model
+    # named in a "Physical Target" claim row must be a model the repository
+    # actually has a buildfile for.
+    techstack_path = os.path.join(REPO_ROOT, "docs", "plan",
+                                  "03_RESEARCH_LINKS_AND_TECH_STACK.md")
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+
+    # What the repository can build: scan every mkifs buildfile for the
+    # board model it names.
+    buildable_models = set()
+    if os.path.isdir(qnx_dir):
+        for bname in sorted(os.listdir(qnx_dir)):
+            if not bname.endswith(".build"):
+                continue
+            with open(os.path.join(qnx_dir, bname), "r", encoding="utf-8") as f:
+                buildable_models |= set(re.findall(r"\bPi\s+(\d+)\b", f.read()))
+
+    if not buildable_models:
+        fail("no Raspberry Pi model could be read from any qnx/*.build file -- "
+             "the physical-target check has nothing to compare against")
+
+    # What the docs claim. Only the CLAIM ROW is inspected, so prose that
+    # merely mentions a model in passing is not misread as a target claim.
+    claimed_models = set()
+    if os.path.isfile(techstack_path):
+        with open(techstack_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("|") and "Physical Target" in line:
+                    claimed_models |= set(re.findall(r"\bPi\s+(\d+)\b", line))
+    unsupported = sorted(claimed_models - buildable_models)
+    if unsupported:
+        fail("docs/plan/03_RESEARCH_LINKS_AND_TECH_STACK.md claims Raspberry Pi "
+             "model(s) %s as a physical target, but this repository has no "
+             "buildfile for them (buildable: %s). A target the project cannot "
+             "build must not be claimed."
+             % (", ".join(unsupported), ", ".join(sorted(buildable_models))))
+    pass_check("Physical-target claims have an implementing buildfile: the "
+               "tech-stack doc claims Raspberry Pi %s, and the repository can "
+               "build Raspberry Pi %s"
+               % (", ".join(sorted(claimed_models)) or "(none)",
+                  ", ".join(sorted(buildable_models))))
+
+    # 6f. DOC-CLAIMED SCHEDULING MECHANISMS MUST EXIST IN THE SOURCE.
+    #
+    # `CHANGELOG.md` claimed that because APS is unavailable in SDP 8.0,
+    # LATCH uses "sporadic scheduling + per-thread runtime clocks" instead.
+    # Neither mechanism appears anywhere in the source: a search for
+    # SPORADIC / SchedCtl / runtime-clock tokens across every .c and .h
+    # returns nothing. LATCH actually uses `SCHED_FIFO` priorities,
+    # `ThreadCtl()` core pinning and hypervisor vCPU clustering.
+    #
+    # This is the "narrative ahead of evidence" failure in its purest form:
+    # a plausible-sounding substitute named in a release note for a feature
+    # that was never built. The rule is generic: a document may not name a
+    # QNX scheduling mechanism as the one in use unless the source contains
+    # it.
+    SCHED_MECHANISMS = {
+        "sporadic scheduling": ("SPORADIC", "SchedCtl"),
+        "per-thread runtime clock": ("RuntimeClock", "CLOCK_THREAD",
+                                     "_NTO_TCTL_CPU_TIME"),
+    }
+    # Phrases that make a sentence a NEGATIVE statement ("not implemented",
+    # "no per-thread runtime clock is used") rather than a claim of use.
+    NEGATION_RE = re.compile(
+        r"\b(no|not|never|without|cannot|neither|nor)\b", re.I)
+    # Phrases that make a sentence a CLAIM of use.
+    USE_CLAIMS = ("used instead", "are used", "is used", "in use",
+                  "implemented", "used via", "we use", "latch uses")
+
+    # Concatenate every C source and header once.
+    source_blob = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "build", "__pycache__", ".agents")]
+        for fn in filenames:
+            if fn.endswith((".c", ".h")):
+                try:
+                    with open(os.path.join(dirpath, fn), "r",
+                              encoding="utf-8", errors="replace") as f:
+                        source_blob.append(f.read())
+                except OSError:
+                    pass
+    source_text = "\n".join(source_blob)
+
+    for mech, tokens in SCHED_MECHANISMS.items():
+        offenders = []
+        for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+            dirnames[:] = [d for d in dirnames
+                           if d not in (".git", "build", "__pycache__", ".agents")]
+            for fn in filenames:
+                if not fn.endswith(".md"):
+                    continue
+                mpath = os.path.join(dirpath, fn)
+                try:
+                    with open(mpath, "r", encoding="utf-8", errors="replace") as f:
+                        mtext = f.read()
+                except OSError:
+                    continue
+                rel = os.path.relpath(mpath, REPO_ROOT)
+                # SENTENCE-SCOPED: a negation elsewhere in the document (or
+                # in a neighbouring bullet) does not excuse a claim, and a
+                # negation in the SAME sentence does. The mechanism name and
+                # its use-claim must be judged together.
+                for sentence in re.split(r"(?<=[.!?])\s+", mtext):
+                    if not re.search(re.escape(mech), sentence, re.I):
+                        continue
+                    low = sentence.lower()
+                    if not any(u in low for u in USE_CLAIMS):
+                        continue
+                    if NEGATION_RE.search(low):
+                        continue
+                    offenders.append(rel)
+                    break
+        if offenders and not any(tok in source_text for tok in tokens):
+            fail("these documents name '%s' as a mechanism in use: %s -- but no "
+                 "such mechanism appears anywhere in the source (searched for %s). "
+                 "A document must not name a substitute for APS that the project "
+                 "does not actually use."
+                 % (mech, ", ".join(sorted(set(offenders))), "/".join(tokens)))
+    pass_check("Doc-claimed scheduling mechanisms exist in the source: every "
+               "mechanism a document names as in use is actually implemented")
+
+    # 6g. `mlockall` MUST NOT BE CREDITED AS A DETERMINISM TECHNIQUE.
+    #
+    # `mlockall()` is a NO-OP on SDP 8.0 -- "all memory is locked for the
+    # entire duration of the process" -- so it cannot be a determinism or
+    # jitter technique. This repo's own research log says so
+    # (`docs/LATCH-research.md`: "Do not claim it as a jitter technique"),
+    # and AGENTS.md records it as a platform fact.
+    #
+    # Yet `docs/plan/01_LATCH_WORKFLOW.md` claimed the working set was
+    # "locked via `mlockall(MCL_CURRENT | MCL_FUTURE)`", and
+    # `docs/06_video_and_submission_plan.md` — a judge-facing submission
+    # document — offered "memory locked via `mlockall(...)`" as evidence of
+    # real-time determinism. A judge who knows QNX would see a claim the
+    # platform does not support.
+    #
+    # The rule: a document may mention `mlockall` only to say that it does
+    # nothing, that it is not credited, or to note that the call is made.
+    MLOCK_USE_CLAIMS = ("locked via", "memory locked", "locks memory",
+                        "locked memory", "locks the", "page-locked",
+                        "memory is locked via", "guarantees")
+    mlock_offenders = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "build", "__pycache__", ".agents")]
+        for fn in filenames:
+            if not fn.endswith(".md"):
+                continue
+            mpath = os.path.join(dirpath, fn)
+            try:
+                with open(mpath, "r", encoding="utf-8", errors="replace") as f:
+                    mtext = f.read()
+            except OSError:
+                continue
+            rel = os.path.relpath(mpath, REPO_ROOT)
+            for sentence in re.split(r"(?<=[.!?])\s+", mtext):
+                if "mlockall" not in sentence.lower():
+                    continue
+                low = sentence.lower()
+                if not any(u in low for u in MLOCK_USE_CLAIMS):
+                    continue
+                if NEGATION_RE.search(low):
+                    continue
+                mlock_offenders.append(rel)
+                break
+    if mlock_offenders:
+        fail("these documents credit `mlockall` as a locking / determinism "
+             "technique: %s -- but `mlockall()` is a NO-OP on SDP 8.0 (all "
+             "memory is already locked for the process lifetime), so it cannot "
+             "be offered as evidence. State the fact, or drop the claim."
+             % ", ".join(sorted(set(mlock_offenders))))
+    pass_check("No document credits `mlockall` as a determinism technique "
+               "(it is a no-op on SDP 8.0)")
+
+    # 6h. NO DOC MAY MAKE A WCET CLAIM FROM A TCG / EMULATED OBSERVATION.
+    #
+    # AGENTS.md: "No 'WCET' for a number that is a TCG observation." The
+    # repository's accepted latency statement is the GOVERNOR on-target
+    # observation -- max 80,911 cycles (~1.29 ms), a TCG emulation
+    # observation, explicitly NOT a WCET.
+    #
+    # `docs/06_video_and_submission_plan.md` nevertheless told a judge
+    # "Bounded WCET under 62 microseconds", and
+    # `docs/VIDEO_SCRIPT_AND_SUBMISSION.md` promised a "WCET < 750 us"
+    # benchmark. Both number families belong to the withdrawn benchmark
+    # (the fabricated 61.08 us / 23,500-tick generator) or to the retired
+    # `tools/benchmark_qnx_vs_linux.py`. They are quarantined, not quotable.
+    #
+    # The rule: a document may not ASSERT a bounded WCET in microseconds.
+    # It MAY say "not a WCET" -- that is the negation, and it is required.
+    #
+    # The scan is LINE-scoped on purpose. A markdown table row is one long
+    # line with `|` cell separators, and a paragraph can run for many
+    # lines; concatenating them into "sentences" produced false positives
+    # on rows that merely record a rejection.
+    WCET_CLAIM_RE = re.compile(
+        r"\bbounded\s+wcet\b"                                  # "bounded WCET"
+        r"|\bwcet\s*(?:<|≤|<=|under|below)\s*\d"               # "WCET < 750 us"
+        r"|\bwcet\b[^.|\n]{0,30}?\bunder\s+\d"                 # "WCET under 62 ..."
+        r"|\b(?:under|below|within)\s+\d+(?:\.\d+)?\s*"        # "under 62 microseconds"
+        r"(?:us|µs|microseconds?)\b[^.|\n]{0,30}?\bwcet\b"
+        r"|\bwcet\b[^.|\n]{0,30}?\b\d+(?:\.\d+)?\s*"          # "WCET of 62 microseconds"
+        r"(?:us|µs|microseconds?)\b",
+        re.I)
+    # Contexts in which a WCET mention is a DISCLAIMER or a REJECTION, not a
+    # claim. The repository legitimately discusses WCET a great deal -- as
+    # the thing it does NOT claim, and as the name of the manifest's
+    # monitored budget field (`timing.wcet_budget_us`).
+    WCET_DISCLAIMERS = (
+        "not a wcet", "no wcet", "never a", "not the", "rather than wcet",
+        "instead of wcet", "not yet", "no hard-real-time", "withdrawn",
+        "rejected", "quarantin", "superseded", "not your measurement",
+        "not claimed", "is not claimed", "not a worst-case",
+        "never worst-case", "no conformity", "not certified",
+        "no microsecond", "is not a bound",
+    )
+    wcet_offenders = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "build", "__pycache__", ".agents",
+                                    "quarantine")]
+        for fn in filenames:
+            if not fn.endswith(".md"):
+                continue
+            mpath = os.path.join(dirpath, fn)
+            try:
+                with open(mpath, "r", encoding="utf-8", errors="replace") as f:
+                    mlines = f.read().splitlines()
+            except OSError:
+                continue
+            rel = os.path.relpath(mpath, REPO_ROOT)
+            for line in mlines:
+                low = line.lower()
+                if "wcet" not in low:
+                    continue
+                if not WCET_CLAIM_RE.search(line):
+                    continue
+                if any(d in low for d in WCET_DISCLAIMERS):
+                    continue
+                wcet_offenders.append(rel)
+                break
+    if wcet_offenders:
+        fail("these documents assert a bounded WCET: %s -- the project claims "
+             "NO WCET. The accepted latency statement is the GOVERNOR on-target "
+             "observation (max 80,911 cyc ~ 1.29 ms, TCG), labelled 'not a "
+             "WCET'. The microsecond WCET families are withdrawn and live only "
+             "under docs/evidence/quarantine/."
+             % ", ".join(sorted(set(wcet_offenders))))
+    pass_check("No document asserts a bounded WCET; the accepted latency "
+               "statement is a TCG observation labelled 'not a WCET'")
+
     # 7. Verify Documentation Attestation Digest Synchronization
     with open(sha256_path, "r", encoding="utf-8") as f:
         default_sha = f.read().strip().split()[0].lower()

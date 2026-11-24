@@ -1,9 +1,21 @@
 # 03 — Research Compendium: Metadata Tech Stack, Deep Research Links, Newsletter Signals & QNX Platform Facts
 
 **Generated:** 2026-11-23  
+**Last re-verified:** 2026-11-25  
 **Status:** Live-Verified Link & Citation Register  
 **Context:** QNX Everywhere Global Hackathon 2026 (Devpost: `qnx.devpost.com`)  
 **Target Tracks:** Grand Prize ($10,000 + Podcast + CEO John Wall Coffee Chat), Robotics & Medical ($4,000), Best Use of QNX-Specific Tech ($3,500), Best Codelab ($3,500).
+
+**How these rows were verified (2026-11-25):** every version in §1 was read
+from the **installed** SDP on the build workstation — the SDP release from
+`qnx800/target/qnx/etc/qversion`, the Hypervisor package version from
+`qnx800/.packages/metadata/com.qnx.qnx800.target.hypervisor.core/`, and the
+model file size from the file itself — not recalled. The external platform
+facts in §3 and the rules in §2 were read from the live official pages on
+2026-11-25, with the quoted wording copied from those pages. The physical
+target in §1 is the one board the repository can actually build:
+`tools/consistency_check.py` fails the build if this table ever names a board
+with no `qnx/*.build` file behind it.
 
 ---
 
@@ -11,16 +23,16 @@
 
 | Layer | Component | Exact Version / Identifier | Source / Documentation Reference |
 |:---|:---|:---|:---|
-| **Host OS** | Linux Development Host | Ubuntu 22.04 LTS or Fedora 40/41 | QNX-supported host per SDP 8.0 installation guide. |
-| **Target RTOS** | **QNX SDP 8.0** (`procnto-smp-instr`) | Baseline: `8.0.0.00141T202311271501L` (`qnx/8.0.0/main`)<br>Production: **8.0.6** (BSP release notes Nov 12, 2026) | `qnx.com/developers/docs/BSP8.0` |
-| **Hypervisor** | **QNX Hypervisor 8.0** | Version `3.6.0.00802T202608071638L` (Aug 2026 build, Hypervisor 8.0.5 release) | Included in free QNX Everywhere tier. EL2 VHE host, GICv2 guest vdevs. |
+| **Host OS** | Linux Development Host | **Build host used here: Fedora Linux 45** (x86_64, kernel 7.3.4-300.fc45). QNX's *documented* supported hosts for SDP 8.0 are Windows 11/10, Ubuntu Desktop 22.04/20.04 LTS and **Red Hat Enterprise Linux 9** — **Fedora is not on that list**, so this host is a working but *non-QNX-supported* configuration. | SDP 8.0 GA Release Notes, "Development host OSs" (`developers.qnx.com/developers/docs/relnotes8.0/com.qnx.doc.release_notes/topic/sdp8_rn.html`) |
+| **Target RTOS** | **QNX SDP 8.0** (`procnto-smp-instr`) | **Installed and built against: SDP `8.0.0`** (`8.0.0.00141T202311271501L`, branch `qnx/8.0.0/main`) — read from `qnx800/target/qnx/etc/qversion` on the build workstation.<br>Current upstream release: **8.0.6** (release notes, "Date of this edition: November 12, 2026"). Every successful build here is evidence for **8.0.0**, *not* for 8.0.6. | `qnx.com/developers/docs/BSP8.0`; the installed-vs-current split is stated in `docs/GOVERNOR_JUDGE_READINESS.md` |
+| **Hypervisor** | **QNX Hypervisor 8.0** | Package version `3.6.0.00802T202608071638L` (Aug 2026 build) — read from the installed package metadata `qnx800/.packages/metadata/com.qnx.qnx800.target.hypervisor.core/3.6.0.00802T202608071638L/`. | Included in the free QNX Everywhere tier. EL2 VHE host, GICv2 guest vdevs. |
 | **Guest OS** | Untrusted AI VM | Linux 6.12 AArch64 (512 MB VM) + freestanding `/init` | Minimal Linux kernel `Image` + reproducible cpio initramfs (`latch_guest_init.c`). |
-| **Virtual Target** | QEMU AArch64 `virt` | QEMU 8.0+ (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) | Documented official QNX virtual development target. |
-| **Physical Target** | Hardware Target (Stretch) | Raspberry Pi 4 Model B (BCM2711) / Pi 5 | BSP `com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4` (build 837). PCA9685 12-bit PWM over `/dev/i2c1`. |
+| **Virtual Target** | QEMU AArch64 `virt` | QEMU **11.1.3** as used here (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`); the project targets 8.0+ | Documented official QNX virtual development target. |
+| **Physical Target** | Hardware Target (Stretch) | **Raspberry Pi 4 Model B (BCM2711) — the only physical board this project claims.** It is implemented by `qnx/latch_rpi4.build`; there is no buildfile for any other board, so no other board is claimed. | BSP `com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4` (build 837, released with SDP 8.0.6). PCA9685 12-bit PWM over `/dev/i2c1`. |
 | **Compiler** | QCC Cross-Compiler | QNX GCC 12.2.0 (`gcc_ntoaarch64le`) | Flag set: `-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -D_QNX_SOURCE`. |
 | **Image Tooling** | QNX Utilities | `mkifs`, `secpolcompile`, `secpolpush` | System utilities in `$QNX_HOST/usr/bin/`. |
-| **Guest AI Engine** | Local Inference | `llama.cpp` + `SmolLM2-135M-Instruct-Q8_0.gguf` (139 MB) | CPU-only bounded inference, Apache-2.0 license. |
-| **Tooling & CI** | Automation & Testing | Python 3.10+ Standard Library, GitHub Actions | Zero external pip dependencies; uses standard `hashlib`, `struct`, `json`, `csv`. |
+| **Guest AI Engine** | Local Inference (installed, **not on the demonstrated runtime path**) | `llama.cpp` + `SmolLM2-135M-Instruct-Q8_0.gguf` (`144,811,360` bytes = 138.1 MiB, verified on disk) | CPU-only bounded inference, Apache-2.0 license. The shipped guest runs a deterministic scripted policy; the model and `llama-cli` are installed assets for a planned live-inference demo, not part of the captured run (`docs/plan/02` §5, `docs/GOVERNOR_JUDGE_READINESS.md`). |
+| **Tooling & CI** | Automation & Testing | Python **3.15.2** as used here (project targets 3.10+), GitHub Actions | **Zero external pip dependencies** — verified: there is no `requirements.txt`, `pyproject.toml` or `Pipfile`, and every tracked tool imports only the Python standard library plus its own sibling modules; uses standard `hashlib`, `struct`, `json`, `csv`. |
 
 ---
 
@@ -28,27 +40,33 @@
 
 | Rule / Field | Confirmed Requirement | Source |
 |:---|:---|:---|
-| **Submission Deadline** | **December 15, 2026 at 2:00 PM EST** | `qnx.devpost.com/rules` |
-| **Judging Period** | **January 15 – 29, 2027** (Winners announced ~Feb 4, 2027) | Devpost Rules §6 |
-| **Total Prize Pool** | **$50,000 Total** ($10k Grand Prize, 5×$4k Category, 5×$2k Category Runners-up, 2×$3.5k Bonus) | Devpost Rules §7-8 |
-| **Multi-Prize Rule** | One entry can win: 1 Overall Prize (Grand Prize OR Category Prize) + 1 Bonus Prize + Community Choice | Devpost Rules §8 |
-| **Video Requirement** | Public YouTube video, **under 3 minutes 00 seconds**, demonstrating real software running | Devpost Rules §4 |
+| **Registration & Submission Period** | **November 2, 2026 (11:00 am ET) – December 15, 2026 (2:00 pm ET)** | `qnx.devpost.com/rules`; schedule at `qnx.devpost.com/details/dates` |
+| **Submission Deadline** | **December 15, 2026 at 2:00 PM EST** | `qnx.devpost.com/details/dates` |
+| **Judging Period** | **January 15 – 29, 2027**, judging and public voting both **10:00 am – 5:00 pm EST**; **Winners announced February 4, 2027 at 2:00 pm EST** | `qnx.devpost.com/details/dates` |
+| **Total Prize Pool** | **$50,000 in cash**, plus other prizes. Grand Prize **$10,000** (1 winner; + *Code the Future* podcast episode and a coffee chat with John Wall, QNX CEO) · 5× **Best of \<Category\>** **$4,000** (Robotics & Medical, Automotive & Mobility, Low-level Software, Developer Tooling & Host Tools, Open-Source Contribution & Ports) · 5× **Runner-Up** **$2,000** (one per category) · 3× **Honorable Mention** **$1,000** · **Best Codelab / Tutorial** **$3,500** · **Best use of QNX-specific Technologies** **$3,500**. ($10,000 + 5×$4,000 + 5×$2,000 + 3×$1,000 + $3,500 + $3,500 = $50,000.) **Community Choice** carries no cash amount — a blog and social feature plus QNX swag. | Devpost Overview "Prizes" + Devpost Rules |
+| **Multi-Prize Rule** | "A project can win one (1) Overall prize, one (1) Bonus prize, and one (1) Community Choice prize. If there are no eligible submissions for a bonus prize, that prize will not be awarded." | Devpost Rules, "Important notes on multiple prize eligibility" |
+| **Judging Criteria** | **Technological Implementation** · **Design** · **Potential Impact** · **Innovation & AI Creativity** — judged by the 9-judge panel | Devpost Overview, "Judging Criteria" |
+| **Participation** | **2,511 participants** (observed 2026-11-25; this count moves daily, so quote it only with its date) | `qnx.devpost.com` |
+| **Video Requirement** | The video **should be less than three (3) minutes** and **should include footage that shows the Project functioning on the device for which it was built**; it **must be uploaded to and made publicly visible on YouTube**, and a link must be provided on the submission form. It must not include third-party trademarks or copyrighted music without permission. | Devpost Rules §4 + the challenge Overview |
 | **Open Source Rule** | Public GitHub/GitLab repository with OSI-approved license visible in root (`LICENSE`) | Devpost Rules §4 |
 | **Evidence of QNX Use** | Description must identify specific files, functions, lines, and logs proving native QNX execution | Devpost Rules §4 |
-| **Judge Roster** | 9 BlackBerry QNX Leaders: Sheridan Ethier, Patrick Murtha, Cris Sinnott, Andy Gryc, Dongkai Guo, John Dallas, Morgan McKeen, Mike Shane, John Hanam | `qnx.devpost.com` |
+| **Judge Roster** | 9 BlackBerry QNX Leaders: Sheridan Ethier (VP, Engineering Middleware), Patrick Murtha (Senior Director, Product Management), Cris Sinnott (Senior Director Engineering, Open Source), Andy Gryc (Director, Developer Ecosystem), Dongkai Guo (Director, Software Development), John Dallas (Principal Academic Partnerships Manager), Morgan McKeen (Developer Engagement Marketing Manager), Mike Shane (Senior Systems Software Developer), John Hanam (Manager, Developer Relations) | `qnx.devpost.com` |
 
 ---
 
-## 3. QNX Platform Facts & Discontinuation of APS
+## 3. QNX Platform Facts & APS Status in SDP 8.0
 
-1. **Adaptive Partitioning Scheduler (APS) Discontinued in SDP 8.0**:
-   - The legacy `aps` adaptive partitioning scheduler present in QNX SDP 6.x and 7.x **does not exist in QNX SDP 8.0**.
-   - Official QNX Momentics IDE User's Guide: *"QNX OS 8.0 does not support adaptive partitioning; if your target is based on 8.0, then the IDE won't receive any APS data."*
+1. **Adaptive partitioning (APS) is not supported in SDP 8.x**:
+   - The `aps` configuration keyword **only works on QOS 2.2.x**; the QNX Process Launch and Monitor Service (QPLMS) User's Guide states that "the feature is not supported in SDP 8.x" — *QPLMS usage differences between QOS 2.2.x and SDP 8.x environments*, `https://www.qnx.com/developers/docs/8.0/com.qnx.doc.plms/topic/usage_differences.html`.
+   - The *QNX Momentics IDE User's Guide 8.0*, "APS View" page (`https://www.qnx.com/developers/docs/8.0/com.qnx.doc.ide.userguide/topic/APS_view.html`), states verbatim: *"QNX OS 8.0 does not support adaptive partitioning; if your target is based on 8.0, then the IDE won't receive any APS data and this pane isn't meaningful. For targets based on an earlier OS version, this pane is meaningful only when the target uses adaptive partitioning."*
+   - The legacy `aps` adaptive partitioning scheduler present in QNX SDP 6.x and 7.x therefore does not exist in QNX SDP 8.0.
    - Temporal determinism in SDP 8.0 is achieved via strict priority-preemptive `SCHED_FIFO` 63, core pinning via `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)`, and hypervisor vCPU clustering.
+   - LATCH claims **no** APS. It also does **not** claim QNX *sporadic* scheduling: that is a distinct policy, it is not implemented here, and it must not be inferred from the `SCHED_FIFO` configuration — see `docs/architecture/QNX_SCHEDULING_AND_STACK_USAGE.md`.
 2. **Functional Safety Certification Reality**:
-   - QNX OS for Safety 8.0 is certified by TÜV Rheinland to **ISO 26262 ASIL D, IEC 61508 SIL 3 (not SIL 4), IEC 62304 Class C, and ISO/SAE 21434**.
-   - QNX Hypervisor 8.0 (free in QNX Everywhere) is **non-certified**; safety deployments require commercial "QNX Hypervisor for Safety".
-   - All documentation uses precise "architectural alignment" rather than false certification claims.
+   - QNX OS for Safety 8.0 is certified by TÜV Rheinland to **ISO 26262 ASIL D, IEC 61508 SIL 3 (not SIL 4), IEC 62304 Class C, and ISO/SAE 21434** (QNX product page and QNX Download Center).
+   - QNX Hypervisor 8.0 (the free / QNX Everywhere tier) is **non-certified**: its release notes state "QNX Hypervisor (QH) is *not* a certified product. It must *not* be used in a safety-related production system." Safety deployments require the commercial **QNX Hypervisor for Safety (QHS)** product, used only as specified in its Safety Manual.
+   - QNX's own pages are **not consistent** on QHS's IEC 61508 SIL level: the Download Center says SIL 3 while QNX's March 2026 announcement says SIL 4. No SIL level for QHS is asserted here.
+   - All documentation uses precise "architectural alignment" rather than false certification claims. **LATCH itself is not certified and makes no conformity claim.**
 3. **Black Channelvirtio-console Communication**:
    - The guest VM has zero shared memory, zero pointers, and zero direct hardware access to the host.
    - All communication crosses a strictly serialized 32-byte point-to-point stream validated fail-closed by `latch-ingest`.
@@ -87,6 +105,8 @@
 - QNX Hypervisor User Guide: `https://www.qnx.com/developers/docs/8.0/com.qnx.doc.hypervisor.user/`
 - QNX Security & secpol Guide: `https://www.qnx.com/developers/docs/8.0/com.qnx.doc.security.system/`
 - QNX Raspberry Pi 4 BSP Release Notes: `https://www.qnx.com/developers/docs/BSP8.0/com.qnx.doc.bsp.releasenotes/topic/rel_sdp80.bsp.broadcom.rpi4.bcm2711.html`
+- QNX Momentics IDE User's Guide 8.0 — "APS View" (the APS-not-supported note quoted in §3): `https://www.qnx.com/developers/docs/8.0/com.qnx.doc.ide.userguide/topic/APS_view.html`
+- QNX QPLMS User's Guide — "QPLMS usage differences between QOS 2.2.x and SDP 8.x environments" (the `aps` keyword note quoted in §3): `https://www.qnx.com/developers/docs/8.0/com.qnx.doc.plms/topic/usage_differences.html`
 - QNX GitLab Hypervisor Samples: `https://gitlab.com/qnx/hypervisor/getting-started`
 
 ### Regulatory & Standards Documentation

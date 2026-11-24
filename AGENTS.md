@@ -225,6 +225,25 @@ wrong.
 - **Adaptive partitioning (APS) was removed in SDP 8.0.** Use the static
   vCPU runmask and `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)`. Do
   not name APS anywhere in the README, the codelab or the video.
+  Two official sources say so, and the exact wording is worth quoting:
+  the **QNX QPLMS User's Guide** ("QPLMS usage differences between QOS 2.2.x
+  and SDP 8.x environments") — the `aps` config keyword "only works on QOS
+  2.2.x. The feature is not supported in SDP 8.x" — and the **QNX Momentics
+  IDE User's Guide 8.0**, "APS View" — "QNX OS 8.0 does not support adaptive
+  partitioning; if your target is based on 8.0, then the IDE won't receive any
+  APS data and this pane isn't meaningful."
+- **QNX SDP 8.0's supported development hosts are Windows 11/10, Ubuntu
+  Desktop 22.04/20.04 LTS and Red Hat Enterprise Linux 9 — not Fedora.**
+  The build workstation here is Fedora 45, so the host configuration works but
+  is **not** a QNX-supported one; never describe it as supported. The list
+  moves between point releases (8.0.2 swapped Ubuntu 20.04 for 24.04 and
+  dropped Windows 10), so read the release notes for the version in hand.
+- **QNX publishes a Raspberry Pi 5 BSP** (`com.qnx.qnx800.bsp.hw.raspberrypi_bcm2712_rpi5`,
+  build 738) alongside the Pi 4 one (`com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4`,
+  build 837). **That does not make Pi 5 a LATCH target**: the repository has
+  exactly one Pi buildfile, `qnx/latch_rpi4.build`, so Pi 4B is the only board
+  this project claims. `tools/consistency_check.py` fails the build if a doc
+  ever names a target the repository cannot build.
 
 ---
 

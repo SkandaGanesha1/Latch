@@ -61,7 +61,7 @@ VERIFY_BIN    := $(OUT_DIR)/latch_verify
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-manifest-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt
+.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-manifest-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt stack-usage
 
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN)
 
@@ -103,6 +103,29 @@ native:
 
 host-sim:
 	@$(MAKE) --no-print-directory TARGET=host-sim all
+
+# Static stack-usage estimate.
+#
+# `docs/architecture/QNX_SCHEDULING_AND_STACK_USAGE.md` describes this
+# capability, so it has to actually exist. It compiles the supervisor's
+# translation units with the HOST compiler and `-fstack-usage`, then
+# concatenates the compiler's per-function `.su` reports into one file.
+#
+# What this is NOT: a runtime high-water mark. It is a compiler-reported
+# estimate of each function's own frame. It does not sum transitive call
+# chains, does not include interrupt/exception context, and does not predict
+# what the QNX/AArch64 compiler will emit. The AArch64 numbers must be
+# measured with the QNX toolchain (`make -C qnx stack-usage TARGET=aarch64`
+# with the SDP environment sourced).
+stack-usage:
+	@mkdir -p $(BUILD_DIR)/stack-usage
+	@rm -f $(BUILD_DIR)/stack-usage/*.su $(BUILD_DIR)/stack-usage/*.o
+	@for f in latchd governor_policy gov_gate_precheck gov_homeostat latch_manifest latch_ipc; do \
+	    $(CC) $(CFLAGS) -fstack-usage -c $$f.c -o $(BUILD_DIR)/stack-usage/$$f.o || exit 1; \
+	done
+	@cat $(BUILD_DIR)/stack-usage/*.su > $(BUILD_DIR)/stack-usage/host-static-stack-usage.txt
+	@echo "[STACK-USAGE] wrote $(BUILD_DIR)/stack-usage/host-static-stack-usage.txt"
+	@echo "[STACK-USAGE] compiler-reported static frame estimate -- NOT a runtime high-water mark"
 
 # The host-sim pipeline.
 #

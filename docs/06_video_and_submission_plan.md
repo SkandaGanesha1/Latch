@@ -133,13 +133,13 @@ GOVERNOR enforces a 1 kHz deterministic safety boundary between untrusted AI age
 
 #### 3. How we built it (Evidence of QNX Use)
 - **QNX Neutrino SDP 8.0 Microkernel Architecture:** Built as native C11 resource managers (`resmgr_attach`) on `/dev/latch/proposal`, `/dev/latch/actuator`, and `/dev/governor`.
-- **Real-Time Determinism:** Bounded WCET under 62 microseconds (`ClockCycles()` instrumentation), memory locked via `mlockall(MCL_CURRENT | MCL_FUTURE)`, pinned to physical CPU 0 via `ThreadCtl(_NTO_TCTL_RUNMASK)`.
+- **Real-Time Determinism:** No dynamic allocation in the 1 kHz decision tick (`ClockCycles()` stamps every decision), priority-preemptive `SCHED_FIFO` 63, and the supervisor pinned to physical CPU 0 via `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)`. The measured decision latency is reported as a **TCG observation, not a WCET**: the archived GOVERNOR on-target run's maximum was 80,911 cycles (≈ 1.29 ms) under QEMU software emulation. (`mlockall(MCL_CURRENT | MCL_FUTURE)` is called at startup, but it is a **no-op on SDP 8.0** — all memory is already locked for the process lifetime — so it is **not** offered as a determinism technique.)
 - **Mandatory Access Control:** Compiled via `secpolcompile` and pushed via `secpolpush` at boot, enforcing custom uninheritable ability `latch/actuator`.
 - **Virtualization Isolation:** Runs untrusted AI workloads in QNX Hypervisor 8.0 (`qvm`), isolating guest failures completely from safety-critical control channels.
 
 #### 4. Challenges we ran into & how we solved them
 - **Tick & Hysteresis Tuning:** Ensuring recovery from degraded states cannot be gamed required a strict 25-clean-command threshold where heartbeats earn zero recovery credit.
-- **Microsecond WCET Budget:** Eliminating all dynamic heap allocations (`malloc`/`free`) from the real-time execution loop and using pre-allocated `.bss` rings.
+- **Microsecond Decision Budget:** Eliminating all dynamic heap allocations (`malloc`/`free`) from the real-time execution loop and using pre-allocated `.bss` rings.
 - **Subsystem Parity:** Emulating high-resolution QNX timebase cycles on host-sim environments for exhaustive CI test runs across 7 cyber-physical attack vectors.
 
 #### 5. What we learned & what's next

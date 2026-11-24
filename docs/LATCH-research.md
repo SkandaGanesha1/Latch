@@ -86,12 +86,12 @@ Verified on the 8.0 doc set. If a sentence is not in this section, it is not som
 
 ### BSP
 
-- Pi 4 BSP contains startup, I2C (source), SPI (source), serial, GPIO (binary only), network (`io-sock`), SD, PCI, USB, watchdog. No PWM driver is listed. [BSP about](https://www.qnx.com/developers/docs/BSP8.0/com.qnx.doc.bsp_raspberrypi.bcm2711.rpi4_8.0/topic/release_notes.html), [release notes](https://www.qnx.com/developers/docs/BSP8.0/com.qnx.doc.bsp.releasenotes/topic/rel_sdp80.bsp.broadcom.rpi4.bcm2711.html) (build 670, notes say it coincides with SDP 8.0.5).
+- Pi 4 BSP contains startup, I2C (source), SPI (source), serial, GPIO (binary only), network (`io-sock`), SD, PCI, USB, watchdog. No PWM driver is listed. [BSP about](https://www.qnx.com/developers/docs/BSP8.0/com.qnx.doc.bsp_raspberrypi.bcm2711.rpi4_8.0/topic/release_notes.html), [release notes](https://www.qnx.com/developers/docs/BSP8.0/com.qnx.doc.bsp.releasenotes/topic/rel_sdp80.bsp.broadcom.rpi4.bcm2711.html) (build 837, released with SDP 8.0.6; the release notes are dated Nov 12, 2026 — the BSP build number advances with each SDP release, so re-read it rather than reusing an older number).
 - That is why the actuator is a PCA9685 on I2C, not a GPIO pulse. Software PWM would make the safety story look late.
 
 ### APS
 
-- "QNX OS 8.0 does not support adaptive partitioning." [APS view](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.ide.userguide/topic/APS_view.html).
+- "QNX OS 8.0 does not support adaptive partitioning; if your target is based on 8.0, then the IDE won't receive any APS data and this pane isn't meaningful. For targets based on an earlier OS version, this pane is meaningful only when the target uses adaptive partitioning." [APS view](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.ide.userguide/topic/APS_view.html). (Quoted verbatim from the 8.0 IDE User's Guide; page last updated 2026-11-05.)
 - PLMS: the `aps` keyword works on QOS 2.2.x and is not supported in SDP 8.x. [usage differences](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.plms/topic/usage_differences.html).
 
 ### Resource manager shape

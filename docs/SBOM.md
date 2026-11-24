@@ -35,7 +35,7 @@
 | **`consistency_check.py`** | Python 3.10+ | **None** (Standard Library only: `json`, `hashlib`, `re`, `sys`) | MIT | Non-blocking static analysis |
 | **`gov_replay.py`** | Python 3.10+ | **None** (Standard Library only: `hashlib`, `json`, `struct`) | MIT | Cryptographic forensic replay |
 | **`run_attacks.py`** | Python 3.10+ | **None** (Standard Library only) | MIT | Standalone adversarial test harness |
-| **`benchmark_qnx_vs_linux.py`**| Python 3.10+ | **None** (Standard Library only) | MIT | Empirical determinism benchmark |
+| **`benchmark_qnx_vs_linux.py`**| Python 3.10+ | **None** (Standard Library only) | MIT | Latency-tape summarizer — summarises recorded `cycles_in`/`cycles_out` samples; it does **not** benchmark QNX |
 | **`console.html`** | HTML5 / JS | **None** (Pure Vanilla JS Canvas, zero external CDNs / JS frameworks) | MIT | Completely functional airgapped offline |
 
 ---
