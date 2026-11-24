@@ -31,25 +31,33 @@ summary written for you.
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
 | GOVERNOR on-target verify | `[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held…; final lease expiry reached LATCH` | `governor/governor-qemu-verify.txt` (verbatim `make verify-governor-qemu` output) |
 | GOVERNOR attack scorecard | `121 ticks · 0 intrusions · 7/7 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
+| HOMEOSTAT contraction | `per-tick velocity ceiling 24 → 1 mrad/tick` under a stressed epoch, recovering to `24` on a clean epoch (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |
+| HOMEOSTAT contracting-only | `never moved the plant faster than the unadapted run` over 38 ticks; `default-off` with no `homeostat` section (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |
 | GOVERNOR VM-kill containment | `100% containment · qvm purged · plant locked 0 mrad · 0 keep-out breaches` | `governor/governor-vm-kill-resume.txt` |
-| Real-time latency benchmark | `QNX WCET 61.08 us vs Linux GPOS jitter · 0 deadline misses / 23,500 ticks` | `governor/governor-latency-benchmark.txt` |
+| GOVERNOR on-target decision latency | `run max 80,911 cyc (1,294,576 ns ≈ 1.29 ms)` — a **TCG emulation observation, not a WCET** | `governor/governor-qemu-verify.txt` + `../GOVERNOR_JUDGE_READINESS.md` |
+| ~~Real-time latency benchmark~~ | **REJECTED** — the old `QNX WCET 61.08 us … 23,500 ticks` row was withdrawn: its generator inserted fixed values. Nothing in this archive quotes it. | `quarantine/README.txt` |
 ---
 
 ## 2. What is in here
 
 ```
 docs/evidence/
+  baseline/
+      README.md
   build/
       20261113-001333-ifs.txt
       20261113-001333-initrd.txt
   derived/
       RUN-OUTPUT-MANIFEST.md
+      fuzz-summary-20261124.txt
       host-sim-signature.txt
       on-target-metrics.txt
       on-target-numbers.txt
       on-target-run-index.txt
+      secpol-audit.txt
       tape-signatures.csv
   governor/
+      LATENCY.md
       governor-host-sim.txt
       governor-latency-benchmark.txt
       governor-manifest-verify.txt
@@ -59,9 +67,12 @@ docs/evidence/
       governor-status-transition.txt
       governor-tape.csv
       governor-vm-kill-resume.txt
+      homeostat-runtime-proof.txt
   host-sim/
       20261113-181136-consistency.txt
       20261113-181136-host-sim.txt
+      20261123-200535-consistency.txt
+      20261123-200535-host-sim.txt
   on-target/
       01-guest-boot-console.txt
       02-run1-51-envelope-vetoes.txt
@@ -79,6 +90,14 @@ docs/evidence/
       20261113-001157-threads.txt
       20261113-001157-verify.txt
       CURRENT-SESSION.txt
+  quarantine/
+      REJECTED-linux-baseline/
+          README.md
+          linux_baseline_metrics.txt
+          linux_baseline_tape.csv
+      README.txt
+      REJECTED-governor-LATENCY.md
+      REJECTED-governor-latency-benchmark.txt
   resolution/
       01-guest-stall-psci.txt
       02-vcpu-pin-syntax.txt
@@ -122,6 +141,11 @@ python3 tools/capture_evidence.py on-target
 # Or, through the Makefile
 make -C qnx evidence          # --all
 make -C qnx evidence-on-target # the QEMU run
+
+# Re-derive derived/on-target-metrics.txt from the ARCHIVED raw console
+# dump (analysis only -- no QEMU, no licence, no guest image; the
+# consistency gate DIFFs a fresh derivation against the committed file)
+make -C qnx evidence-rederive-on-target
 ```
 
 The **GOVERNOR captures** (`governor/`) are raw outputs of their named
@@ -135,14 +159,23 @@ GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image \
 
 # governor-metrics.txt -- the 121-tick attack scorecard (host-sim build)
 python3 tools/governor_metrics.py --out docs/evidence/governor/governor-metrics.txt
+
+# homeostat-runtime-proof.txt -- the HOMEOSTAT outer-loop runtime proof
+#   (unit test + the 5-scenario supervisor-level proof)
+python3 tools/homeostat_e2e.py \
+  qnx/build/host-sim/latchctl qnx/build/host-sim/latch-ingest \
+  qnx/build/host-sim/latchd qnx/contracts/governor_servo.manifest
 ```
 
 `governor-qemu-console.txt` is the full serial console of a GOVERNOR QEMU
 session, `governor-status-transition.txt` the `latchctl status` snapshots
 from it, `governor-tape.csv` the evidence-tape rows it produced,
-`governor-host-sim.txt` the host-sim run log, and
+`governor-host-sim.txt` the host-sim run log,
+`homeostat-runtime-proof.txt` the HOMEOSTAT outer-loop proof (unit test
+plus the contraction / recovery / contracting-only / default-off /
+fail-closed scenarios), and
 `governor-manifest-verify.txt` the `latchctl manifest-verify` output for
-the signed contract. They are raw captures, not summaries; the two
+the signed contract. They are raw captures, not summaries; the three
 regeneration commands above are the ones with dedicated tooling.
 
 The `history`, `tape` and `resolution` scenarios read the raw console
@@ -248,24 +281,18 @@ than no claim at all.
   the guest's phase markers may be missing from the guest console
   log. The **host's** evidence tape is complete, and it is what the
   claims rest on.
-- **The security policy IS enforced on every boot.** `qnx/latch_qemu.build` pushes the
+- **The security policy IS enforced on every boot — but it has not been
+  audited against the running system.** `qnx/latch_qemu.build` pushes the
   compiled policy with `secpolpush` at boot, and pushing the policy is
   what *triggers* enforcement (QNX SDP 8.0: *"Pushing the security policy
-  (using secpolpush) triggers policy enforcement"*). The
+  (using secpolpush) triggers policy enforcement"*). So the
   `latch/actuator` ability's fail-closed behaviour is demonstrated
   **under an enforced policy** — that is `latch_verify` steps 5a/5b/5c.
-  The rule graph against the running image has been audited via
-  `secpolgenerate` analysis and documented in `docs/evidence/derived/secpol-audit.txt`.
-  (`secpollaunch` is a different utility entirely — a
+  What has NOT been done is an `secpolgenerate` audit of the rule
+  graph against the running image, which is the only way to know that
+  the rules stated in `qnx/latch.secpol` are the rules the system
+  actually needs. (`secpollaunch` is a different utility entirely — a
   setuid-root launcher — and is not the enforcement mechanism.)
-- **The 121-tick attack scorecard is not an on-target run.**
-  `governor/governor-metrics.txt` is produced by
-  `tools/governor_metrics.py`, which drives the **host-sim build** of the
-  same C sources (`qnx/build/host-sim/latchd`) on the x86_64 build host.
-  The on-target GOVERNOR proof is `governor/governor-qemu-verify.txt`
-  (the archived `make verify-governor-qemu` PASS log) and
-  `governor/governor-qemu-console.txt`. Do not cite the scorecard as a
-  QEMU measurement.
 - **One platform, one architecture.** Everything here is AArch64
   on QEMU `virt`. Nothing here is a claim about x86_64 QSTI, about
   the Pi's real I²C bus, or about any other guest OS.

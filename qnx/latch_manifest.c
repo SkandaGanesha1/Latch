@@ -210,72 +210,17 @@ int latch_manifest_selftest_sha256(void) {
  * ========================================================================== */
 
 void latch_manifest_init_defaults(latch_manifest_t *m) {
-    if (m == NULL) return;
-    memset(m, 0, sizeof(*m));
-
-    m->schema_version = LATCH_MANIFEST_SCHEMA_VERSION;
-    strncpy(m->plant_name, "servo-horn-1d", sizeof(m->plant_name) - 1);
-    m->num_axes = 1;
-    m->axes[0].id = 0;
-    strncpy(m->axes[0].kind, "angular", sizeof(m->axes[0].kind) - 1);
-    strncpy(m->axes[0].unit, "mrad", sizeof(m->axes[0].unit) - 1);
-    m->axes[0].min = -1000;
-    m->axes[0].max = 1000;
-    m->axes[0].fullscale_counts_span = 2000;
-
-    m->envelope.theta_min_mrad = -1000;
-    m->envelope.theta_max_mrad = 1000;
-    m->envelope.home_mrad = 0;
-    m->envelope.num_keepouts = 1;
-    m->envelope.keepout[0].lo_mrad = 250;
-    m->envelope.keepout[0].hi_mrad = 650;
-    strncpy(m->envelope.keepout[0].label, "PERSON", sizeof(m->envelope.keepout[0].label) - 1);
-
-    m->envelope.v_max = 25;
-    m->envelope.a_max = 10;
-    m->envelope.j_max = 20;
-    m->envelope.v_home = 10;
-    m->envelope.lookahead_ticks = 10;
-
-    m->timing.period_us = 1000;
-    m->timing.watchdog_ticks = 2;
-    m->timing.wcet_budget_us = 100;
-    m->timing.max_backlog_ticks = 256;
-
-    m->recovery.hysteresis_clean_frames = 25;
-    m->recovery.hold_to_home_ticks = 50;
-
-    m->decision.cpu = 0;
-    m->decision.priority = 63;
-    m->decision.pulse_priority = 63;
-
-    m->ingest.cpu = 1;
-    strncpy(m->ingest.delivery, "queued", sizeof(m->ingest.delivery) - 1);
-    m->ingest.queue_depth = 16;
-
-    strncpy(m->paths.proposal, "/dev/latch/proposal", sizeof(m->paths.proposal) - 1);
-    strncpy(m->paths.actuator, "/dev/latch/actuator", sizeof(m->paths.actuator) - 1);
-    strncpy(m->paths.ability, "latch/actuator", sizeof(m->paths.ability) - 1);
-    strncpy(m->paths.i2c_bus, "/dev/i2c1", sizeof(m->paths.i2c_bus) - 1);
-
-    strncpy(m->actuator.type, "pca9685", sizeof(m->actuator.type) - 1);
-    m->actuator.addr = 0x40;
-    m->actuator.freq_hz = 50;
-    m->actuator.prescale = 121;
-    m->actuator.pwm_center = 307;
-    m->actuator.pwm_min = 205;
-    m->actuator.pwm_max = 410;
-    m->actuator.retries = 1;
-    m->actuator.init_delay_us = 600;
-    m->actuator.required = false;
-
-    m->tape.capacity = 4096;
-    strncpy(m->tape.log_path, "/dev/shmem/latch_tape.csv", sizeof(m->tape.log_path) - 1);
-
-    strncpy(m->protocol.magic, "LATH", sizeof(m->protocol.magic) - 1);
-    m->protocol.version = 1;
-    strncpy(m->protocol.crc, "ieee32", sizeof(m->protocol.crc) - 1);
-    m->protocol.coverage = 16;
+    /* DEPRECATED: this function is not called anywhere in the codebase.
+     * All manifest loading goes through latch_manifest_load() which
+     * performs strict schema-3 validation (json_object_has_only_keys
+     * rejects duplicate/unknown keys). Schema-1/2 sections use
+     * json_find_key_bounded() which is first-match-wins for duplicate
+     * keys and silently ignores unknown keys — this is a known
+     * limitation of the legacy schemas. The schema-3 governor/units/
+     * medical/rate sections are the only ones with strict validation.
+     * If a new default-initialization path is ever needed, re-add here
+     * with a caller and a test. */
+    (void)m;
 }
 
 /* ==========================================================================
@@ -757,6 +702,8 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
     const char *gov_sec   = json_find_section(buf, "governor", &gov_end);
     const char *med_end   = NULL;
     const char *med_sec   = json_find_section(buf, "medical", &med_end);
+    const char *home_end  = NULL;
+    const char *home_sec  = json_find_section(buf, "homeostat", &home_end);
 
     if (!plant_sec || !env_sec || !tim_sec || !rec_sec || !dec_sec ||
         !ing_sec || !paths_sec || !act_sec || !tape_sec || !proto_sec) {
@@ -1171,6 +1118,84 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
             return -EINVAL;
         }
         out_m->medical_present = true;
+    }
+
+    /*
+     * HOMEOSTAT: OPTIONAL, schema-3, DEFAULT-OFF.
+     *
+     * An absent section leaves `homeostat_present == false` and the
+     * supervisor behaves bit-identically to a build without the module.
+     * A PRESENT section is parsed STRICTLY (unknown keys, duplicate keys
+     * and non-integer values are all rejected) and its numeric ranges are
+     * validated HERE, at load time, so an out-of-range safety parameter can
+     * never reach the runtime loop as a silently clamped default.
+     */
+    if (home_sec != NULL) {
+        if (out_m->schema_version != LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "HOMEOSTAT section is only supported in schema 3");
+            return -EINVAL;
+        }
+        static const char *const homeostat_keys[] = {
+            "enabled", "epoch_ticks", "reject_threshold_q8",
+            "latency_spread_threshold_ns", "clamp_threshold_q8",
+            "coherence_anomaly_threshold", "contraction_q8", "recovery_q8",
+            "floor_q8"
+        };
+        if (!json_object_has_only_uint_keys(home_sec, home_end, homeostat_keys,
+                                            sizeof(homeostat_keys) /
+                                                sizeof(homeostat_keys[0]))) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 homeostat section contains unknown, duplicate or non-integer keys");
+            return -EINVAL;
+        }
+        latch_manifest_homeostat_t *hs = &out_m->homeostat;
+        bool home_ok =
+            json_get_uint(home_sec, home_end, "enabled", &hs->enabled) &&
+            json_get_uint(home_sec, home_end, "epoch_ticks", &hs->epoch_ticks) &&
+            json_get_uint(home_sec, home_end, "reject_threshold_q8", &hs->reject_threshold_q8) &&
+            json_get_uint(home_sec, home_end, "latency_spread_threshold_ns", &hs->latency_spread_threshold_ns) &&
+            json_get_uint(home_sec, home_end, "clamp_threshold_q8", &hs->clamp_threshold_q8) &&
+            json_get_uint(home_sec, home_end, "coherence_anomaly_threshold", &hs->coherence_anomaly_threshold) &&
+            json_get_uint(home_sec, home_end, "contraction_q8", &hs->contraction_q8) &&
+            json_get_uint(home_sec, home_end, "recovery_q8", &hs->recovery_q8) &&
+            json_get_uint(home_sec, home_end, "floor_q8", &hs->floor_q8);
+        if (!home_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 homeostat numeric values are missing or invalid");
+            return -EINVAL;
+        }
+        /* Fail-closed range validation. Every one of these is a SAFETY
+         * parameter, so an out-of-range value is a manifest rejection, not a
+         * runtime clamp:
+         *   enabled             0 or 1 only
+         *   epoch_ticks         >= 1 (a zero-length epoch never closes)
+         *   floor_q8            1..256 (Q8; 0 would collapse the envelope to
+         *                      zero velocity, 256 is unity)
+         *   contraction_q8      >= 1 (a zero step would never contract)
+         *   recovery_q8         >= 1 (a zero step would never recover)
+         *   *_threshold_q8      0..256 (0 disables that trigger)
+         */
+        bool home_range_ok =
+            hs->enabled <= 1u &&
+            hs->epoch_ticks >= 1u &&
+            hs->floor_q8 >= 1u && hs->floor_q8 <= 256u &&
+            hs->contraction_q8 >= 1u &&
+            hs->recovery_q8 >= 1u &&
+            hs->reject_threshold_q8 <= 256u &&
+            hs->clamp_threshold_q8 <= 256u;
+        if (!home_range_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Schema 3 homeostat values out of range "
+                                  "(enabled<=1, epoch_ticks>=1, 1<=floor_q8<=256, "
+                                  "contraction_q8>=1, recovery_q8>=1, thresholds<=256)");
+            return -EINVAL;
+        }
+        out_m->homeostat_present = true;
     }
 
     free(buf);

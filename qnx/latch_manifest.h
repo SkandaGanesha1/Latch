@@ -144,6 +144,30 @@ typedef struct latch_manifest_medical {
     uint32_t max_cumulative_dose_uL;
 } latch_manifest_medical_t;
 
+/*
+ * HOMEOSTAT (Ashby ultrastability) outer-loop configuration.
+ *
+ * This is an OPTIONAL, schema-3, DEFAULT-OFF section. An absent section
+ * means `homeostat_present == false`, `homeostat.enabled == 0`, and the
+ * supervisor behaves bit-identically to a build without the module. That
+ * property is asserted by the host-sim evidence signature gate.
+ *
+ * The loop is CONTRACTING ONLY: it may lower the effective velocity ceiling
+ * below the signed manifest limit, never raise it. `floor_q8` is the lowest
+ * scale the loop may reach (Q8, so 256 == 1.0).
+ */
+typedef struct latch_manifest_homeostat {
+    uint32_t enabled;
+    uint32_t epoch_ticks;
+    uint32_t reject_threshold_q8;
+    uint32_t latency_spread_threshold_ns;
+    uint32_t clamp_threshold_q8;
+    uint32_t coherence_anomaly_threshold;
+    uint32_t contraction_q8;
+    uint32_t recovery_q8;
+    uint32_t floor_q8;
+} latch_manifest_homeostat_t;
+
 typedef struct latch_manifest {
     uint32_t                  schema_version;
     char                      plant_name[64];
@@ -162,6 +186,8 @@ typedef struct latch_manifest {
     bool                      governor_present;
     latch_manifest_medical_t  medical;
     bool                      medical_present;
+    latch_manifest_homeostat_t homeostat;
+    bool                      homeostat_present;
     uint8_t                   sha256[32];
     char                      sha256_hex[65];
 } latch_manifest_t;
@@ -172,7 +198,9 @@ typedef enum latch_admissibility {
     LATCH_ADMIT_VIOLATED   = 2   /* Topological/kinematic invariant violated */
 } latch_admissibility_t;
 
-/* Initialize manifest with conservative defaults matching the reference plant */
+/* DEPRECATED: not called anywhere. Strict defaults come from schema-3
+ * manifest load; schema-1/2 have first-match-wins duplicate/unknown key
+ * behavior (known limitation). Re-add with caller+test if needed. */
 void latch_manifest_init_defaults(latch_manifest_t *m);
 
 /* Load and validate latch.manifest JSON from file. Returns 0 on success, <0 on failure. */

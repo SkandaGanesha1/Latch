@@ -307,6 +307,14 @@ int main(int argc, char *argv[]) {
     if (ab_rc != EOK) {
         int err = (ab_rc > 0) ? ab_rc : errno;
         fprintf(stderr, "latch-ingest: WARNING: procmgr_ability() failed (%s)\n", strerror(err));
+        /* DESIGN NOTE: privilege drop is best-effort for the ingest bridge.
+         * The bridge only FORWARDS validated frames to /dev/latch/proposal;
+         * it cannot write the actuator (no latch/actuator ability) and has
+         * no path to hardware. Failure to drop root/abilities does not
+         * compromise the safety argument — the supervisor (latchd) is the
+         * sole ability holder and the seqlock ring is the trust boundary.
+         * We WARN so the operator sees it; we continue so the bridge does
+         * not become a denial-of-service vector against the data path. */
     }
     if (manifest.paths.ability[0] != '\0') {
         int custom_aid = procmgr_ability_lookup(manifest.paths.ability);

@@ -22,13 +22,13 @@
 | **A-10**| Consistency Gate | Tick count drift across docs (105 vs canonical 121) | Asserted canonical 121 ticks and 0 keep-out breaches in `consistency_check.py` | **VERIFIED** |
 | **B-1** | Evidence Tape | `governor-tape.csv` only spanned A1..A3 (20 rows) | Regenerated canonical 121-row tape spanning full A1..A7 suite | **VERIFIED** |
 | **B-2** | Host Sim | Stale tick references in `governor-host-sim.txt` | Regenerated host sim log and verified all 7 scenarios pass cleanly | **VERIFIED** |
-| **B-3** | Latency Doc | Missing unified latency reference doc | Authored `docs/evidence/governor/LATENCY.md` (QNX 61 µs WCET vs Linux 143 ms CFS) | **VERIFIED** |
+| **B-3** | Latency Doc | Missing unified latency reference doc | Authored `docs/evidence/governor/LATENCY.md` — **SUPERSEDED: the doc's 61 µs WCET / 143 ms CFS numbers were later REJECTED and quarantined** (`quarantine/REJECTED-governor-LATENCY.md`); the file now holds a pointer. Honest replacement = update plan U11. | **SUPERSEDED** |
 | **B-4** | Benchmarks | Hardcoded `qnx_telemetry` dict in QNX vs Linux benchmark | Refactored `benchmark_qnx_vs_linux.py` to parse live tape and manifest budgets | **VERIFIED** |
 | **B-5** | Evidence Automation| Missing governor capture target in Makefile | Added `evidence-governor` Makefile target and `scenario_governor()` | **VERIFIED** |
 | **B-6** | Safety Logic | `min_bolus_interval_ticks` was parsed but unread in precheck | Enforced lockout interval and monotonic tick checks in `gov_gate_precheck.c` | **VERIFIED** |
 | **B-7** | Geometry | Keep-out bounds `[250, 650]` hardcoded in attack tools | De-hardcoded to query `manifest.envelope.keepout` dynamically | **VERIFIED** |
 | **B-10**| Event Ring | Overflow flag non-sticky | Verified atomic sticky latch in `latchd.c` (`atomic_store_explicit(&g_gov_event_overflow, 1u)`) | **VERIFIED** |
-| **C-1** | Baseline Pillar | Missing empirical Linux control baseline | Built `benchmark_linux_native.py` and generated `docs/evidence/baseline/` | **VERIFIED** |
+| **C-1** | Baseline Pillar | Missing empirical Linux control baseline | Built `benchmark_linux_native.py` and generated `docs/evidence/baseline/` — **SUPERSEDED: the archived baseline was later REJECTED (no reproducible source samples) and quarantined** (`quarantine/REJECTED-linux-baseline/`); the directory now holds a pointer. Honest re-capture = update plan U12. | **SUPERSEDED** |
 | **C-4** | Verification Harness| `latch_verify.c` had only 5 steps | Added `[6/6]` step querying `DCMD_LATCH_GET_GOV_STATUS` for schema-3 contracts | **VERIFIED** |
 | **C-5** | Security Policy | Missing formal secpol audit log | Authored `docs/evidence/derived/secpol-audit.txt` validating spatial isolation | **VERIFIED** |
 | **D-1** | Sanitizers | Missing ASan/UBSan build target | Added `check-asan` target to `qnx/Makefile` using clang `-fsanitize=address,undefined` | **VERIFIED** |

@@ -61,7 +61,7 @@ VERIFY_BIN    := $(OUT_DIR)/latch_verify
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt
+.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-manifest-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt
 
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN)
 
@@ -74,8 +74,8 @@ $(MANIFEST_OBJ): latch_manifest.c latch_manifest.h | dirs
 $(IPC_OBJ): latch_ipc.c latch_ipc.h latch_protocol.h | dirs
 	$(CC) $(CFLAGS) -c latch_ipc.c -o $@
 
-$(LATCHD_BIN): latchd.c latch_protocol.h latch_ipc.h governor_policy.c governor_policy.h gov_gate_precheck.c gov_gate_precheck.h $(MANIFEST_OBJ) $(IPC_OBJ) | dirs
-	$(CC) $(CFLAGS) latchd.c governor_policy.c gov_gate_precheck.c $(MANIFEST_OBJ) $(IPC_OBJ) -o $@ $(LDFLAGS)
+$(LATCHD_BIN): latchd.c latch_protocol.h latch_ipc.h governor_policy.c governor_policy.h gov_gate_precheck.c gov_gate_precheck.h gov_homeostat.c gov_homeostat.h $(MANIFEST_OBJ) $(IPC_OBJ) | dirs
+	$(CC) $(CFLAGS) latchd.c governor_policy.c gov_gate_precheck.c gov_homeostat.c $(MANIFEST_OBJ) $(IPC_OBJ) -o $@ $(LDFLAGS)
 
 $(INGEST_BIN): latch_ingest.c latch_protocol.h governor_wire.c governor_wire.h $(MANIFEST_OBJ) | dirs
 	$(CC) $(CFLAGS) latch_ingest.c governor_wire.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
@@ -119,10 +119,15 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory governor-wire-check
 	$(MAKE) --no-print-directory latch-ipc-check
 	$(MAKE) --no-print-directory governor-gate-check
+	$(MAKE) --no-print-directory governor-homeostat-check
+	$(MAKE) --no-print-directory latch-feedback-check
+	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/syringe_governor.manifest
+	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/homeostat_servo.manifest
 	python3 ../tools/governor_manifest_test.py ./$(BUILD_DIR)/host-sim/latchctl contracts/governor_servo.manifest
 	$(MAKE) --no-print-directory governor-e2e-check
+	$(MAKE) --no-print-directory homeostat-e2e-check
 	$(MAKE) --no-print-directory gov-replay-check
 
 check: host-sim
@@ -132,17 +137,52 @@ check: host-sim
 	python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv $(BUILD_DIR)/host-sim/suite_tape.csv
 	python3 ../tools/embed_default_tape.py --check
 
+# AddressSanitizer & UndefinedBehaviorSanitizer.
+#
+# `clang` is preferred (one driver, both sanitizers), and `gcc` is accepted as
+# a fallback -- but ONLY if it can actually LINK a sanitized binary. A
+# compiler can accept -fsanitize=address,undefined and still fail at the link
+# step because its libasan/libubsan runtime is not installed, which would
+# surface as a confusing "cannot find libasan.so.8.0.0" instead of an
+# actionable message. So the target PROBES by compiling AND linking a tiny
+# program, and reports exactly which compiler it used.
 check-asan:
 	@echo "=== Running AddressSanitizer & UndefinedBehaviorSanitizer Checks ==="
 	@mkdir -p $(BUILD_DIR)/asan
-	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM governor_policy.c governor_policy_test.c -o $(BUILD_DIR)/asan/governor_policy_test -lm
-	./$(BUILD_DIR)/asan/governor_policy_test
-	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM governor_wire.c governor_wire_test.c -o $(BUILD_DIR)/asan/governor_wire_test -lm
-	./$(BUILD_DIR)/asan/governor_wire_test
-	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM latch_ipc.c latch_ipc_test.c -o $(BUILD_DIR)/asan/latch_ipc_test -lm
-	./$(BUILD_DIR)/asan/latch_ipc_test
-	clang -fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM gov_gate_precheck.c governor_policy.c latch_manifest.c gov_gate_precheck_test.c -o $(BUILD_DIR)/asan/gov_gate_precheck_test -lpthread -lrt -lm
-	./$(BUILD_DIR)/asan/gov_gate_precheck_test
+	@printf 'int main(void){return 0;}\n' > $(BUILD_DIR)/asan/.probe.c
+	@ASAN_CC=""; \
+	for c in clang gcc; do \
+	  if command -v $$c >/dev/null 2>&1 && \
+	     $$c -fsanitize=address,undefined $(BUILD_DIR)/asan/.probe.c \
+	         -o $(BUILD_DIR)/asan/.probe.out >/dev/null 2>&1; then \
+	    ASAN_CC=$$c; break; \
+	  fi; \
+	done; \
+	rm -f $(BUILD_DIR)/asan/.probe.c $(BUILD_DIR)/asan/.probe.out; \
+	if [ -z "$$ASAN_CC" ]; then \
+	  echo "[ERROR] No C compiler on PATH can LINK a -fsanitize=address,undefined binary." >&2; \
+	  echo "        clang is preferred. gcc also works IF its libasan/libubsan runtimes" >&2; \
+	  echo "        are installed. Install clang, then re-run 'make -C qnx check-asan'." >&2; \
+	  exit 1; \
+	fi; \
+	echo "=== sanitizer compiler: $$ASAN_CC ==="; \
+	echo $$ASAN_CC > $(BUILD_DIR)/asan/.compiler
+	@ASAN_CC=$$(cat $(BUILD_DIR)/asan/.compiler); \
+	ASAN_FLAGS="-fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM"; \
+	$$ASAN_CC $$ASAN_FLAGS governor_policy.c governor_policy_test.c -o $(BUILD_DIR)/asan/governor_policy_test -lm && \
+	./$(BUILD_DIR)/asan/governor_policy_test && \
+	$$ASAN_CC $$ASAN_FLAGS governor_wire.c governor_wire_test.c -o $(BUILD_DIR)/asan/governor_wire_test -lm && \
+	./$(BUILD_DIR)/asan/governor_wire_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_ipc.c latch_ipc_test.c -o $(BUILD_DIR)/asan/latch_ipc_test -lm && \
+	./$(BUILD_DIR)/asan/latch_ipc_test && \
+	$$ASAN_CC $$ASAN_FLAGS gov_gate_precheck.c governor_policy.c latch_manifest.c gov_gate_precheck_test.c -o $(BUILD_DIR)/asan/gov_gate_precheck_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/gov_gate_precheck_test && \
+	$$ASAN_CC $$ASAN_FLAGS gov_homeostat.c gov_homeostat_test.c -o $(BUILD_DIR)/asan/gov_homeostat_test -lm && \
+	./$(BUILD_DIR)/asan/gov_homeostat_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_feedback.c latch_feedback_test.c -o $(BUILD_DIR)/asan/latch_feedback_test -lm && \
+	./$(BUILD_DIR)/asan/latch_feedback_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_manifest.c latch_manifest_test.c -o $(BUILD_DIR)/asan/latch_manifest_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_manifest_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -150,6 +190,11 @@ fuzz: host-sim
 
 governor-e2e-check: host-sim
 	python3 ../tools/governor_e2e.py ./$(BUILD_DIR)/host-sim/latchctl ./$(BUILD_DIR)/host-sim/latch-ingest ./$(BUILD_DIR)/host-sim/latchd contracts/governor_servo.manifest
+
+# The HOMEOSTAT runtime proof: drives the real supervisor over the real wire
+# protocol and reads the result from the committed evidence-tape format.
+homeostat-e2e-check: host-sim
+	python3 ../tools/homeostat_e2e.py ./$(BUILD_DIR)/host-sim/latchctl ./$(BUILD_DIR)/host-sim/latch-ingest ./$(BUILD_DIR)/host-sim/latchd contracts/governor_servo.manifest
 
 gov-replay-check:
 	python3 ../tools/gov_replay.py --test
@@ -181,6 +226,33 @@ $(BUILD_DIR)/host-sim/gov_gate_precheck_test: gov_gate_precheck.c gov_gate_prech
 
 governor-gate-check: $(BUILD_DIR)/host-sim/gov_gate_precheck_test
 	./$(BUILD_DIR)/host-sim/gov_gate_precheck_test
+
+# The HOMEOSTAT ultrastability loop. It is a CONTRACTING-ONLY advisor: the
+# unit test proves the contraction, recovery, Q8 saturation and overflow-safe
+# motion accounting, and that a disabled loop never touches its state.
+$(BUILD_DIR)/host-sim/gov_homeostat_test: gov_homeostat.c gov_homeostat.h gov_homeostat_test.c | dirs
+	$(CC) $(CFLAGS) gov_homeostat.c gov_homeostat_test.c -o $@ $(LDFLAGS)
+
+governor-homeostat-check: $(BUILD_DIR)/host-sim/gov_homeostat_test
+	./$(BUILD_DIR)/host-sim/gov_homeostat_test
+
+# The supervisor feedback frame codec (24-byte LFBK). Round-trip, sequence
+# correlation and CRC rejection.
+$(BUILD_DIR)/host-sim/latch_feedback_test: latch_feedback.c latch_feedback.h latch_feedback_test.c latch_protocol.h | dirs
+	$(CC) $(CFLAGS) latch_feedback.c latch_feedback_test.c -o $@ $(LDFLAGS)
+
+latch-feedback-check: $(BUILD_DIR)/host-sim/latch_feedback_test
+	./$(BUILD_DIR)/host-sim/latch_feedback_test
+
+# The manifest parser is the SAFETY FRONT DOOR: every plant limit, timing
+# budget and calibration constant enters the supervisor through it. This test
+# asserts that a well-formed document loads AND that every malformed one is
+# REJECTED (fail closed) -- never silently defaulted, never clamped.
+$(BUILD_DIR)/host-sim/latch_manifest_test: latch_manifest.c latch_manifest.h latch_manifest_test.c | dirs
+	$(CC) $(CFLAGS) latch_manifest.c latch_manifest_test.c -o $@ $(LDFLAGS)
+
+latch-manifest-check: $(BUILD_DIR)/host-sim/latch_manifest_test
+	./$(BUILD_DIR)/host-sim/latch_manifest_test
 
 # Regenerate the committed evidence tape and re-sync the offline viewer's
 # embedded copy. Run this deliberately: it changes two tracked files.
@@ -294,6 +366,13 @@ evidence-host-sim: host-sim
 # A fresh on-target capture: boots QEMU AArch64 `virt` and drives it (~5 min).
 evidence-on-target:
 	python3 $(EVIDENCE_TOOL) on-target
+
+# Re-derive `derived/on-target-metrics.txt` from the ARCHIVED session's tape
+# dump. The tape-window metrics are a pure function of the captured rows, so
+# this needs no QEMU, no licence and no guest image. It exists so a change to
+# the derived analysis goes through the GENERATOR rather than a hand-edit.
+evidence-rederive-on-target:
+	python3 $(EVIDENCE_TOOL) rederive-on-target
 
 # The build evidence: the full mkifs listing and the initramfs forensics.
 evidence-build:

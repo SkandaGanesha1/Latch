@@ -143,6 +143,68 @@ int main(void) {
         failures++;
     }
 
+    /*
+     * HOMEOSTAT velocity ceiling (CONTRACTING ONLY).
+     *
+     * homeostat_v_max == 0 means "not applied" and must reproduce the
+     * pre-HOMEOSTAT result EXACTLY. A positive ceiling can only LOWER the
+     * limit. The ceiling composes with the agent confidence scale: a
+     * ceiling of 8 with confidence 255/256 gives 8 * 255 / 256 = 7.
+     *
+     * Note the candidate is bounded by the ACCELERATION limit as well: with
+     * v_max 25 / a_max 10 and confidence 255/256 the effective limits are
+     * 24 and 9, so the step (and therefore the candidate) saturates at 9.
+     */
+    gov_gate_init(&config, &state);
+    input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 100, 255u);
+    result = gov_gate_precheck(&manifest, &config, &state, &input);
+    if (!result.command_valid || result.effective_v_max != 24 ||
+        result.effective_a_max != 9 || result.candidate != 9) {
+        fprintf(stderr, "FAIL: the unadapted ceiling changed (expected v_max 24, a_max 9)\n");
+        failures++;
+    }
+
+    gov_gate_init(&config, &state);
+    input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 100, 255u);
+    input.homeostat_v_max = 8;
+    result = gov_gate_precheck(&manifest, &config, &state, &input);
+    if (!result.command_valid || result.effective_v_max != 7 ||
+        result.candidate != 7) {
+        fprintf(stderr, "FAIL: the HOMEOSTAT ceiling did not constrain the candidate\n");
+        failures++;
+    }
+
+    /* A ceiling ABOVE the manifest limit must NOT raise it. */
+    gov_gate_init(&config, &state);
+    input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD_V2, 0, 100, 255u);
+    input.homeostat_v_max = 1000;
+    result = gov_gate_precheck(&manifest, &config, &state, &input);
+    if (!result.command_valid || result.effective_v_max != 24) {
+        fprintf(stderr, "FAIL: the HOMEOSTAT ceiling was allowed to RAISE the limit\n");
+        failures++;
+    }
+
+    /* The contracting ceiling also bounds the HP rate check: a step that the
+     * manifest limit would accept is a RATE fault once HOMEOSTAT has
+     * contracted the ceiling below it. The gate reports the fault; the
+     * caller decides whether to fail the frame closed. */
+    gov_gate_init(&config, &state);
+    input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD, 0, 20, 0u);
+    input.homeostat_v_max = 5;
+    result = gov_gate_precheck(&manifest, &config, &state, &input);
+    if ((result.faults & LATCH_FAULT_RATE) == 0u) {
+        fprintf(stderr, "FAIL: the contracted ceiling did not bound the HP rate check\n");
+        failures++;
+    }
+    /* And the SAME step is NOT a rate fault without the contracted ceiling. */
+    gov_gate_init(&config, &state);
+    input = command_input(GOVERNOR_RUNG_HP, GOVERNOR_WIRE_CMD, 0, 20, 0u);
+    result = gov_gate_precheck(&manifest, &config, &state, &input);
+    if ((result.faults & LATCH_FAULT_RATE) != 0u) {
+        fprintf(stderr, "FAIL: the unadapted ceiling raised a spurious rate fault\n");
+        failures++;
+    }
+
     gov_gate_init(&config, &state);
     input = command_input(GOVERNOR_RUNG_CLAMP, GOVERNOR_WIRE_HEARTBEAT, 0, 100, 0u);
     result = gov_gate_precheck(&manifest, &config, &state, &input);

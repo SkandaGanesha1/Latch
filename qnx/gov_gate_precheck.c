@@ -26,6 +26,19 @@ static uint32_t sat_add_u32(uint32_t a, uint32_t b) {
 
 static uint32_t q8_scale(uint32_t value, uint32_t q8) {
     uint64_t scaled = ((uint64_t)value * q8) / 256u;
+    /* Implicit 1-unit floor: if the scaled value would underflow to 0
+     * but the original value was non-zero, return 1. This prevents
+     * a confidence-SHRINK from collapsing the envelope to zero velocity,
+     * which would be indistinguishable from a bug. The floor is the
+     * smallest non-zero step the kinematic model can represent.
+     *
+     * The floor is a KINEMATIC-MODEL property, not a safety parameter, so
+     * it is a constant rather than a manifest field: there is no such key
+     * in any schema, and a comment naming one would be a phantom key --
+     * the exact "narrative ahead of evidence" failure this project exists
+     * to avoid. A plant that needs a larger minimum step declares it in
+     * its own envelope `v_max`, and the floor never raises that value
+     * above it. */
     if (scaled == 0u && value != 0u) return 1u;
     return scaled > INT32_MAX ? INT32_MAX : (uint32_t)scaled;
 }
@@ -162,6 +175,21 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         return result;
     }
 
+    /*
+     * HOMEOSTAT velocity ceiling (CONTRACTING ONLY).
+     *
+     * `base_v_max` is the signed manifest limit, possibly lowered by the
+     * HOMEOSTAT outer loop. A homeostat_v_max of 0 means "not applied", which
+     * leaves base_v_max equal to the manifest value and reproduces the
+     * pre-HOMEOSTAT behaviour bit-for-bit. A positive homeostat_v_max can
+     * only lower the ceiling -- there is no code path here that raises it.
+     */
+    int32_t base_v_max = manifest->envelope.v_max;
+    if (input->homeostat_v_max > 0 && input->homeostat_v_max < base_v_max) {
+        base_v_max = input->homeostat_v_max;
+    }
+    result.effective_v_max = base_v_max;
+
     if (input->kind == GOVERNOR_WIRE_HEARTBEAT) {
         result.message_only = 1u;
         result.command_valid = 1u;
@@ -210,7 +238,7 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
         if (state->shrink_active != 0u && state->shrink_scale_q8 < scale_q8) {
             scale_q8 = state->shrink_scale_q8;
         }
-        uint32_t v_eff = q8_scale((uint32_t)manifest->envelope.v_max, scale_q8);
+        uint32_t v_eff = q8_scale((uint32_t)base_v_max, scale_q8);
         uint32_t a_eff = q8_scale((uint32_t)manifest->envelope.a_max, scale_q8);
         if (state->shrink_active != 0u && state->shrink_v < v_eff) v_eff = state->shrink_v;
         result.effective_v_max = (int32_t)v_eff;
@@ -245,7 +273,7 @@ gov_gate_result_t gov_gate_precheck(const latch_manifest_t *manifest,
                                              (int64_t)step_limit));
     } else if (input->rung == GOVERNOR_RUNG_HP || input->rung == GOVERNOR_RUNG_ADVISE) {
         int64_t delta = (int64_t)candidate - input->theta;
-        if ((uint64_t)abs64(delta) > (uint64_t)manifest->envelope.v_max) {
+        if ((uint64_t)abs64(delta) > (uint64_t)base_v_max) {
             result.faults |= (LATCH_FAULT_DOSE | LATCH_FAULT_RATE);
         }
     }

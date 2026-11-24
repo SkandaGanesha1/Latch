@@ -7,6 +7,41 @@ Suite window : ticks 45851..45851 (1 ticks of actual frame traffic)
 Post-suite   : 127 ticks of the guest's DESIGNED silence (phase 9)
 Keep-out     : [250, 650] mrad
 
+Scope          : TAPE-WINDOW ANALYSIS -- every number below is computed
+                ONLY from the 128 captured tape rows listed above
+                (ticks 45851..45978). These are NOT the supervisor's
+                whole-session counters. The whole-session counters
+                (Proposals Received / Wire Faults / Envelope Vetoes /
+                Ring Drops / WCET Overruns / EPERM Rejects) come from
+                `latchctl status` over the ENTIRE session and are
+                recorded in that session's `-console.txt` and
+                `-verify.txt` artifacts. Do NOT compare a number from
+                this file with a whole-session counter: the scopes
+                differ. A number here is a statement about this window.
+                For the whole-session numbers, read
+                `derived/on-target-numbers.txt` (and the session's
+                `-console.txt` / `-verify.txt` artifacts), not this file.
+                This window is the LAST 128 rows of the session tape, captured by
+                the `latchctl tape-dump` call in the session script. The session
+                itself ran for many more ticks before the dump was taken, which
+                is why the whole-session `Proposals Received` counter is larger
+                than anything visible here.
+
+Provenance    :
+                DERIVED FILE -- THIS IS ANALYSIS, NOT A CAPTURE.
+                Derived from  : on-target/20261113-001157-tape-dump.txt
+                Input SHA-256 : 29d97bb2c0af176a6047cc8c8b48a0fd458a53cb5038e9b25f06c9724145997d
+                The input is a slice of the raw QEMU serial console of
+                ONE continuous QNX boot -- that raw capture is the
+                evidence. This file is a deterministic ANALYSIS of it:
+                the same input always yields the same output bytes.
+                `make -C qnx evidence-rederive-on-target` reproduces this
+                file from the archived raw dump, and
+                `tools/consistency_check.py` DIFFs a fresh derivation
+                against the archived one on every run, so a divergence
+                fails the gate. Re-deriving needs no QEMU, no licence and
+                no guest image; only the ORIGINAL capture needed those.
+
 Fault-bit histogram -- INSIDE the suite window (the faults the guest actually triggered)
   (none)
 

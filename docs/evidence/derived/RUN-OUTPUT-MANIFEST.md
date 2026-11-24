@@ -22,8 +22,24 @@ guest needs ~150 s to warm up).
 | 4 | `on-target/<ts>-verify.txt` | `latch_verify`: the five steps `[1/5]`…`[5c/5]` each with its PASS/FAIL line, the telemetry block, and `VERIFY_RC=0` |
 | 5 | `on-target/<ts>-guest-console.txt` | The guest kernel console from `/dev/shmem/guest_console.log`: the Linux 6.12 boot, `psci: PSCIv1.1 detected in firmware`, `Run /init as init process`, the guest's policy phases |
 | 6 | `on-target/<ts>-tape-dump.txt` | The evidence tape as the supervisor's own `latchctl dump` printed it |
-| 7 | `derived/on-target-metrics.txt` | **Distilled**: the fault-bit histogram inside and outside the traffic window, the mode-transition timeline, the HA-HOME retraction path and its monotonicity, the keep-out-breach count, the starvation-stall list, the latency maximum |
+| 7 | `derived/on-target-metrics.txt` | **Distilled**: the fault-bit histogram inside and outside the traffic window, the mode-transition timeline, the HA-HOME retraction path and its monotonicity, the keep-out-breach count, the starvation-stall list, the latency maximum. **A DERIVED file, not a capture**: it carries a `Provenance` block naming the raw dump it was computed from and that dump's SHA-256, and a `Scope` block separating its tape-window numbers from the whole-session counters. `tools/consistency_check.py` re-derives it from the archived raw dump and DIFFs the result, so a hand-edit fails the gate. |
 | 8 | `derived/on-target-numbers.txt` | The quotable-numbers table: every number the submission may cite, with the file it was read from |
+
+**Re-deriving row 7 without a QEMU boot.** `derived/on-target-metrics.txt`
+is a deterministic ANALYSIS of row 6, not a capture of its own, so it can
+be re-derived from the archived raw dump without QEMU, without a licence
+and without a guest image:
+
+```bash
+make -C qnx evidence-rederive-on-target
+```
+
+This changes no evidence: it re-reads the already-archived raw QEMU console
+slice and recomputes the summary from it. `tools/consistency_check.py` runs
+the same derivation into a temporary directory and DIFFs the result against
+the committed file on every invocation, so the archived derived file cannot
+drift from its raw source without failing the gate. The derived file itself
+carries the SHA-256 of the raw dump it was computed from.
 
 ---
 

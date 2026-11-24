@@ -1,54 +1,17 @@
-================================================================================
- QNX SDP 8.0 vs STOCK LINUX REAL-TIME DETERMINISM EVALUATION (G4)              
- Workload: 1 kHz Periodic Physical AI Safety Interlock Loop (1,000 us Budget)   
-================================================================================
+REJECTED — THIS FILE WAS WITHDRAWN FROM THE ARCHIVE
 
-EXECUTIVE SUMMARY:
-  In safety-critical robotics and medical devices, a safety gate must evaluate
-  candidate AI proposals with bounded Worst-Case Execution Time (WCET). If a
-  decision loop suffers scheduler jitter exceeding 1 ms, actuator deadlines are
-  missed, leading to mechanical instability or hazardous dosing overruns.
+The benchmark that used to live here ("QNX WCET 61.08 us vs Linux GPOS
+jitter, 0 deadline misses / 23,500 ticks") is REJECTED: its generator
+inserted fixed latency values, so the numbers were not measurements.
 
-LATENCY & JITTER METRICS SUMMARY (microseconds):
-+-----------------------------------+---------+---------+---------+---------+-----------+
-| Platform / Configuration          | Median  | p95     | p99     | Max WCET| Deadlines |
-+-----------------------------------+---------+---------+---------+---------+-----------+
-| QNX SDP 8.0 (SCHED_FIFO 63, Cores)|    1.00 |    2.87 |    3.83 |   61.08 | 0 / 23500 |
-| Linux 6.x CFS (Idle Workstation)  |   24.96 |   27.05 |   37.93 |   49.04 | 0 / 1000  |
-| Linux 6.x CFS (CPU Stress Contend)|   16.22 |   23.76 |   35.05 |   66.44 | High Jitt |
-+-----------------------------------+---------+---------+---------+---------+-----------+
+The withdrawn copy is retained for audit only at:
 
-DISTRIBUTION HISTOGRAMS:
+    docs/evidence/quarantine/REJECTED-governor-latency-benchmark.txt
 
-1. Linux CFS (Under Contention) — Computation Latency Distribution:
-  [   12.7 us -    19.4 us] ( 724) | ########################################
-  [   19.4 us -    26.1 us] ( 235) | ############
-  [   26.1 us -    32.9 us] (  30) | #
-  [   32.9 us -    39.6 us] (   7) | 
-  [   39.6 us -    46.3 us] (   1) | 
-  [   46.3 us -    53.0 us] (   0) | 
-  [   53.0 us -    59.7 us] (   1) | 
-  [   59.7 us -    66.4 us] (   2) | 
+Do not quote any figure from it. The accepted, honest latency statement
+today is the GOVERNOR on-target observation:
 
-2. QNX SDP 8.0 Determinism Profile (Hardware & Microkernel Isolation):
-  [    1.6 us -     3.0 us] (22980) | ########################################
-  [    3.0 us -     5.0 us] (  480) | #
-  [    5.0 us -    10.0 us] (   35) | 
-  [   10.0 us -    61.1 us] (    5) |  (Worst-case observed across 23,500 ticks)
+    run max 80,911 cyc (1,294,576 ns ~ 1.29 ms) -- a QEMU TCG
+    observation, NOT a WCET.  Source: governor/governor-qemu-verify.txt
 
-TECHNICAL ARCHITECTURE ANALYSIS:
-1. QNX Microkernel Isolation:
-   - ThreadCtl(_NTO_TCTL_RUNMASK, 0x1) pins latchd strictly to Core 0.
-   - SCHED_FIFO priority 63 preempts all user processes (ksh, slogger2, ingest).
-   - QNX Hypervisor 8.0 confines untrusted Linux guest vCPUs to Core 2 and Core 3
-     at priority 8, eliminating cache pollution and context-switch interference.
-
-2. Linux GPOS Limitations:
-   - CFS completely fair scheduler lacks hard real-time admission guarantees.
-   - Interrupt handling and background worker threads introduce tail latency spikes.
-   - Running deep learning / agent loops on the same OS without hypervisor boundaries
-     inevitably leads to multi-millisecond deadline misses.
-
-VERDICT: QNX SDP 8.0 delivers 100% deterministic bounded execution (WCET < 100 us),
-confirming zero deadline misses across continuous high-rate operation.
-================================================================================
+See docs/evidence/quarantine/README.txt for the rejection record.

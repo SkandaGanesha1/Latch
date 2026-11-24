@@ -12,7 +12,7 @@
 
 | Package / Component | Version / Commit | Supplier / Origin | License | Criticality | Dependencies | Integrity Digest (SHA-256) |
 |:---|:---:|:---|:---|:---:|:---:|:---|
-| **`latchd`** | 1.0.0 | LATCH Project | MIT | ASIL D / SIL 3 | POSIX C11, `librt`, `libpthread` | Compiled from source (`latchd.c`) |
+| **`latchd`** | 1.0.0 | LATCH Project | MIT | **Architectural alignment with ISO 26262 / IEC 62304 concepts; not certified** | POSIX C11, `librt`, `libpthread` | Compiled from source (`latchd.c`) |
 | **`latch_ingest`** | 1.0.0 | LATCH Project | MIT | Mixed-Criticality | POSIX C11 | Compiled from source (`latch_ingest.c`) |
 | **`latchctl`** | 1.0.0 | LATCH Project | MIT | Diagnostic | POSIX C11 | Compiled from source (`latchctl.c`) |
 | **`latchlog`** | 1.0.0 | LATCH Project | MIT | Diagnostic | POSIX C11 | Compiled from source (`latchlog.c`) |

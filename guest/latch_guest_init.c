@@ -55,10 +55,9 @@
  *   9. REAL SILENCE          (the silence phase) -> NO BYTES AT ALL.
  *
  * Step 9 is the important one. A previous revision sent LATCH_WIRE_FLAG_SILENCE
- * frames for the "silence" phase. The host does NOT treat that flag as
- * silence -- guest flags are ignored for safety -- so those frames were
- * counted as sequence REPLAYS, and the watchdog never actually fired. This
- * revision simply STOPS WRITING, so the host sees a genuine gap on the
+ * frames for the "silence" phase. The host DOES honor LATCH_WIRE_FLAG_SILENCE
+ * as an idle tick (latchd.c:831-833) -- but that counts as a frame, not a gap.
+ * This revision simply STOPS WRITING, so the host sees a genuine gap on the
  * channel, trips LATCH_FAULT_WATCHDOG (0x0100) after watchdog_ticks, latches
  * HA-HOLD, and retracts to HA-HOME after hold_to_home_ticks.
  *
@@ -648,9 +647,9 @@ void _start(void) {
      * NO BYTES ARE WRITTEN. The host sees a genuine gap on the channel,
      * trips LATCH_FAULT_WATCHDOG after watchdog_ticks, latches HA-HOLD and
      * retracts to HA-HOME after hold_to_home_ticks. A previous revision
-     * sent LATCH_WIRE_FLAG_SILENCE frames here; the host ignores guest
-     * flags for safety, so those were counted as replays and the watchdog
-     * never fired. */
+     * sent LATCH_WIRE_FLAG_SILENCE frames here; the host honors that flag as
+     * an idle tick (latchd.c:831-833), so those were counted as replays and
+     * the watchdog never fired. This revision STOPS WRITING for a REAL gap. */
     phase_marker("[guest] phase 9/9: REAL SILENCE -- sending NO bytes -> host WATCHDOG -> HA-HOME\n");
     /* This long pause is the point of the demo: the host must see a REAL gap.
      * 400 ms comfortably covers watchdog_ticks (2) + hold_to_home_ticks (50)

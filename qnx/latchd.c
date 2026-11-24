@@ -57,6 +57,7 @@
 #include "latch_ipc.h"
 #include "governor_policy.h"
 #include "gov_gate_precheck.h"
+#include "gov_homeostat.h"
 
 /* ==========================================================================
  * 1. PCA9685 Register Map & Pulse Codes
@@ -124,6 +125,7 @@ typedef struct latch_simplex_state {
 
     governor_ladder_state_t gov_ladder;
     gov_gate_state_t gov_gate;
+    gov_homeostat_state_t homeostat;
     uint32_t       gov_lease_remaining;
     uint64_t       gov_last_lease_tick;
     uint32_t       gov_last_coherence;
@@ -224,6 +226,7 @@ static void latch_governor_init_state(latch_simplex_state_t *state) {
     if (state == NULL) return;
     governor_ladder_init(&state->gov_ladder);
     gov_gate_init(&g_manifest.governor, &state->gov_gate);
+    gov_homeostat_init(&state->homeostat);
     state->gov_lease_remaining = 0u;
     state->gov_last_lease_tick = 0u;
     state->gov_last_coherence = 0u;
@@ -231,6 +234,69 @@ static void latch_governor_init_state(latch_simplex_state_t *state) {
     state->gov_agent_state = 0u;
     state->gov_v2_session = false;
     state->gov_coherence_valid = false;
+}
+
+/* ==========================================================================
+ * HOMEOSTAT outer loop (Ashby ultrastability) -- CONTRACTING ONLY
+ * ==========================================================================
+ *
+ * HOMEOSTAT is an OPTIONAL, DEFAULT-OFF advisor. It is enabled only by an
+ * explicit schema-3 `homeostat` section in the signed manifest. When the
+ * section is absent, or present with `enabled: 0`, every function below is
+ * inert and the supervisor behaves bit-identically to a build without the
+ * module -- which is exactly what the frozen host-sim evidence signature
+ * asserts.
+ *
+ * The loop tracks four Essential Variables over a fixed-length epoch:
+ *   - rejection ratio      (rejected proposals / proposals seen)
+ *   - clamp fraction       (requested motion NOT applied / requested motion)
+ *   - latency spread       (max decision latency - min, within the epoch)
+ *   - coherence anomalies  (frames whose coherence counter did not advance)
+ *
+ * If ANY threshold is crossed, the velocity scale contracts by
+ * `contraction_q8` (Q8). If the epoch is clean, the scale recovers by
+ * `recovery_q8` up to Q8 unity. The scale is bounded below by `floor_q8`, so
+ * the loop can never collapse the envelope to zero velocity.
+ *
+ * The scale is applied as an ADDITIONAL velocity ceiling on top of the signed
+ * manifest limit. It is strictly contracting: the effective ceiling is
+ * min(manifest v_max, manifest v_max * scale_q8 / 256).
+ */
+
+static gov_homeostat_config_t latch_homeostat_config(void) {
+    gov_homeostat_config_t config;
+    memset(&config, 0, sizeof(config));
+    if (!g_manifest.homeostat_present) return config;
+    config.enabled                   = g_manifest.homeostat.enabled;
+    config.epoch_ticks               = g_manifest.homeostat.epoch_ticks;
+    config.reject_threshold_q8       = g_manifest.homeostat.reject_threshold_q8;
+    config.latency_spread_threshold_ns = g_manifest.homeostat.latency_spread_threshold_ns;
+    config.clamp_threshold_q8        = g_manifest.homeostat.clamp_threshold_q8;
+    config.coherence_anomaly_threshold = g_manifest.homeostat.coherence_anomaly_threshold;
+    config.contraction_q8            = g_manifest.homeostat.contraction_q8;
+    config.recovery_q8               = g_manifest.homeostat.recovery_q8;
+    config.floor_q8                  = g_manifest.homeostat.floor_q8;
+    return config;
+}
+
+/*
+ * The HOMEOSTAT velocity ceiling for the CURRENT tick, or 0 when HOMEOSTAT is
+ * not applied. 0 means "not applied" to the gate, which reproduces the
+ * pre-HOMEOSTAT behaviour exactly.
+ */
+static int32_t latch_homeostat_vmax(const latch_simplex_state_t *st) {
+    if (st == NULL || !g_manifest.homeostat_present ||
+        g_manifest.homeostat.enabled == 0u) {
+        return 0;
+    }
+    if (g_manifest.envelope.v_max <= 0) return 0;
+    uint32_t vmax = (uint32_t)g_manifest.envelope.v_max;
+    uint32_t scaled = gov_homeostat_effective_vmax(vmax, st->homeostat.scale_q8, 256u);
+    /* Same 1-unit floor as gov_gate_precheck's q8_scale(): a scale that
+     * would underflow to zero velocity is indistinguishable from a bug, so
+     * the smallest non-zero step the kinematic model can represent is used. */
+    if (scaled == 0u) scaled = 1u;
+    return (int32_t)scaled;
 }
 
 static void latch_governor_new_session(latch_simplex_state_t *state) {
@@ -873,6 +939,16 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
      * the recovery ladder's frame accounting. */
     const bool frame_present = has_new;
 
+    /*
+     * HOMEOSTAT velocity ceiling for this tick.
+     *
+     * 0 means "not applied" (section absent or disabled) and leaves the
+     * pre-HOMEOSTAT behaviour bit-identical. The value is CONSTANT for the
+     * whole tick: the loop's epoch closes at the end of the tick, so a scale
+     * change takes effect on the NEXT tick, never mid-decision.
+     */
+    const int32_t homeostat_v_max = latch_homeostat_vmax(st);
+
     if (has_new) {
         bool gov_v2 = gov_enabled && prop.wire_version == 2u;
         bool gov_heartbeat = gov_v2 && prop.kind == GOVERNOR_WIRE_HEARTBEAT;
@@ -995,7 +1071,8 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                 .velocity = st->velocity_mrad_tick,
                 .acceleration = st->accel_mrad_tick2,
                 .candidate = prop.u_mrad,
-                .tick = st->tick
+                .tick = st->tick,
+                .homeostat_v_max = homeostat_v_max
             };
             gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
                                                        &g_manifest.governor,
@@ -1024,7 +1101,8 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                     .velocity = st->velocity_mrad_tick,
                     .acceleration = st->accel_mrad_tick2,
                     .candidate = u_candidate,
-                    .tick = st->tick
+                    .tick = st->tick,
+                    .homeostat_v_max = homeostat_v_max
                 };
                 gov_gate_result_t gate = gov_gate_precheck(&g_manifest,
                                                            &g_manifest.governor,
@@ -1287,6 +1365,50 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     uint64_t latency    = cycles_out - cycles_in;
     uint32_t lat_ns     = latch_cycles_to_ns(latency);
 
+    /*
+     * HOMEOSTAT: close the current epoch with THIS tick's outcome.
+     *
+     * The scale this produces is applied to the NEXT tick (the ceiling for
+     * this tick was captured before the frame was evaluated), so a scale
+     * change can never alter a decision that is already in flight.
+     *
+     * The four Essential Variables are measured here, in 64-bit signed
+     * arithmetic, so a frame at the edge of the int32 range cannot overflow
+     * the motion accounting.
+     */
+    if (g_manifest.homeostat_present && g_manifest.homeostat.enabled != 0u) {
+        /* Only a MOTION proposal counts towards the rejection ratio and the
+         * clamp fraction. A heartbeat or a shrink request carries no motion,
+         * so counting it as a "rejected proposal" would manufacture stress
+         * out of the supervisor's own liveness traffic. The decision LATENCY
+         * and the COHERENCE anomaly count are measured on every tick/frame,
+         * because they are properties of the pipeline rather than of the
+         * proposal. */
+        const bool is_motion_proposal = frame_present &&
+            (prop.kind == GOVERNOR_WIRE_CMD || prop.kind == GOVERNOR_WIRE_CMD_V2);
+        int64_t proposed_delta = is_motion_proposal
+                                     ? (int64_t)prop.u_mrad - (int64_t)st->theta_mrad
+                                     : 0;
+        int64_t applied_delta = (int64_t)next_theta - (int64_t)st->theta_mrad;
+        uint64_t proposed_abs = proposed_delta < 0 ? (uint64_t)(-proposed_delta)
+                                                   : (uint64_t)proposed_delta;
+        uint64_t applied_abs = applied_delta < 0 ? (uint64_t)(-applied_delta)
+                                                 : (uint64_t)applied_delta;
+        gov_homeostat_sample_t hs_sample = {
+            .proposal_present = is_motion_proposal ? 1u : 0u,
+            .proposal_accepted = gov_frame_accepted ? 1u : 0u,
+            .coherence_anomaly = (frame_present && gov_enabled &&
+                                  prop.wire_version == 2u && !gov_frame_coherent) ? 1u : 0u,
+            .latency_ns = lat_ns,
+            .proposed_motion = proposed_abs > (uint64_t)UINT32_MAX
+                                   ? UINT32_MAX : (uint32_t)proposed_abs,
+            .applied_motion = applied_abs > (uint64_t)UINT32_MAX
+                                  ? UINT32_MAX : (uint32_t)applied_abs
+        };
+        gov_homeostat_config_t hs_config = latch_homeostat_config();
+        (void)gov_homeostat_observe(&hs_config, &st->homeostat, &hs_sample);
+    }
+
     st->accel_mrad_tick2    = next_vel - st->velocity_mrad_tick;
     st->theta_mrad          = next_theta;
     st->velocity_mrad_tick  = next_vel;
@@ -1478,7 +1600,7 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         atomic_thread_fence(memory_order_acquire);
         if (!latch_fill_status(&out->latch)) return false;
 
-        out->extension_version = 3u;
+        out->extension_version = 4u;
         out->enabled = g_manifest.governor.enabled;
         out->rung = (uint32_t)g_simplex.gov_ladder.rung;
         out->v2_session = g_simplex.gov_v2_session ? 1u : 0u;
@@ -1497,6 +1619,11 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         out->coherence_valid = g_simplex.gov_coherence_valid ? 1u : 0u;
         out->clean_command_streak = g_simplex.gov_ladder.clean_frame_streak;
         out->deadline_misses = g_simplex.gov_deadline_misses;
+        out->homeostat_enabled = (g_manifest.homeostat_present &&
+                                  g_manifest.homeostat.enabled != 0u) ? 1u : 0u;
+        out->homeostat_scale_q8 = g_simplex.homeostat.scale_q8;
+        out->homeostat_v_max = (uint32_t)latch_homeostat_vmax(&g_simplex);
+        out->homeostat_stress_epochs = g_simplex.homeostat.stress_epochs;
 
         atomic_thread_fence(memory_order_acquire);
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
@@ -2188,6 +2315,13 @@ int main(int argc, char *argv[]) {
  * 11. Host Simulation & Pipe-Driven Verification Mode (LATCH_HOST_SIM)
  * ========================================================================== */
 
+/* The tick at which the host-sim EPERM probe fires:
+ * latch_sim_devctl_actuator(DCMD_LATCH_FORCE_HOLD) from a caller WITHOUT
+ * the latch/actuator ability. This verifies the ability gate is enforced
+ * even in the test harness. The value 109 places it after the 100-tick
+ * suite window but well before the 200-tick test ends. */
+#define LATCH_SIM_EPERM_PROBE_TICK 109u
+
 static const char *latch_mode_str(uint16_t mode) {
     switch (mode) {
         case LATCH_MODE_HP:   return "HP";
@@ -2426,8 +2560,8 @@ static int latch_run_pipe_simulation(const char *csv_path, const char *events_js
             fprintf(stderr, "latchd: invalid or truncated IPC proposal on pipe\n");
             return EXIT_FAILURE;
         }
-        /* At tick 110 (before tick runs), simulate unauthorized client devctl calling force_hold */
-        if (g_simplex.tick == 109u) {
+        /* At tick LATCH_SIM_EPERM_PROBE_TICK+1 (before tick runs), simulate unauthorized client devctl calling force_hold */
+        if (g_simplex.tick == LATCH_SIM_EPERM_PROBE_TICK) {
             latch_force_hold_cmd_t fcmd = { .lock_hold = 0u, .reason_code = 99u };
             (void)latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_FORCE_HOLD, &fcmd);
         }
@@ -2671,10 +2805,16 @@ static int latch_run_governor_integration_test(void) {
     }
     latch_governor_status_reply_t status;
     if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_GOV_STATUS,
-                                  &status) != 0 || status.extension_version != 3u ||
+                                  &status) != 0 || status.extension_version != 4u ||
         status.enabled != 1u || status.rung != GOVERNOR_RUNG_SAFE_STOP ||
         status.v2_session != 1u || status.coherence_ctr != 14u) {
         fprintf(stderr, "FAIL: versioned GOVERNOR status did not expose a coherent policy snapshot\n");
+        goto fail;
+    }
+    /* HOMEOSTAT is DEFAULT-OFF: with no `homeostat` section in the manifest
+     * it must report itself as disabled and impose no velocity ceiling. */
+    if (status.homeostat_enabled != 0u || status.homeostat_v_max != 0u) {
+        fprintf(stderr, "FAIL: HOMEOSTAT was active without a manifest section\n");
         goto fail;
     }
 

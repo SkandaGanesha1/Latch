@@ -40,6 +40,16 @@ typedef struct gov_gate_input {
     int32_t acceleration;
     int32_t candidate;
     uint64_t tick;
+    /*
+     * HOMEOSTAT velocity ceiling for this tick.
+     *
+     * 0 means "not applied" (HOMEOSTAT absent or disabled) and reproduces the
+     * pre-HOMEOSTAT behaviour EXACTLY. A positive value is an additional
+     * CONTRACTING limit: the gate uses min(manifest v_max, homeostat_v_max),
+     * so it can only ever lower the ceiling, never raise it. The HOMEOSTAT
+     * scale composes multiplicatively with the agent confidence scale.
+     */
+    int32_t homeostat_v_max;
 } gov_gate_input_t;
 
 typedef struct gov_gate_result {

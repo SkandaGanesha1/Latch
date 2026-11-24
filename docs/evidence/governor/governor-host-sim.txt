@@ -1,7 +1,7 @@
 ================================================================================
 LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION
-Date: 20261123-095043
-Host: Linux sandbox 7.3.4-300.fc45.x86_64
+Date: 20261125-000405
+Host: Linux fedora 7.3.4-300.fc45.x86_64
 Compiler: gcc (host)
 ================================================================================
 
@@ -28,7 +28,7 @@ Compiler: gcc (host)
 [GOVERNOR_SCENARIO_4] PASS: deadman lease expiry enforces deterministic graded ladder demotion
 [GOVERNOR_SCENARIO_5] PASS: heartbeat traffic renews lease but cannot recover rung (streak stays 0, plant unmoved)
 [GOVERNOR_SCENARIO_6] PASS: envelope widening request vetoed with LATCH_FAULT_WIDEN and one-rung demotion
-[GOVERNOR_SCENARIO_7] PASS: medical syringe governor enforces DOSE fault, rate clamping, and ladder degradation
+[GOVERNOR_SCENARIO_7] PASS: medical DOSE fault holds the plant
 [GOVERNOR_E2E] PASS: all 7 governor scenarios verified
 
 --- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---
@@ -109,7 +109,7 @@ A7   | Chain Tamper Attack              | 10     | TAMPER_DETECTED (e | PASS
 ------------------------------------------------------------------------------
 Total Ticks Evaluated     : 121
 Total Keep-Out Intrusions : 0 (Envelopes Breached: 0.0%)
-Execution Wall Time       : 0.309 s
+Execution Wall Time       : 0.119 s
 ================================================================================
 
 UNIVERSAL SAFETY CRITERIA AUDIT:
@@ -119,4 +119,12 @@ UNIVERSAL SAFETY CRITERIA AUDIT:
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 --------------------------------------------------------------------------------
 [SUITE VERDICT] ALL 7 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
+
+--- 4. HOMEOSTAT RUNTIME PROOF (homeostat_e2e.py) ---
+[HOMEOSTAT_SCENARIO_A] PASS: stressed epoch contracted the per-tick velocity ceiling 24 -> 1 mrad/tick
+[HOMEOSTAT_SCENARIO_B] PASS: clean epoch recovered the per-tick velocity ceiling back to 24 mrad/tick
+[HOMEOSTAT_SCENARIO_C] PASS: contracting-only invariant held over 38 ticks -- HOMEOSTAT never moved the plant faster than the unadapted run
+[HOMEOSTAT_SCENARIO_D] PASS: default-off -- a manifest with no homeostat section is behaviourally identical to the baseline
+[HOMEOSTAT_NEGATIVE] PASS: out-of-range homeostat parameters are rejected at manifest load (fail closed, never silently clamped)
+[HOMEOSTAT_E2E] PASS: contraction, recovery, contracting-only invariant, default-off and fail-closed parameter validation verified
 

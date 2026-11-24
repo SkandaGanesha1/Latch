@@ -310,6 +310,15 @@ typedef struct latch_governor_status_reply {
     uint32_t coherence_valid;
     uint32_t clean_command_streak;
     uint32_t deadline_misses;
+    /* HOMEOSTAT outer-loop telemetry (extension_version >= 4).
+     * `homeostat_enabled` is 0 when the manifest has no `homeostat` section
+     * or the section is disabled; `homeostat_scale_q8` is the current
+     * velocity scale (256 == unity) and `homeostat_v_max` is the contracting
+     * velocity ceiling it currently imposes (0 == no ceiling imposed). */
+    uint32_t homeostat_enabled;
+    uint32_t homeostat_scale_q8;
+    uint32_t homeostat_v_max;
+    uint32_t homeostat_stress_epochs;
 } latch_governor_status_reply_t;
 
 #define LATCH_DUMP_MAX_ENTRIES   128u

@@ -34,6 +34,9 @@ jobs:
           ./qnx/build/host-sim/latchd -m qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/syringe_pump_bolus.manifest a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
+          # The HOMEOSTAT contract is the ONLY signed contract that carries a
+          # `homeostat` section; every other contract must leave the loop off.
+          ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/homeostat_servo.manifest
 
       - name: Run 200-Tick End-to-End Pipeline & Second Plant Tests
         run: |
@@ -243,8 +246,40 @@ jobs:
         run: |
           make -C qnx check-governor
 
+      - name: Verify Manifest Parser (Fail-Closed Admission)
+        run: |
+          # The manifest is the SAFETY FRONT DOOR: every plant limit, timing
+          # budget and calibration constant enters the supervisor through this
+          # parser. A parser that silently accepts a malformed document is a
+          # safety defect, not a convenience.
+          make -C qnx latch-manifest-check
+
+      - name: Verify HOMEOSTAT Outer Loop (Unit + Runtime Proof)
+        run: |
+          # HOMEOSTAT is a CONTRACTING-ONLY advisor: it may lower the
+          # effective velocity ceiling below the signed manifest limit, never
+          # raise it. These three gates prove the arithmetic, the wiring and
+          # the runtime behaviour.
+          make -C qnx governor-homeostat-check
+          make -C qnx latch-feedback-check
+          make -C qnx homeostat-e2e-check
+          # The proof must be ARCHIVED as well as runnable: a judge without a
+          # QNX SDP licence cannot rebuild the binaries.
+          test -f docs/evidence/governor/homeostat-runtime-proof.txt
+          grep -q "HOMEOSTAT_SCENARIO_A" docs/evidence/governor/homeostat-runtime-proof.txt
+          grep -q "HOMEOSTAT_SCENARIO_B" docs/evidence/governor/homeostat-runtime-proof.txt
+          grep -q "HOMEOSTAT_SCENARIO_C" docs/evidence/governor/homeostat-runtime-proof.txt
+          grep -q "HOMEOSTAT_SCENARIO_D" docs/evidence/governor/homeostat-runtime-proof.txt
+          grep -q "HOMEOSTAT_NEGATIVE" docs/evidence/governor/homeostat-runtime-proof.txt
+          # The dedicated signed contract must still attest.
+          ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/homeostat_servo.manifest
+
       - name: Verify 7-Attack Adversarial Rig
         run: |
           make -C qnx host-sim
           python3 tools/attacks/run_attacks.py
+
+      - name: Verify Evidence Archive Signature Anti-Rot
+        run: |
+          make -C qnx evidence-check
 

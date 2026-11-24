@@ -123,7 +123,7 @@ GOVERNOR was evaluated against seven named cyber-physical attacks using the unif
 | **A6** | **Sequence Replay Attack** | 7 | Attacker replays captured frame ($seq \le last\_seq$) | `LATCH_FAULT_SEQ` (bit 2, `0x0004`) | Replay detected; supervisor triggers immediate fail-closed transition to `LATCH` (`HOLD`). **PASS** |
 | **A7** | **Chain Tamper Attack** | 10 | Adversary modifies recorded blackbox flight recorder | `TAMPER_DETECTED` (exit code 1) | Rolling SHA-256 chain detects payload/hash mismatch; post-seal payload/hash mismatch detected. **PASS** |
 
-**Adversarial Audit Summary:** 121 ticks evaluated · 0 keep-out breaches · 0% failure rate · 7/7 attacks passed (regenerate with `python3 latch/tools/governor_metrics.py`).
+**Adversarial Audit Summary:** 121 ticks evaluated · 0 keep-out breaches · 0% failure rate · 7/7 attacks passed (regenerate with `python3 latch/tools/governor_metrics.py` — **requires host-sim binaries: `CCACHE_DISABLE=1 make -C latch/qnx host-sim`**).
 
 ---
 
@@ -292,6 +292,9 @@ latch/
 python3 latch/tools/consistency_check.py
 
 # 2. Unified Adversarial Attack Rig (Attacks A1, A2, A4, A5, A6)
+#    PREREQUISITE: the rig drives the host-sim binaries, which are not
+#    committed. Build them first or run_attacks.py exits with FileNotFoundError.
+CCACHE_DISABLE=1 make -C latch/qnx host-sim
 python3 latch/tools/attacks/run_attacks.py
 
 # 3. Dedicated GOVERNOR Seven-Scenario Test Gate
@@ -390,7 +393,7 @@ compares the signature against the archived one — so the legacy evidence canno
 silently drift away from the code it describes. The **GOVERNOR** captures under
 `docs/evidence/governor/` are raw outputs of their named tools: the on-target
 runs are verbatim `make verify-governor-qemu` logs, and the attack scorecard is
-regenerated with `python3 tools/governor_metrics.py`.
+regenerated with `python3 tools/governor_metrics.py` — **requires host-sim binaries: `CCACHE_DISABLE=1 make -C qnx host-sim`**.
 
 ---
 

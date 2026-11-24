@@ -191,6 +191,12 @@ static int do_status(int fd) {
         if (gov.extension_version >= 3u) {
             printf("Deadline Misses      : %u overruns\n", gov.deadline_misses);
         }
+        if (gov.extension_version >= 4u) {
+            printf("HOMEOSTAT            : %s | scale_q8=%u (256=unity) | v_max ceiling=%u | stress epochs=%u\n",
+                   gov.homeostat_enabled ? "enabled" : "disabled",
+                   gov.homeostat_scale_q8, gov.homeostat_v_max,
+                   gov.homeostat_stress_epochs);
+        }
         printf("Rate / Shrink        : %u tokens | active=%u v_max=%u scale_q8=%u\n",
                gov.rate_tokens_remaining, gov.shrink_active,
                gov.shrink_v_max, gov.shrink_scale_q8);
