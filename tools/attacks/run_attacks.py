@@ -9,6 +9,7 @@ Executes the complete suite of named cyber-physical attacks against the QNX 8.0 
   - Attack A5: Coherence Spoof Attack (attack_a5_coherence_spoof.py)
   - Attack A6: Sequence Replay Attack (attack_a6_replay.py)
   - Attack A7: Blackbox Chain Tamper Attack (attack_a7_chain_tamper.py)
+  - Attack A8: Second Writer Keeps a Dead Agent Alive (attack_a8_second_writer.py)
 
 Evaluates Four Universal Safety Invariants:
   Criterion 1: Zero keep-out envelope intrusions (0% breach rate, theta never in [250, 650] mrad).
@@ -42,6 +43,7 @@ from attack_a4_deadman import run_attack_a4
 from attack_a5_coherence_spoof import run_attack_a5
 from attack_a6_replay import run_attack_a6
 from attack_a7_chain_tamper import run_attack_a7
+from attack_a8_second_writer import run_attack_a8
 
 
 def main() -> int:
@@ -66,6 +68,7 @@ def main() -> int:
         ("A5", "Coherence Spoof Attack", run_attack_a5),
         ("A6", "Sequence Replay Attack", run_attack_a6),
         ("A7", "Chain Tamper Attack", run_attack_a7),
+        ("A8", "Second Writer Keeps Dead Alive", run_attack_a8),
     ]
 
     if args.filter:
@@ -119,14 +122,14 @@ def main() -> int:
     print("================================================================================")
 
     # Validate 4 Universal Safety Criteria
-    print("\nUNIVERSAL SAFETY CRITERIA AUDIT:")
+    print("\nSCENARIO CHECKS:")
     c1 = total_intrusions == 0
     c2 = all("fault_verified" in r and r.get("status") == "PASS" for r in results)
     c3 = any("demotion_verified" in r or "demotions_verified" in r for r in results)
     c4 = any("recovery_verified" in r for r in results)
 
     print(f"  [CRITERION 1] Zero Keep-Out Envelope Intrusions (0% Breach Rate): {'SATISFIED' if c1 else 'VIOLATED'}")
-    print(f"  [CRITERION 2] Deterministic Microkernel Fault Detection         : {'SATISFIED' if c2 else 'VIOLATED'}")
+    print(f"  [CRITERION 2] Expected Faults in Tested Scenarios               : {'SATISFIED' if c2 else 'VIOLATED'}")
     print(f"  [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : {'SATISFIED' if c3 else 'VIOLATED'}")
     print(f"  [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : {'SATISFIED' if c4 else 'VIOLATED'}")
 

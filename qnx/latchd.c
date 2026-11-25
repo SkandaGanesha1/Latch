@@ -150,6 +150,33 @@ typedef struct latch_simplex_state {
     bool           gov_coherence_valid;
     uint32_t       gov_deadline_misses;
 
+    /*
+     * Producer-scoped lease authority (L-2).
+     *
+     * The dead-man lease used to be per-STREAM: any frame on the proposal
+     * node could renew it, so a second unprivileged writer could keep a
+     * session alive whose real planner had died -- exactly what a dead-man's
+     * switch exists to prevent.
+     *
+     * The lease is now owned by a PRODUCER.  `gov_lease_owner_tag` is the
+     * producer tag of the frame that established the session;
+     * `gov_lease_owner_valid` says whether there is an owner at all.  A
+     * frame from any other producer is LEASE-INERT while the owner's lease
+     * is live: it cannot renew the lease, cannot advance the coherence
+     * baseline, cannot earn warm-up credit and cannot move the plant.
+     *
+     * `gov_session_dead` marks the window after the owner's lease expired:
+     * the session is no longer authoritative, so another producer may take
+     * it over -- which starts a NEW sequence epoch and re-earns the warm-up
+     * heartbeat.  The counters are telemetry, so a foreign writer is
+     * visible in the status reply instead of being invisible.
+     */
+    uint16_t       gov_lease_owner_tag;
+    bool           gov_lease_owner_valid;
+    bool           gov_session_dead;
+    uint32_t       gov_foreign_frames;
+    uint32_t       gov_producer_takeovers;
+
     bool           session_active;       /* true once proposal stream active */
     bool           retracted_home;       /* true when parked at home pose     */
     bool           tape_frozen;          /* true to prevent post-park overwrite */
@@ -168,6 +195,24 @@ typedef struct latch_simplex_state {
     _Atomic uint32_t eperm_pending;
     _Atomic uint32_t operator_hold_locked;
     _Atomic uint32_t operator_release_pending;
+    /*
+     * Operator-release bookkeeping (L-5).
+     *
+     * The operator release is a ONE-SHOT authorisation to leave the LATCH
+     * rung, and the ladder can only ARM it while the rung IS LATCH.  The
+     * previous revision consumed the request on EVERY governor tick, so a
+     * release issued at SAFE_STOP or ADVISE -- where it has no effect -- was
+     * silently thrown away and the operator was told nothing.  The operator
+     * believed it "took".
+     *
+     * The request is now RETAINED until it can actually be armed, and it is
+     * INVALIDATED whenever the rung changes, so a stale authorisation can
+     * never authorise a later, unrelated LATCH exit.  `release_rung` is the
+     * rung the operator was looking at when the request was made.
+     */
+    _Atomic uint32_t operator_release_rung;
+    _Atomic uint32_t operator_release_armed;
+    _Atomic uint32_t operator_release_deferred_ticks;
     _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
     _Atomic uint32_t session_reset_pending; /* Armed by latch_io_open(), consumed by tick */
     _Atomic uint32_t open_writers;          /* Active writer reference count */
@@ -217,9 +262,40 @@ static inline uint64_t latch_clock_cycles(void) {
 #endif
 }
 
+/*
+ * Convert a cycle delta to nanoseconds WITHOUT overflowing, and SATURATE
+ * instead of wrapping.
+ *
+ * The previous form, `(dcycles * 1000000000ULL) / cps`, overflows the uint64
+ * intermediate as soon as `dcycles` exceeds UINT64_MAX/1e9 (~1.844e10
+ * cycles -- about 295 s at 62.5 MHz), and the quotient was then TRUNCATED to
+ * uint32. A long stall was therefore reported as a SMALL latency, which is
+ * exactly backwards for a safety measurement: the bigger the stall, the
+ * smaller the number on the status reply.
+ *
+ * The division is split into quotient and remainder, so the largest
+ * intermediate is `rem * 1e9` with `rem < cps` (a clock rate), and the final
+ * value saturates at the largest nanosecond count the uint32 ABI field can
+ * carry.
+ */
 static inline uint32_t latch_cycles_to_ns(uint64_t dcycles) {
     if (g_cycles_per_sec == 0) return 0;
-    return (uint32_t)((dcycles * 1000000000ULL) / g_cycles_per_sec);
+    const uint64_t cps  = g_cycles_per_sec;
+    const uint64_t whole = dcycles / cps;
+    const uint64_t rem   = dcycles % cps;
+
+    uint64_t ns = 0;
+    if (whole <= (UINT64_MAX / 1000000000ULL)) {
+        ns = whole * 1000000000ULL;
+        if (rem <= (UINT64_MAX / 1000000000ULL)) {
+            ns += (rem * 1000000000ULL) / cps;
+        } else {
+            ns = UINT64_MAX;
+        }
+    } else {
+        ns = UINT64_MAX;
+    }
+    return (ns > (uint64_t)UINT32_MAX) ? UINT32_MAX : (uint32_t)ns;
 }
 
 static bool latch_governor_enabled(void) {
@@ -249,6 +325,11 @@ static void latch_governor_init_state(latch_simplex_state_t *state) {
     state->gov_agent_state = 0u;
     state->gov_v2_session = false;
     state->gov_coherence_valid = false;
+    /* A new session has no lease owner (L-2): the next producer to send a
+     * valid v2 frame establishes it. */
+    state->gov_lease_owner_tag = LATCH_PRODUCER_TAG_NONE;
+    state->gov_lease_owner_valid = false;
+    state->gov_session_dead = false;
 }
 
 /* ==========================================================================
@@ -323,6 +404,11 @@ static void latch_governor_new_session(latch_simplex_state_t *state) {
     state->gov_agent_state = 0u;
     state->gov_v2_session = false;
     state->gov_coherence_valid = false;
+    /* A new session has no lease owner (L-2): the next producer to send a
+     * valid v2 frame establishes it. */
+    state->gov_lease_owner_tag = LATCH_PRODUCER_TAG_NONE;
+    state->gov_lease_owner_valid = false;
+    state->gov_session_dead = false;
     /* Reconnecting a producer must not erase dose already delivered. */
     state->gov_gate.rate_tokens = g_manifest.governor.rate_burst_tokens;
     state->gov_gate.shrink_v = 0u;
@@ -350,21 +436,30 @@ static void latch_record_eperm_fault(void) {
  * regress the other: a consumer that was mid-copy when the flush landed
  * fails its CAS and refuses the frame instead of resurrecting it.
  */
+static bool latch_claim_writer(_Atomic uint32_t *writers) {
+    uint32_t expected = 0u;
+    return atomic_compare_exchange_strong_explicit(writers, &expected, 1u,
+                                                    memory_order_acq_rel,
+                                                    memory_order_acquire);
+}
+
 static uint32_t latch_ring_flush_session(latch_publish_buffer_t *buf) {
     atomic_fetch_add_explicit(&buf->flush_epoch, 1u, memory_order_acq_rel);
     uint32_t head = atomic_load_explicit(&buf->write_head, memory_order_relaxed);
     uint32_t tail = atomic_load_explicit(&buf->read_tail, memory_order_acquire);
-    uint32_t stale = head - tail;
     uint32_t expected = tail;
-    while (expected != head) {
+    uint32_t stale = 0u;
+    while (expected != head && (uint32_t)(head - expected) <= LATCH_PUB_RING_SIZE) {
+        uint32_t pending = head - expected;
         if (atomic_compare_exchange_weak_explicit(&buf->read_tail, &expected,
                                                   head,
                                                   memory_order_release,
                                                   memory_order_relaxed)) {
+            stale = pending;
             break;
         }
-        /* `expected` was refreshed by the failed CAS: re-check. */
-        if (expected == head) break;
+        /* A consumer may have advanced past this head after a concurrent
+         * publish. Never move the tail back to the stale snapshot. */
     }
     return stale;
 }
@@ -414,7 +509,9 @@ static bool latch_consume_proposal(latch_publish_buffer_t *buf,
     if (strcmp(g_manifest.ingest.delivery, "queued") == 0) {
         uint32_t t = atomic_load_explicit(&buf->read_tail, memory_order_relaxed);
         uint32_t h = atomic_load_explicit(&buf->write_head, memory_order_acquire);
-        if (t < h) {
+        /* Counters wrap modulo 2^32; ordering comparisons lose queued
+         * entries when the producer crosses UINT32_MAX. */
+        if (t != h) {
             /*
              * Snapshot the session epoch BEFORE the payload is copied.  If a
              * session flush lands while this frame is in flight, the epoch
@@ -1008,8 +1105,17 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
     uint32_t seq_observed = st->last_seq;
     /* `has_new` is later cleared for message-only/rejected frames so they
      * cannot move the plant. Preserve physical input presence separately for
-     * the recovery ladder's frame accounting. */
-    const bool frame_present = has_new;
+     * the recovery ladder's frame accounting.
+     *
+     * It is NOT const: a frame from a producer that does not hold the lease
+     * is not physically present for the recovery ladder either (L-2) --
+     * otherwise a foreign writer could reset the clean-frame streak and
+     * block the supervisor's recovery by writing frames. */
+    bool frame_present = has_new;
+    /* L-2: does this frame come from the producer that owns the lease? For
+     * a v1 frame (no producer identity) the legacy path has no lease, so
+     * the frame is treated as the owner. */
+    bool gov_is_owner = true;
 
     /*
      * HOMEOSTAT velocity ceiling for this tick.
@@ -1025,7 +1131,84 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         bool gov_v2 = gov_enabled && prop.wire_version == 2u;
         bool gov_heartbeat = gov_v2 && prop.kind == GOVERNOR_WIRE_HEARTBEAT;
         bool gov_shrink = gov_v2 && prop.kind == GOVERNOR_WIRE_SHRINK_REQ;
-        gov_message_only = gov_heartbeat || gov_shrink;
+
+        /* ------------------------------------------------------------------
+         * 0. LEASE AUTHORITY (L-2) -- resolved BEFORE the sequence check.
+         *
+         * The dead-man lease is scoped to a PRODUCER, not to the byte
+         * stream. A frame whose producer tag differs from the session
+         * owner's is LEASE-INERT while the owner's lease is live:
+         *
+         *   - it cannot renew the lease;
+         *   - it cannot advance the coherence baseline;
+         *   - it cannot earn warm-up credit;
+         *   - it cannot move the plant;
+         *   - it cannot advance the owner's sequence epoch;
+         *   - it cannot reset the recovery ladder's clean-frame streak.
+         *
+         * Without this, ANY second writer could keep a session alive whose
+         * real planner had died -- which is precisely what a dead-man's
+         * switch exists to prevent.
+         *
+         * A takeover is possible only after the owner's lease has EXPIRED.
+         * It starts a NEW sequence epoch and makes the new producer earn
+         * its own warm-up, so a takeover can never be used to smuggle an
+         * old frame past the replay check.
+         *
+         * Only a HEARTBEAT or a CMD_V2 may open or take over a session: a
+         * SHRINK_REQ is telemetry and must never be able to seize the
+         * lease (that would be a denial of service against the real
+         * producer).
+         * ---------------------------------------------------------------- */
+        if (gov_v2) {
+            const uint16_t tag = prop.producer_tag;
+            const bool can_open_session =
+                (prop.kind == GOVERNOR_WIRE_HEARTBEAT ||
+                 prop.kind == GOVERNOR_WIRE_CMD_V2);
+
+            if (!st->gov_lease_owner_valid) {
+                if (can_open_session) {
+                    /* First producer of this session: it OWNS the lease. */
+                    st->gov_lease_owner_tag = tag;
+                    st->gov_lease_owner_valid = true;
+                    st->gov_session_dead = false;
+                } else {
+                    /* A limit request (or a bare CMD) cannot create a
+                     * session; the existing rule below reports it. */
+                    gov_is_owner = true;
+                }
+            } else if (tag == st->gov_lease_owner_tag) {
+                /* The owner. Whether the session is alive again is decided
+                 * by whether this frame actually RENEWED the lease -- see
+                 * the `gov_lease_renewed` handling below. */
+            } else if (st->gov_session_dead && can_open_session) {
+                /* TAKEOVER: the owner's lease expired, so the session is no
+                 * longer authoritative. A new producer may take it over --
+                 * with a NEW sequence epoch and a fresh warm-up. */
+                st->gov_lease_owner_tag = tag;
+                st->gov_lease_owner_valid = true;
+                st->gov_session_dead = false;
+                st->gov_producer_takeovers++;
+                /* New sequence epoch: the takeover frame is judged against a
+                 * fresh baseline, so an old frame cannot be replayed into
+                 * the new session. */
+                st->seq_valid = false;
+                st->last_seq = 0u;
+                /* The new producer opens a FRESH session: its warm-up must
+                 * be earned again and its coherence baseline is re-taken
+                 * from the takeover frame. */
+                st->gov_v2_session = false;
+                st->gov_warmup_seen = 0u;
+            } else {
+                /* FOREIGN producer while the owner's lease is live. */
+                st->gov_foreign_frames++;
+                gov_is_owner = false;
+                gov_command_valid = false;
+                frame_present = false;
+            }
+        }
+
+        gov_message_only = gov_heartbeat || gov_shrink || !gov_is_owner;
         seq_observed = prop.seq;
         if (gov_message_only) {
             u_candidate = st->theta_mrad;
@@ -1064,8 +1247,16 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
          *    A frame is STALE when the unsigned delta is zero (an exact
          *    replay) or greater than half the sequence space (it comes from
          *    before the last wrap).
+         *
+         *    A FOREIGN producer's frame (L-2) is NOT sequence-checked at
+         *    all: it belongs to a different producer's sequence space, and
+         *    the owner's epoch must not be disturbed by it.  Judging it
+         *    against the owner's baseline would report every foreign frame
+         *    as a replay fault and would let a foreign writer advance (or
+         *    poison) the owner's sequence.
          */
-        if ((tick_faults & (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_RESERVED)) == 0u) {
+        if (gov_is_owner &&
+            (tick_faults & (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_RESERVED)) == 0u) {
             if (!st->seq_valid) {
                 if (prop.seq == 0u) {
                     tick_faults |= LATCH_FAULT_SEQ;
@@ -1082,7 +1273,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
             }
         }
 
-        if (gov_v2 && sequence_ok &&
+        if (gov_v2 && gov_is_owner && sequence_ok &&
             (prop.kind == GOVERNOR_WIRE_HEARTBEAT ||
              prop.kind == GOVERNOR_WIRE_CMD_V2 ||
              prop.kind == GOVERNOR_WIRE_SHRINK_REQ)) {
@@ -1124,14 +1315,21 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                 st->gov_warmup_seen < g_manifest.governor.warmup_heartbeats) {
                 gov_command_valid = false;
             }
-        } else if (gov_v2 && sequence_ok && prop.kind == GOVERNOR_WIRE_CMD) {
+        } else if (gov_v2 && gov_is_owner && sequence_ok && prop.kind == GOVERNOR_WIRE_CMD) {
             if (!st->gov_v2_session || st->gov_lease_remaining == 0u ||
                 st->gov_warmup_seen < g_manifest.governor.warmup_heartbeats) {
                 gov_command_valid = false;
             }
         }
 
-        if (gov_v2 && sequence_ok && gov_command_valid &&
+        /* L-2: the session is alive again only when the OWNER's frame
+         * actually renewed the lease. A foreign frame can never do this,
+         * and an incoherent owner frame must not resurrect the session. */
+        if (gov_v2 && gov_is_owner && gov_lease_renewed) {
+            st->gov_session_dead = false;
+        }
+
+        if (gov_v2 && gov_is_owner && sequence_ok && gov_command_valid &&
             prop.kind == GOVERNOR_WIRE_SHRINK_REQ) {
             gov_gate_input_t gate_input = {
                 .rung = st->gov_ladder.rung,
@@ -1210,13 +1408,13 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
             }
         }
 
-        if (gov_v2 && sequence_ok &&
+        if (gov_v2 && gov_is_owner && sequence_ok &&
             (tick_faults & (LATCH_FAULT_MAGIC | LATCH_FAULT_CRC | LATCH_FAULT_RESERVED |
                             LATCH_FAULT_SEQ)) == 0u) {
             st->last_seq = prop.seq;
             st->seq_valid = true;
         }
-        if (tick_faults == LATCH_FAULT_NONE) {
+        if (gov_is_owner && tick_faults == LATCH_FAULT_NONE) {
             st->last_seq       = prop.seq;
             st->seq_valid      = true;
             st->last_rx_cycles = cycles_in;
@@ -1253,6 +1451,11 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
             tick_faults |= LATCH_FAULT_HEARTBEAT;
             gov_lease_expired = true;
             st->gov_lease_remaining = g_manifest.governor.lease_ticks;
+            /* L-2: the session is no longer authoritative.  The owner may
+             * resume it (keeping its sequence epoch), and once it has been
+             * declared dead ANOTHER producer may take it over -- with a new
+             * sequence epoch and its own warm-up. */
+            st->gov_session_dead = true;
         }
     }
 
@@ -1273,6 +1476,14 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         .hard_fault = 0u
     };
     bool gov_legacy_hard_fault = false;
+    /*
+     * The operator release is read, NOT consumed, here (L-5).  The ladder
+     * arms it only while the rung is LATCH; the request is cleared below
+     * once it has been armed, or once the rung moves on and the request no
+     * longer refers to the state the operator was looking at.
+     */
+    uint32_t operator_release_pending = atomic_load_explicit(
+        &st->operator_release_pending, memory_order_acquire);
     if (gov_enabled) {
         uint16_t ladder_faults = (uint16_t)(tick_faults &
             (uint16_t)~(LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN));
@@ -1290,10 +1501,43 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
             .immediate_demotion = demotion_event ? 1u : 0u,
             .safe_stop_complete =
                 (st->velocity_mrad_tick == 0 && st->accel_mrad_tick2 == 0) ? 1u : 0u,
-            .operator_release = (uint8_t)atomic_exchange_explicit(
-                &st->operator_release_pending, 0u, memory_order_acq_rel)
+            .operator_release = (uint8_t)(operator_release_pending ? 1u : 0u)
         };
         gov_ladder_result = governor_ladder_step(&ladder_config, &st->gov_ladder, &ladder_input);
+
+        /*
+         * Settle the operator-release request (L-5).
+         *
+         *  - ARMED: the ladder was at LATCH and consumed the request.  Clear
+         *    it and record that the release is now effective.
+         *  - INVALIDATED: the rung moved since the request was made, so the
+         *    request referred to a state that no longer exists.  Clear it.
+         *  - DEFERRED: the request is still valid and is simply waiting for
+         *    the ladder to reach LATCH.  Keep it, and count the wait so the
+         *    operator can see how long it has been waiting.
+         */
+        if (operator_release_pending != 0u) {
+            if (st->gov_ladder.rung == GOVERNOR_RUNG_LATCH) {
+                atomic_store_explicit(&st->operator_release_pending, 0u, memory_order_release);
+                atomic_store_explicit(&st->operator_release_armed, 1u, memory_order_release);
+                atomic_store_explicit(&st->operator_release_deferred_ticks, 0u, memory_order_release);
+            } else if (st->gov_ladder.rung !=
+                       atomic_load_explicit(&st->operator_release_rung, memory_order_acquire)) {
+                /* The rung changed: the request no longer matches the state
+                 * the operator acted on. */
+                atomic_store_explicit(&st->operator_release_pending, 0u, memory_order_release);
+                atomic_store_explicit(&st->operator_release_deferred_ticks, 0u, memory_order_release);
+            } else {
+                atomic_fetch_add_explicit(&st->operator_release_deferred_ticks, 1u,
+                                          memory_order_relaxed);
+            }
+        }
+        if (st->gov_ladder.rung != GOVERNOR_RUNG_LATCH &&
+            atomic_load_explicit(&st->operator_release_armed, memory_order_acquire) != 0u) {
+            /* The armed release is only meaningful while the ladder is at
+             * LATCH; the ladder clears its own arm flag on promotion. */
+            atomic_store_explicit(&st->operator_release_armed, 0u, memory_order_release);
+        }
         uint16_t non_hard = (uint16_t)(g_manifest.governor.advise_fault_mask |
                                        LATCH_FAULT_HEARTBEAT | LATCH_FAULT_WIDEN);
         if (g_manifest.medical_present) non_hard &= (uint16_t)~LATCH_FAULT_DOSE;
@@ -1551,7 +1795,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                                 tick_faults, st->mode, gov_ladder_result,
                                 seq_observed);
 
-    bool q_empty = (atomic_load_explicit(&pub->read_tail, memory_order_acquire) >=
+    bool q_empty = (atomic_load_explicit(&pub->read_tail, memory_order_acquire) ==
                     atomic_load_explicit(&pub->write_head, memory_order_acquire));
     if (st->retracted_home &&
         atomic_load_explicit(&st->writer_closed_eof, memory_order_acquire) != 0u &&
@@ -1672,7 +1916,7 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         atomic_thread_fence(memory_order_acquire);
         if (!latch_fill_status(&out->latch)) return false;
 
-        out->extension_version = 4u;
+        out->extension_version = 5u;
         out->enabled = g_manifest.governor.enabled;
         out->rung = (uint32_t)g_simplex.gov_ladder.rung;
         out->v2_session = g_simplex.gov_v2_session ? 1u : 0u;
@@ -1696,6 +1940,43 @@ static bool latch_fill_governor_status(latch_governor_status_reply_t *out) {
         out->homeostat_scale_q8 = g_simplex.homeostat.scale_q8;
         out->homeostat_v_max = (uint32_t)latch_homeostat_vmax(&g_simplex);
         out->homeostat_stress_epochs = g_simplex.homeostat.stress_epochs;
+        /* Producer-scoped lease telemetry (L-2, extension_version >= 5). */
+        out->lease_owner_tag = (uint32_t)g_simplex.gov_lease_owner_tag;
+        out->lease_owner_valid = g_simplex.gov_lease_owner_valid ? 1u : 0u;
+        out->session_dead = g_simplex.gov_session_dead ? 1u : 0u;
+        out->foreign_frames = g_simplex.gov_foreign_frames;
+        out->producer_takeovers = g_simplex.gov_producer_takeovers;
+
+        atomic_thread_fence(memory_order_acquire);
+        uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
+        if (g1 == g2) return true;
+    }
+    return false;
+}
+
+static bool latch_fill_hold_status(latch_hold_status_t *out) {
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    for (int tries = 0; tries < 4; ++tries) {
+        uint32_t g1 = 0u;
+        if (!latch_snapshot_wait_even(&g1)) return false;
+        atomic_thread_fence(memory_order_acquire);
+
+        out->struct_size = (uint32_t)sizeof(*out);
+        out->hold_locked = atomic_load_explicit(&g_simplex.operator_hold_locked,
+                                                memory_order_acquire);
+        out->rung = (uint32_t)g_simplex.gov_ladder.rung;
+        out->release_deferred_ticks = atomic_load_explicit(
+            &g_simplex.operator_release_deferred_ticks, memory_order_acquire);
+        if (atomic_load_explicit(&g_simplex.operator_release_armed,
+                                 memory_order_acquire) != 0u) {
+            out->release_state = LATCH_RELEASE_ARMED;
+        } else if (atomic_load_explicit(&g_simplex.operator_release_pending,
+                                        memory_order_acquire) != 0u) {
+            out->release_state = LATCH_RELEASE_DEFERRED;
+        } else {
+            out->release_state = LATCH_RELEASE_NONE;
+        }
 
         atomic_thread_fence(memory_order_acquire);
         uint32_t g2 = atomic_load_explicit(&g_simplex.snapshot_gen, memory_order_acquire);
@@ -1926,39 +2207,20 @@ static int latch_io_open(resmgr_context_t *ctp,
         }
     } else if (lattr != NULL && !lattr->is_actuator_node) {
         if (msg->connect.ioflag & _IO_FLAG_WR) {
-            /*
-             * OPENING THE PROPOSAL NODE FOR WRITING.
-             *
-             * A session reset must be a SESSION event, not an OPEN event.
-             *
-             * The previous revision armed the reset on EVERY open. Because
-             * the proposal node is world-writable (0666) and the guest's
-             * latch-ingest holds it open for the whole run, ANY second
-             * process that opened the node -- the verification harness, or
-             * anything else -- silently:
-             *
-             *   - flushed the frame ring, discarding queued frames;
-             *   - re-based the supervisor's sequence baseline to 0, which
-             *     DEFEATED REPLAY DETECTION (the first frame after any open
-             *     was exempt from the sequence check, and any sequence was
-             *     thereafter accepted);
-             *   - teleported theta to home with zero velocity, so the next
-             *     frame was judged against a fictitious plant state and
-             *     vetoed as a spurious RATE fault.
-             *
-             * That is a safety defect, and it is what made the verification
-             * harness fail on target.
-             *
-             * The correct rule: only the FIRST writer (the 0 -> 1
-             * transition) starts a session. A second writer JOINS the live
-             * session -- it does not reset it, and it does not discard the
-             * frames already queued.
-             */
-            uint32_t prior_writers = atomic_fetch_add_explicit(&g_simplex.open_writers, 1u,
-                                                                memory_order_acq_rel);
-            bool first_writer = (prior_writers == 0u);
+            /* The IPC producer tag is supplied by the sender, so it cannot
+             * establish writer identity. Permit one writer OCB per session. */
+            if (!latch_claim_writer(&g_simplex.open_writers)) {
+                return EBUSY;
+            }
+            /* Do not flush a session for an open that fails permissions or
+             * OCB allocation. The exclusive claim remains held meanwhile. */
+            int rc = iofunc_open_default(ctp, msg, handle, extra);
+            if (rc != 0) {
+                atomic_store_explicit(&g_simplex.open_writers, 0u, memory_order_release);
+                return rc;
+            }
 
-            if (first_writer) {
+            {
                 /*
                  * Discard the PREVIOUS session's queued frames -- they belong
                  * to a producer that is gone -- and COUNT them, so the loss
@@ -1977,18 +2239,6 @@ static int latch_io_open(resmgr_context_t *ctp,
                 atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
             }
 
-            /* iofunc_open_default() returns 0 on success and -1 on failure
-             * (it does NOT return the OCB pointer). */
-            int rc = iofunc_open_default(ctp, msg, handle, extra);
-            if (rc != 0) {
-                /* The OCB could not be allocated. Roll the writer count back,
-                 * or the count leaks and the EOF/retraction path never fires
-                 * (the evidence tape would never freeze). */
-                atomic_fetch_sub_explicit(&g_simplex.open_writers, 1u, memory_order_acq_rel);
-                if (first_writer) {
-                    atomic_store_explicit(&g_simplex.session_reset_pending, 0u, memory_order_release);
-                }
-            }
             return rc;
         }
     }
@@ -2003,10 +2253,10 @@ static int latch_io_close_ocb(resmgr_context_t *ctp,
     if (io_ocb != NULL && io_ocb->attr != NULL) {
         latch_dev_attr_t *lattr = (latch_dev_attr_t *)io_ocb->attr;
         if (!lattr->is_actuator_node && (io_ocb->ioflag & _IO_FLAG_WR)) {
-            uint32_t remaining = atomic_fetch_sub_explicit(&g_simplex.open_writers, 1u, memory_order_acq_rel);
-            if (remaining <= 1u) {
-                atomic_store_explicit(&g_simplex.writer_closed_eof, 1u, memory_order_release);
-            }
+            /* Publish EOF before making the slot available: a new opener
+             * clears EOF after it claims the slot. */
+            atomic_store_explicit(&g_simplex.writer_closed_eof, 1u, memory_order_release);
+            atomic_store_explicit(&g_simplex.open_writers, 0u, memory_order_release);
         }
     }
     return iofunc_close_ocb_default(ctp, reserved, ocb);
@@ -2075,10 +2325,45 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             atomic_store_explicit(&g_simplex.operator_hold_locked,
                                   cmd->lock_hold ? 1u : 0u,
                                   memory_order_release);
-            atomic_store_explicit(&g_simplex.operator_release_pending,
-                                  cmd->lock_hold ? 0u : 1u,
-                                  memory_order_release);
+            if (cmd->lock_hold) {
+                atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);
+                atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);
+                atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+            } else {
+                /*
+                 * Record WHICH rung the operator was looking at.  A release
+                 * is only effective at LATCH; if the rung changes before the
+                 * ladder gets there, the request is invalidated rather than
+                 * silently applied to a different state (L-5).
+                 */
+                latch_hold_status_t before;
+                uint32_t observed_rung = 0u;
+                if (latch_fill_hold_status(&before)) {
+                    observed_rung = before.rung;
+                } else {
+                    /* FAIL LOUDLY: a torn snapshot means the supervisor state
+                     * is not trustworthy, and recording a release against an
+                     * unknown rung would be exactly the silent-application
+                     * defect this fix exists to remove. */
+                    return EBUSY;
+                }
+                atomic_store_explicit(&g_simplex.operator_release_rung,
+                                      observed_rung,
+                                      memory_order_release);
+                atomic_store_explicit(&g_simplex.operator_release_pending, 1u, memory_order_release);
+                atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+            }
             nbytes_out = 0u;
+            break;
+        }
+        case (unsigned int)DCMD_LATCH_GET_HOLD_STATUS: {
+            if (msg->i.nbytes < (int)sizeof(latch_hold_status_t)) {
+                return EBADMSG;
+            }
+            latch_hold_status_t rep;
+            if (!latch_fill_hold_status(&rep)) return EBUSY;
+            memcpy(data_ptr, &rep, sizeof(rep));
+            nbytes_out = sizeof(rep);
             break;
         }
         case (unsigned int)DCMD_LATCH_PROBE_ABILITY: {
@@ -2441,10 +2726,25 @@ static int latch_sim_devctl_actuator(bool caller_has_ability,
         atomic_store_explicit(&g_simplex.operator_hold_locked,
                               cmd->lock_hold ? 1u : 0u,
                               memory_order_release);
-        atomic_store_explicit(&g_simplex.operator_release_pending,
-                              cmd->lock_hold ? 0u : 1u,
-                              memory_order_release);
+        if (cmd->lock_hold) {
+            atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);
+            atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);
+            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+        } else {
+            latch_hold_status_t before;
+            if (!latch_fill_hold_status(&before)) {
+                return EBUSY;
+            }
+            atomic_store_explicit(&g_simplex.operator_release_rung,
+                                  before.rung,
+                                  memory_order_release);
+            atomic_store_explicit(&g_simplex.operator_release_pending, 1u, memory_order_release);
+            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+        }
         return 0;
+    }
+    if (dcmd == (unsigned int)DCMD_LATCH_GET_HOLD_STATUS && payload != NULL) {
+        return latch_fill_hold_status((latch_hold_status_t *)payload) ? 0 : EBUSY;
     }
     if (dcmd == (unsigned int)DCMD_LATCH_GET_STATUS && payload != NULL) {
         /* EBUSY if a consistent snapshot could not be taken: a torn reply
@@ -2714,8 +3014,13 @@ static int latch_run_pipe_simulation(const char *csv_path, const char *events_js
     return EXIT_SUCCESS;
 }
 
-static void latch_governor_test_frame(uint8_t kind, uint32_t seq, uint32_t coherence,
-                                      int32_t u_mrad, uint8_t confidence_q8) {
+/* The in-process host-sim producer identity (L-2). */
+#define LATCH_TEST_PRODUCER_TAG 1u
+#define LATCH_TEST_FOREIGN_TAG 2u
+
+static void latch_governor_test_frame_tagged(uint8_t kind, uint32_t seq, uint32_t coherence,
+                                              int32_t u_mrad, uint8_t confidence_q8,
+                                              uint16_t producer_tag) {
     latch_proposal_t proposal;
     memset(&proposal, 0, sizeof(proposal));
     proposal.ipc_magic = LATCH_IPC_PROPOSAL_MAGIC;
@@ -2726,6 +3031,8 @@ static void latch_governor_test_frame(uint8_t kind, uint32_t seq, uint32_t coher
     proposal.wire_version = 2u;
     proposal.kind = kind;
     proposal.confidence_q8 = confidence_q8;
+    /* L-2: the producer identity decides who holds the lease. */
+    proposal.producer_tag = producer_tag;
     proposal.unit_id = kind == GOVERNOR_WIRE_CMD_V2
                            ? ((u_mrad == 370000) ? 999u : (u_mrad == 37000) ? 3u : 1u)
                            : 0u;
@@ -2737,6 +3044,12 @@ static void latch_governor_test_frame(uint8_t kind, uint32_t seq, uint32_t coher
     }
     latch_publish_proposal(&g_pub_buf, &proposal);
     latch_simplex_tick(&g_simplex, &g_pub_buf);
+}
+
+static void latch_governor_test_frame(uint8_t kind, uint32_t seq, uint32_t coherence,
+                                      int32_t u_mrad, uint8_t confidence_q8) {
+    latch_governor_test_frame_tagged(kind, seq, coherence, u_mrad, confidence_q8,
+                                     LATCH_TEST_PRODUCER_TAG);
 }
 
 static int latch_run_governor_integration_test(void) {
@@ -2787,6 +3100,39 @@ static int latch_run_governor_integration_test(void) {
         g_simplex.gov_last_coherence != 1u || g_simplex.gov_warmup_seen != 2u) {
         fprintf(stderr, "FAIL: 24-bit coherence counter did not wrap within the configured gap\n");
         goto fail;
+    }
+
+    /* A queued producer and consumer must continue across counter wrap. */
+    {
+        _Atomic uint32_t writers = 0u;
+        if (!latch_claim_writer(&writers) || latch_claim_writer(&writers)) {
+            fprintf(stderr, "FAIL: exclusive proposal writer claim\n");
+            goto fail;
+        }
+        atomic_store_explicit(&writers, 0u, memory_order_release);
+        if (!latch_claim_writer(&writers)) {
+            fprintf(stderr, "FAIL: proposal writer claim after close\n");
+            goto fail;
+        }
+        latch_publish_buffer_t wrap_buf;
+        memset(&wrap_buf, 0, sizeof(wrap_buf));
+        atomic_store_explicit(&wrap_buf.write_head, UINT32_MAX, memory_order_relaxed);
+        atomic_store_explicit(&wrap_buf.read_tail, UINT32_MAX, memory_order_relaxed);
+        latch_proposal_t in = { .seq = 42u };
+        latch_publish_proposal(&wrap_buf, &in);
+        uint32_t consumed_gen = 0u;
+        latch_proposal_t out;
+        if (!latch_consume_proposal(&wrap_buf, &consumed_gen, &out) || out.seq != 42u ||
+            atomic_load_explicit(&wrap_buf.read_tail, memory_order_relaxed) != 0u) {
+            fprintf(stderr, "FAIL: queued ring did not consume across counter wrap\n");
+            goto fail;
+        }
+        latch_publish_proposal(&wrap_buf, &in);
+        if (latch_ring_flush_session(&wrap_buf) != 1u ||
+            latch_consume_proposal(&wrap_buf, &consumed_gen, &out)) {
+            fprintf(stderr, "FAIL: wrapped queued ring session flush\n");
+            goto fail;
+        }
     }
 
     latch_sim_reset();
@@ -2925,10 +3271,16 @@ static int latch_run_governor_integration_test(void) {
     }
     latch_governor_status_reply_t status;
     if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_GOV_STATUS,
-                                  &status) != 0 || status.extension_version != 4u ||
+                                  &status) != 0 || status.extension_version != 5u ||
         status.enabled != 1u || status.rung != GOVERNOR_RUNG_SAFE_STOP ||
         status.v2_session != 1u || status.coherence_ctr != 14u) {
         fprintf(stderr, "FAIL: versioned GOVERNOR status did not expose a coherent policy snapshot\n");
+        goto fail;
+    }
+    /* L-2: the lease owner is the producer that established the session. */
+    if (status.lease_owner_valid != 1u || status.lease_owner_tag != LATCH_TEST_PRODUCER_TAG ||
+        status.foreign_frames != 0u || status.producer_takeovers != 0u) {
+        fprintf(stderr, "FAIL: the GOVERNOR status did not report the producer-scoped lease owner\n");
         goto fail;
     }
     /* HOMEOSTAT is DEFAULT-OFF: with no `homeostat` section in the manifest
@@ -2946,6 +3298,221 @@ static int latch_run_governor_integration_test(void) {
         edump.count == 0u || edump.latest_index == 0u || edump.record_version != 1u) {
         fprintf(stderr, "FAIL: DCMD_LATCH_DUMP_GOV_EVENTS did not expose a coherent event dump\n");
         goto fail;
+    }
+
+    /*
+     * Test (L-2): the dead-man lease is scoped to the PRODUCER.
+     *
+     * The defect this pins: the lease was renewed by ANY frame that arrived
+     * on the proposal node. A second unprivileged writer could therefore keep
+     * a session alive whose real planner had died -- which is precisely what
+     * a dead-man's switch exists to prevent.
+     *
+     * The properties asserted here:
+     *   1. A foreign producer's frame does NOT renew the lease.
+     *   2. A foreign producer's frame does NOT move the plant.
+     *   3. A foreign producer's frame does NOT advance the owner's coherence
+     *      baseline, so it cannot fake liveness.
+     *   4. A foreign producer's frame does NOT reset the recovery ladder's
+     *      clean-frame streak.
+     *   5. When the owner goes silent, the lease EXPIRES even though the
+     *      foreign producer keeps talking: the dead-man's switch fires.
+     *   6. After that expiry the foreign producer MAY take the session over
+     *      -- with a NEW sequence epoch and its own warm-up.
+     */
+    {
+        latch_sim_reset();
+
+        /* The owner (producer 1) opens the session and completes its
+         * warm-up. */
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_HEARTBEAT, 1u, 1u, 0, 0u,
+                                         LATCH_TEST_PRODUCER_TAG);
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_HEARTBEAT, 2u, 2u, 0, 0u,
+                                         LATCH_TEST_PRODUCER_TAG);
+        if (!g_simplex.gov_v2_session || g_simplex.gov_warmup_seen != 2u ||
+            g_simplex.gov_lease_owner_tag != LATCH_TEST_PRODUCER_TAG ||
+            !g_simplex.gov_lease_owner_valid) {
+            fprintf(stderr, "FAIL: the owner producer did not establish the lease\n");
+            goto fail;
+        }
+
+        /* One accepted owner command: it earns a clean-frame credit, so the
+         * recovery-streak assertion below is not vacuous. */
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_CMD_V2, 3u, 3u, 25, 255u,
+                                         LATCH_TEST_PRODUCER_TAG);
+        if (g_simplex.gov_ladder.clean_frame_streak != 1u) {
+            fprintf(stderr, "FAIL: the owner command did not earn a clean-frame credit\n");
+            goto fail;
+        }
+
+        const uint32_t lease_before = g_simplex.gov_lease_remaining;
+        const uint32_t coherence_before = g_simplex.gov_last_coherence;
+        const int32_t theta_before = g_simplex.theta_mrad;
+        const uint32_t streak_before = g_simplex.gov_ladder.clean_frame_streak;
+
+        /* A SECOND producer (tag 2) sends a well-formed, coherent-looking
+         * command that WOULD move the plant. It must be completely inert. */
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_CMD_V2, 100u, 100u, -25, 255u,
+                                         LATCH_TEST_FOREIGN_TAG);
+        if (g_simplex.gov_lease_remaining >= lease_before) {
+            fprintf(stderr, "FAIL: a foreign producer renewed the dead-man lease\n");
+            goto fail;
+        }
+        if (g_simplex.theta_mrad != theta_before) {
+            fprintf(stderr, "FAIL: a foreign producer moved the plant\n");
+            goto fail;
+        }
+        if (g_simplex.gov_last_coherence != coherence_before) {
+            fprintf(stderr, "FAIL: a foreign producer advanced the coherence baseline\n");
+            goto fail;
+        }
+        if (g_simplex.gov_ladder.clean_frame_streak != streak_before) {
+            fprintf(stderr, "FAIL: a foreign producer disturbed the recovery streak\n");
+            goto fail;
+        }
+        if (g_simplex.gov_foreign_frames != 1u) {
+            fprintf(stderr, "FAIL: a foreign producer's frame was not counted as lease-inert\n");
+            goto fail;
+        }
+
+        /* The owner's sequence epoch must be intact: the next owner frame
+         * (seq 4) is accepted, not mistaken for a replay. */
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_CMD_V2, 4u, 4u, 25, 255u,
+                                         LATCH_TEST_PRODUCER_TAG);
+        if ((g_simplex.active_faults & LATCH_FAULT_SEQ) != 0u) {
+            fprintf(stderr, "FAIL: a foreign producer disturbed the owner's sequence epoch\n");
+            goto fail;
+        }
+
+        /* The owner dies. The foreign producer keeps talking -- and the
+         * dead-man's switch must still fire. */
+        bool lease_expired = false;
+        for (uint32_t i = 0u; i < g_manifest.governor.lease_ticks + 1u; ++i) {
+            latch_governor_test_frame_tagged(GOVERNOR_WIRE_CMD_V2, 101u + i, 101u + i,
+                                             -25, 255u, LATCH_TEST_FOREIGN_TAG);
+            if ((g_simplex.active_faults & LATCH_FAULT_HEARTBEAT) != 0u) {
+                lease_expired = true;
+                break;
+            }
+        }
+        if (!lease_expired) {
+            fprintf(stderr, "FAIL: the dead-man lease did not expire while a foreign producer kept talking\n");
+            goto fail;
+        }
+        if (g_simplex.gov_ladder.rung == GOVERNOR_RUNG_HP) {
+            fprintf(stderr, "FAIL: the dead-man lease expiry did not demote the ladder\n");
+            goto fail;
+        }
+        if (!g_simplex.gov_session_dead) {
+            fprintf(stderr, "FAIL: the expired session was not declared dead\n");
+            goto fail;
+        }
+
+        /* The foreign producer may now take the session over -- and the
+         * takeover starts a NEW sequence epoch with its own warm-up. */
+        latch_governor_test_frame_tagged(GOVERNOR_WIRE_HEARTBEAT, 200u, 200u, 0, 0u,
+                                         LATCH_TEST_FOREIGN_TAG);
+        if (g_simplex.gov_producer_takeovers != 1u ||
+            g_simplex.gov_lease_owner_tag != LATCH_TEST_FOREIGN_TAG ||
+            !g_simplex.gov_v2_session || g_simplex.gov_warmup_seen != 1u) {
+            fprintf(stderr, "FAIL: the expired session was not taken over with a fresh epoch\n");
+            goto fail;
+        }
+    }
+
+    /*
+     * Test: the operator release is RETAINED when it cannot be armed (L-5).
+     *
+     * The defect this pins: `operator_release_pending` was exchanged to zero
+     * on EVERY governor tick, while the ladder only arms a release while the
+     * rung is LATCH.  A release issued at any other rung was therefore
+     * silently discarded -- the operator was told the hold was released and
+     * nothing happened, with no diagnostic anywhere.
+     *
+     * The property asserted here: the request is RETAINED while the rung is
+     * unchanged (and reported as DEFERRED), and it is INVALIDATED as soon
+     * as the rung moves -- so a stale authorisation can never authorise a
+     * later, unrelated exit from LATCH.
+     */
+    {
+        latch_hold_status_t hs;
+        memset(&hs, 0, sizeof(hs));
+
+        /* Keep the governor loop quiet for the duration of this test: a
+         * healthy lease, an active session and no proposal, so the only
+         * thing that can move the rung is the test itself. */
+        uint8_t saved_rung = g_simplex.gov_ladder.rung;
+        bool saved_session = g_simplex.session_active;
+        bool saved_v2 = g_simplex.gov_v2_session;
+        uint32_t saved_lease = g_simplex.gov_lease_remaining;
+        g_simplex.gov_v2_session = true;
+        g_simplex.gov_lease_remaining = g_manifest.governor.lease_ticks;
+        g_simplex.last_rx_tick = g_simplex.tick;
+        g_simplex.session_active = true;
+
+        /* Start from a rung where a release has no effect. */
+        g_simplex.gov_ladder.rung = GOVERNOR_RUNG_ADVISE;
+        latch_force_hold_cmd_t deferred_release = { .lock_hold = 0u, .reason_code = 9u };
+        if (latch_sim_devctl_actuator(true, (unsigned int)DCMD_LATCH_FORCE_HOLD,
+                                      &deferred_release) != 0) {
+            fprintf(stderr, "FAIL: deferred operator release command failed\n");
+            goto fail;
+        }
+        if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_HOLD_STATUS,
+                                      &hs) != 0 || hs.release_state != LATCH_RELEASE_DEFERRED ||
+            hs.rung != GOVERNOR_RUNG_ADVISE) {
+            fprintf(stderr, "FAIL: a release issued off-LATCH was not reported as DEFERRED\n");
+            goto fail;
+        }
+
+        /* A tick at the SAME rung must NOT consume the request. */
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if (g_simplex.gov_ladder.rung != GOVERNOR_RUNG_ADVISE) {
+            fprintf(stderr, "FAIL: the governor rung moved during the release test\n");
+            goto fail;
+        }
+        if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_HOLD_STATUS,
+                                      &hs) != 0 || hs.release_state != LATCH_RELEASE_DEFERRED) {
+            fprintf(stderr, "FAIL: a deferred operator release was silently consumed\n");
+            goto fail;
+        }
+        if (hs.release_deferred_ticks == 0u) {
+            fprintf(stderr, "FAIL: a deferred operator release did not count its wait\n");
+            goto fail;
+        }
+
+        /* A rung CHANGE invalidates the stale authorisation. */
+        g_simplex.gov_ladder.rung = GOVERNOR_RUNG_CLAMP;
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_HOLD_STATUS,
+                                      &hs) != 0 || hs.release_state != LATCH_RELEASE_NONE) {
+            fprintf(stderr, "FAIL: a stale operator release survived a rung change\n");
+            goto fail;
+        }
+
+        /* At LATCH the release is ARMED and consumed. */
+        g_simplex.gov_ladder.rung = GOVERNOR_RUNG_LATCH;
+        latch_force_hold_cmd_t armed_release = { .lock_hold = 0u, .reason_code = 10u };
+        if (latch_sim_devctl_actuator(true, (unsigned int)DCMD_LATCH_FORCE_HOLD,
+                                      &armed_release) != 0) {
+            fprintf(stderr, "FAIL: operator release at LATCH failed\n");
+            goto fail;
+        }
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+        if (latch_sim_devctl_actuator(false, (unsigned int)DCMD_LATCH_GET_HOLD_STATUS,
+                                      &hs) != 0 || hs.release_state != LATCH_RELEASE_ARMED) {
+            fprintf(stderr, "FAIL: an operator release at LATCH was not reported as ARMED\n");
+            goto fail;
+        }
+
+        /* Restore the state the rest of the suite expects. */
+        g_simplex.gov_ladder.rung = saved_rung;
+        g_simplex.session_active = saved_session;
+        g_simplex.gov_v2_session = saved_v2;
+        g_simplex.gov_lease_remaining = saved_lease;
+        atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);
+        atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);
+        atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
     }
 
     /* Test ring buffer overflow, wrap-around and pagination clamping */
@@ -3322,7 +3889,7 @@ static int latch_run_self_tests(void) {
         return EXIT_FAILURE;
     }
 
-    printf("[LATCH_HOST_SIM] PASS: All 9 safety, EOF, parser & Seqlock tests verified (PWM center=%u counts).\n",
+    printf("[LATCH_HOST_SIM] PASS: All safety, EOF, parser & Seqlock self-tests verified (PWM center=%u counts).\n",
            (unsigned int)latch_mrad_to_pca9685_off(0));
     return EXIT_SUCCESS;
 }

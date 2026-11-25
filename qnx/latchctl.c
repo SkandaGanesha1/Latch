@@ -272,6 +272,47 @@ static int do_hold(int fd, int argc, char *argv[]) {
 
     printf("latchctl: Operator HA-HOLD %s (reason=%u)\n",
            lock_val ? "LOCKED" : "RELEASED", reason);
+
+    /*
+     * Report what ACTUALLY happened to a release (L-5).
+     *
+     * The operator release is only effective while the ladder is at LATCH,
+     * the rung from which the fail-closed interlock can only be left with
+     * an explicit acknowledgement.  A release issued at any other rung used
+     * to be consumed silently, so the operator believed it "took" when it had
+     * done nothing at all.  The supervisor now RETAINS such a request and
+     * reports its state, and this prints the settled outcome.
+     */
+    if (!lock_val) {
+        latch_hold_status_t st;
+        memset(&st, 0, sizeof(st));
+        int src = devctl(fd, DCMD_LATCH_GET_HOLD_STATUS, &st, sizeof(st), NULL);
+        if (src != EOK) {
+            fprintf(stderr, "latchctl: WARNING: could not read the release state "
+                            "(%s (%d)) -- the request was accepted but its effect "
+                            "is UNKNOWN.\n", strerror(src), src);
+            return 1;
+        }
+        switch (st.release_state) {
+            case LATCH_RELEASE_ARMED:
+                printf("latchctl: Release ARMED at rung LATCH: the fail-closed interlock "
+                       "may leave LATCH after %u clean frames.\n",
+                       25u /* recovery.hysteresis_clean_frames */);
+                break;
+            case LATCH_RELEASE_DEFERRED:
+                printf("latchctl: Release RECORDED but DEFERRED: the ladder is at rung %u, "
+                       "where a release has no effect (it is armed only at rung LATCH).\n",
+                       st.rung);
+                printf("latchctl: The request is RETAINED (waiting %u tick(s)); it is "
+                       "invalidated if the rung changes. Re-issue 'latchctl hold 0' "
+                       "once the status shows rung LATCH.\n",
+                       st.release_deferred_ticks);
+                break;
+            default:
+                printf("latchctl: Release NOT armed: the ladder is at rung %u.\n", st.rung);
+                break;
+        }
+    }
     return 0;
 }
 

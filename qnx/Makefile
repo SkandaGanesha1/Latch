@@ -364,8 +364,26 @@ ifs-qemu-aarch64: aarch64 secpol guest-initrd check-guest-image check-guest-init
 ifs-qemu-governor: aarch64 secpol guest-governor-initrd check-guest-image check-governor-initrd
 	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs -v latch_qemu_governor.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_governor.ifs
 
+# Development-only unrestricted policy-generation image. Never substitute it
+# for the normal, enforced GOVERNOR image.
+ifs-qemu-governor-secpol-audit: aarch64 secpol guest-governor-initrd check-guest-image check-governor-initrd
+	python3 ../tools/generate_secpol_audit_build.py latch_qemu_governor.build $(BUILD_DIR)/latch_qemu_governor_secpol_audit.build
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs -v $(BUILD_DIR)/latch_qemu_governor_secpol_audit.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_governor_secpol_audit.ifs
+
 verify-governor-qemu: ifs-qemu-governor
 	python3 ../tools/verify_governor_qemu.py
+
+# Disposable target verification images; never deploy the unrestricted audit image.
+target-probe: aarch64
+	qcc -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE latch_target_probe.c -o $(BUILD_DIR)/nto-aarch64-le/latch_target_probe -Wl,-z,relro,-z,now
+
+ifs-qemu-writer-test: target-probe secpol guest-governor-initrd check-guest-image check-governor-initrd
+	python3 ../tools/generate_writer_test_build.py latch_qemu_governor.build $(BUILD_DIR)/latch_writer_test.build
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs $(BUILD_DIR)/latch_writer_test.build $(BUILD_DIR)/nto-aarch64-le/latch_writer_test.ifs
+
+ifs-qemu-audit-probe: target-probe secpol guest-governor-initrd check-guest-image check-governor-initrd
+	python3 ../tools/generate_secpol_audit_build.py --probe latch_qemu_governor.build $(BUILD_DIR)/latch_audit_probe.build
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs $(BUILD_DIR)/latch_audit_probe.build $(BUILD_DIR)/nto-aarch64-le/latch_audit_probe.ifs
 
 # Run live QEMU AArch64 test directly against the committed prebuilt IFS image
 # without requiring QNX SDP host cross-compilation tools (qcc, mkifs).

@@ -37,6 +37,7 @@ The v2 CRC uses the same reflected IEEE polynomial, initial value, and final XOR
 - `SHRINK_REQ`: `u_mrad` carries a proposed maximum velocity in the contract's canonical integer unit; confidence carries a Q0.8 scale in 1–255. Unit ID must be zero. The frame must carry valid coherent progress, but cannot create a session or renew the lease. The host accepts only values no greater than current effective limits; a request that would widen is rejected and classified as a policy fault.
 - Unknown v2 kinds, nonzero reserved bytes, invalid agent states, invalid kind-specific fields, or an invalid v2 CRC are structural failures. Ingest maps these to existing wire fault bits so the current `LATCH_FAULT_WIRE_MASK` forwarding contract is not silently bypassed.
 - The first valid heartbeat or CMD_V2 establishes the guest counter baseline. Subsequent v2 messages require a modulo-2^24 forward delta in `[1, coherence_max_gap]`; this supports normal 24-bit wrap while rejecting duplicate, backwards, and excessive jumps. A genuine writer-session transition establishes a new baseline.
+- The proposal resource manager permits one writer at a time; a concurrent writer open returns `EBUSY`. The producer tag in the IPC payload is sender supplied and is not authentication. This change requires fresh QNX target validation.
 
 ### 2.2 Sequence and session handling
 

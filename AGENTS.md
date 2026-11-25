@@ -148,6 +148,13 @@ Rules for the archive:
 These cost real time to establish. They are the ones that are easy to get
 wrong.
 
+- On this workstation on 2026-11-25, `qcc -V` timed out after 15 seconds
+  in the restricted execution sandbox but succeeded outside it after sourcing
+  `~/qnx800/qnxsdp-env.sh`. The normal and development-only GOVERNOR QEMU
+  images then built with `qcc`; `tools/verify_governor_qemu.py` passed against
+  the fresh normal image. This observation does not identify which sandbox
+  restriction causes the hang and does not prove writer-session behavior.
+
 - **QNX Hypervisor 8.0 `cpu` takes an indented options block**, whose only
   two options are `cluster` and `sched`. The Hypervisor 7.1 one-line form
   `cpu _cpu-2 sched 8r` is **rejected** by the 8.0 qvm with

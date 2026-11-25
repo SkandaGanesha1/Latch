@@ -90,10 +90,8 @@ with no `qnx/*.build` file behind it.
   * 95% of robotics developers state real-time determinism is critical.
   * 91% currently run safety workloads on general-purpose OSs (Linux), risking unpredictable jitter and crashes.
   * 27% cite software architecture and mixed-criticality integration as their single largest bottleneck.
-- **InfectBot / Autonomous Agent Hijacking (IJCAI 2026)**:
-  * 100% obedience rate in compromised foundation models under prompt injection. Demonstrates that guest AI must be treated as completely adversarial.
-- **Multi-Candidate Simplex over Type-1 Hypervisors (arXiv 2509.21014 & 2610.35040)**:
-  * Demonstrates that running Simplex supervisors natively in RTOS microkernels achieves average decision latencies of 0.028 ms, bounding worst-case execution under physical AI faults.
+- The prior InfectBot citation and associated numerical claims could not be verified and have been withdrawn.
+- External Simplex research does not establish a latency bound for this implementation; use the project's own captured measurements for its demonstrated behavior.
 
 ---
 

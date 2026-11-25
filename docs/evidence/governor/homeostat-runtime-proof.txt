@@ -1,6 +1,6 @@
 ================================================================================
 LATCH HOMEOSTAT — ULTRSTABILITY OUTER LOOP RUNTIME PROOF
-Date: 20261125-000405
+Date: 20261125-135634
 Host: Linux fedora 7.3.4-300.fc45.x86_64
 Compiler: gcc (host)
 Contract: qnx/contracts/homeostat_servo.manifest (schema 3, homeostat enabled)
@@ -25,7 +25,7 @@ Contract: qnx/contracts/homeostat_servo.manifest (schema 3, homeostat enabled)
 
 --- 4. MANIFEST PARSER UNIT TEST (latch_manifest_test.c) ---
 
-[LATCH_MANIFEST] PASS: 19 checks -- strict homeostat parsing, range fail-closed, default-off, schema-3-only and sidecar enforcement
+[LATCH_MANIFEST] PASS: 41 checks -- strict homeostat parsing, range fail-closed, default-off, schema-3-only, strict key sets and sidecar enforcement
 
 --- 5. CONTRACT ATTESTATION ---
 

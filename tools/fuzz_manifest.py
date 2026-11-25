@@ -111,7 +111,7 @@ def run_fuzz_campaign(iterations: int = 500, seed: int = 42) -> int:
     print(f"[FUZZ] Completed {iterations} fuzzing runs: {crashes} crashes, {passed_rejects} fail-closed rejects.")
     if crashes > 0:
         return 1
-    print("[FUZZ PASS] Manifest parser demonstrates 100% fail-closed memory safety under fuzz testing.")
+    print("[FUZZ PASS] Generated inputs were rejected without a process crash; this run does not prove memory safety.")
     return 0
 
 

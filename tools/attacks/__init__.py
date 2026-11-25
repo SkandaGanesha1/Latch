@@ -8,6 +8,7 @@ Contains standalone reproducible attack scripts for:
   - A5: Coherence Spoof Attack (attack_a5_coherence_spoof.py)
   - A6: Sequence Replay Attack (attack_a6_replay.py)
   - A7: Forensic Chain Tamper Attack (attack_a7_chain_tamper.py)
+  - A8: Second Writer Keeps a Dead Agent Alive (attack_a8_second_writer.py)
   - Unified Runner: run_attacks.py
 """
 
@@ -66,13 +67,22 @@ def find_pipeline_binaries() -> Tuple[pathlib.Path, pathlib.Path, pathlib.Path, 
     )
 
 
-def run_attack_pipeline(
-    raw_frames: bytes,
+def run_producer_pipeline(
+    streams: List[Tuple[bytes, Optional[int]]],
     manifest_dict: Optional[Dict[str, Any]] = None,
     name: str = "attack",
     tempdir_path: Optional[pathlib.Path] = None,
 ) -> List[Dict[str, Any]]:
-    """Feed raw wire frames through latch-ingest and latchd pipe, returning parsed CSV tape rows."""
+    """Feed one or more PRODUCERS through latch-ingest into a single latchd pipe.
+
+    Each entry of `streams` is `(raw_wire_frames, producer_tag)`. A separate
+    `latch-ingest` instance forwards each producer's frames and stamps that
+    producer's identity (L-2: `--producer-tag N`), and the resulting IPC
+    streams are CONCATENATED into one supervisor pipe -- which is exactly
+    what two writers to /dev/latch/proposal produce on target.
+
+    A `producer_tag` of None means "the default producer" (tag 1).
+    """
     latchctl, ingest, latchd, default_manifest_path = find_pipeline_binaries()
 
     if manifest_dict is None:
@@ -96,20 +106,28 @@ def run_attack_pipeline(
                 f"[{name}] Manifest verification failed:\n{verify.stdout}\n{verify.stderr}"
             )
 
-        ingested = subprocess.run(
-            [str(ingest), "-m", str(manifest_path), "-o", "-"],
-            input=raw_frames,
-            capture_output=True,
-        )
-        if ingested.returncode != 0:
-            raise RuntimeError(
-                f"[{name}] latch-ingest returned error {ingested.returncode}:\n{ingested.stderr.decode(errors='replace')}"
+        ipc_chunks: List[bytes] = []
+        for index, (raw_frames, producer_tag) in enumerate(streams):
+            argv = [str(ingest), "-m", str(manifest_path), "-o", "-"]
+            if producer_tag is not None:
+                argv += ["-t", str(producer_tag)]
+            ingested = subprocess.run(
+                argv,
+                input=raw_frames,
+                capture_output=True,
             )
+            if ingested.returncode != 0:
+                raise RuntimeError(
+                    f"[{name}] latch-ingest returned error {ingested.returncode} "
+                    f"(producer {index}, tag {producer_tag}):\n"
+                    f"{ingested.stderr.decode(errors='replace')}"
+                )
+            ipc_chunks.append(ingested.stdout)
 
         csv_path = tempdir / f"{name}-tape.csv"
         run = subprocess.run(
             [str(latchd), "-m", str(manifest_path), "--pipe-in", "--csv", str(csv_path)],
-            input=ingested.stdout,
+            input=b"".join(ipc_chunks),
             capture_output=True,
         )
         if run.returncode != 0:
@@ -127,6 +145,19 @@ def run_attack_pipeline(
     else:
         with tempfile.TemporaryDirectory(prefix=f"latch-{name}-") as temp:
             return _execute(pathlib.Path(temp))
+
+
+def run_attack_pipeline(
+    raw_frames: bytes,
+    manifest_dict: Optional[Dict[str, Any]] = None,
+    name: str = "attack",
+    tempdir_path: Optional[pathlib.Path] = None,
+) -> List[Dict[str, Any]]:
+    """Feed raw wire frames through latch-ingest and latchd pipe, returning parsed CSV tape rows."""
+    return run_producer_pipeline(
+        [(raw_frames, None)], manifest_dict=manifest_dict, name=name,
+        tempdir_path=tempdir_path,
+    )
 
 
 def assert_zero_keepout_breaches(

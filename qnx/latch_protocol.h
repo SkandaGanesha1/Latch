@@ -219,7 +219,23 @@ typedef struct __attribute__((packed)) latch_ipc_proposal_v2 {
     uint8_t  kind;
     uint8_t  confidence_q8;
     uint8_t  agent_state;
-    uint16_t reserved0;
+    /*
+     * Producer identity (L-2).
+     *
+     * This field was `reserved0` and was REQUIRED to be zero. It is now the
+     * producer tag: the identity of the bridge that produced this frame.
+     * The supervisor's dead-man lease is scoped to the producer that
+     * established the session, so a second producer's frames are
+     * lease-inert -- they cannot renew the lease, cannot advance the
+     * coherence baseline, cannot earn warm-up credit and cannot move the
+     * plant while the owner's lease is live.
+     *
+     * 0 (LATCH_PRODUCER_TAG_NONE) is RESERVED and REJECTED on a v2 frame:
+     * an unscoped frame must not be able to slip past the lease authority.
+     * The struct size is unchanged (48 bytes), so the wire ABI does not
+     * move -- only the meaning of two bytes does.
+     */
+    uint16_t producer_tag;
     uint32_t coherence_ctr;
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
@@ -230,10 +246,16 @@ _Static_assert(sizeof(latch_ipc_proposal_v2_t) == 48u,
                "latch_ipc_proposal_v2_t must be exactly 48 bytes");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, ipc_version) == 24u,
                "LPR2 ipc_version offset changed");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, producer_tag) == 30u,
+               "LPR2 producer_tag offset changed");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, coherence_ctr) == 32u,
                "LPR2 coherence counter offset changed");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, unit_id) == 44u,
                "LPR2 unit_id offset changed");
+
+/* Producer identity constants (L-2). */
+#define LATCH_PRODUCER_TAG_NONE  0u   /* RESERVED: rejected on a v2 frame */
+#define LATCH_PRODUCER_TAG_MAX   0xFFFFu
 
 /* Native supervisor-side representation; never sent across the IPC boundary. */
 typedef struct latch_proposal {
@@ -247,6 +269,7 @@ typedef struct latch_proposal {
     uint8_t  kind;
     uint8_t  confidence_q8;
     uint8_t  agent_state;
+    uint16_t producer_tag;   /* 0 for a v1 (unscoped) frame                 */
     uint32_t coherence_ctr;
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
@@ -261,6 +284,34 @@ typedef struct latch_force_hold_cmd {
     uint32_t lock_hold;      /* 1 = force HA-HOLD, 0 = release operator hold  */
     uint32_t reason_code;    /* Operator audit reason                         */
 } latch_force_hold_cmd_t;
+
+/* Operator-release acknowledgement (L-5).
+ *
+ * `release_state` tells the operator what ACTUALLY happened to a
+ * `latchctl hold 0`, instead of silently accepting it:
+ *
+ *   0 = NO RELEASE REQUESTED (the operator hold is engaged)
+ *   1 = RELEASE RECORDED, DEFERRED -- the ladder was not at LATCH, which is
+ *       the only rung from which a release has any effect, so the request is
+ *       held rather than thrown away
+ *   2 = RELEASE ARMED -- the ladder was at LATCH and the release is effective
+ *
+ * The supervisor consumes the request on the next 1 ms tick, so this reply
+ * describes the state at the moment of the command; `latchctl` re-reads it
+ * so the operator sees the settled outcome.
+ */
+#define LATCH_RELEASE_NONE     0u
+#define LATCH_RELEASE_DEFERRED 1u
+#define LATCH_RELEASE_ARMED    2u
+
+typedef struct latch_hold_status {
+    uint32_t struct_size;
+    uint32_t hold_locked;             /* 1 = the operator hold is engaged      */
+    uint32_t rung;                    /* Governor rung (0..5)                  */
+    uint32_t release_state;           /* LATCH_RELEASE_*                       */
+    uint32_t release_deferred_ticks;  /* Ticks the release has waited          */
+    uint32_t reserved;
+} latch_hold_status_t;
 
 typedef struct latch_status_reply {
     uint64_t tick;
@@ -319,12 +370,41 @@ typedef struct latch_governor_status_reply {
     uint32_t homeostat_scale_q8;
     uint32_t homeostat_v_max;
     uint32_t homeostat_stress_epochs;
+    /* Producer-scoped lease telemetry (extension_version >= 5).
+     *
+     * `lease_owner_tag` is the producer that currently holds the dead-man
+     * lease; `lease_owner_valid` is 0 when no producer has established a
+     * session. `session_dead` is 1 when the owner's lease has expired: the
+     * session is no longer authoritative, and another producer may take it
+     * over (which starts a NEW sequence epoch and re-earns the warm-up).
+     * `foreign_frames` counts frames that arrived from a producer other than
+     * the owner while the lease was live -- those frames were lease-inert
+     * and could not move the plant. `producer_takeovers` counts the
+     * takeovers. */
+    uint32_t lease_owner_tag;
+    uint32_t lease_owner_valid;
+    uint32_t session_dead;
+    uint32_t foreign_frames;
+    uint32_t producer_takeovers;
 } latch_governor_status_reply_t;
 
 #define LATCH_DUMP_MAX_ENTRIES   128u
 
+/*
+ * The tape dump's cursor is 64-BIT.
+ *
+ * The ring's write index counts every tick ever recorded. As a uint32 it
+ * wrapped after 2^32 ticks -- about 49.7 days at the 1 kHz decision rate --
+ * and the pagination arithmetic (`wr_idx - cap`, `wr_idx - start`,
+ * `start >= wr_idx`) assumes a MONOTONICALLY GROWING index. After the wrap
+ * the comparison inverted and the dump returned NOTHING: the evidence
+ * recorder went blind exactly when a long-running system most needs it.
+ *
+ * A uint64 cursor does not wrap for 584 million years at 1 kHz. The
+ * "give me the latest page" sentinel is therefore UINT64_MAX.
+ */
 typedef struct latch_tape_dump {
-    uint32_t start_index;
+    uint64_t start_index;
     uint32_t count;
     uint64_t latest_tick;
     uint8_t  manifest_sha256[32];
@@ -381,6 +461,9 @@ typedef struct latch_gov_event_dump {
     __DIOF(_DCMD_MISC, 0x43, latch_governor_status_reply_t)
 #define DCMD_LATCH_DUMP_GOV_EVENTS \
     __DIOTF(_DCMD_MISC, 0x44, latch_gov_event_dump_t)
+/* Operator-release acknowledgement (L-5). Output-only, like GET_STATUS. */
+#define DCMD_LATCH_GET_HOLD_STATUS \
+    __DIOF(_DCMD_MISC, 0x46, latch_hold_status_t)
 
 /* ==========================================================================
  * Cross-Process Payload Layout Asserts
@@ -394,8 +477,8 @@ typedef struct latch_gov_event_dump {
  * payload layout, and a mismatch between the supervisor and a client built
  * from a different revision is diagnosed as "random garbage" rather than as
  * a layout error. `latch_tape_dump_t` is additionally padding-sensitive: it
- * carries a uint64_t after two uint32_t, so its offsets depend on the
- * alignment rules of the compiler.
+ * carries a uint64_t cursor followed by a uint32_t count, so its offsets
+ * depend on the alignment rules of the compiler.
  * ========================================================================== */
 
 _Static_assert(sizeof(latch_status_reply_t) % 8u == 0u,
@@ -422,6 +505,10 @@ _Static_assert(sizeof(latch_tape_dump_t) % 8u == 0u,
                "latch_tape_dump_t must be a multiple of its 8-byte alignment");
 _Static_assert(offsetof(latch_tape_dump_t, start_index) == 0u,
                "latch_tape_dump_t: start_index must be the first field");
+_Static_assert(sizeof(((latch_tape_dump_t *)0)->start_index) == 8u,
+               "latch_tape_dump_t: the cursor must be 64-bit (it must not wrap)");
+_Static_assert(offsetof(latch_tape_dump_t, count) == 8u,
+               "latch_tape_dump_t: count must follow the 64-bit cursor");
 _Static_assert(offsetof(latch_tape_dump_t, latest_tick) % 8u == 0u,
                "latch_tape_dump_t: latest_tick must be 8-byte aligned");
 _Static_assert(offsetof(latch_tape_dump_t, entries) ==
@@ -435,6 +522,10 @@ _Static_assert(offsetof(latch_tape_dump_t, entries) +
 
 _Static_assert(sizeof(latch_force_hold_cmd_t) == 8u,
                "latch_force_hold_cmd_t must be 8 bytes");
+_Static_assert(sizeof(latch_hold_status_t) == 24u,
+               "latch_hold_status_t must be 24 bytes");
+_Static_assert(offsetof(latch_hold_status_t, struct_size) == 0u,
+               "latch_hold_status_t: struct_size must be the first field");
 #define DCMD_LATCH_PROBE_ABILITY \
     __DION(_DCMD_MISC, 0x45)
 

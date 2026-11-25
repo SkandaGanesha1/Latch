@@ -30,10 +30,10 @@ summary written for you.
 | Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
 | GOVERNOR on-target verify | `[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held…; final lease expiry reached LATCH` | `governor/governor-qemu-verify.txt` (verbatim `make verify-governor-qemu` output) |
-| GOVERNOR attack scorecard | `121 ticks · 0 intrusions · 7/7 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
+| GOVERNOR attack scorecard | `132 ticks · 0 intrusions · 8/8 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |
 | HOMEOSTAT contraction | `per-tick velocity ceiling 24 → 1 mrad/tick` under a stressed epoch, recovering to `24` on a clean epoch (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |
 | HOMEOSTAT contracting-only | `never moved the plant faster than the unadapted run` over 38 ticks; `default-off` with no `homeostat` section (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |
-| GOVERNOR VM-kill containment | `100% containment · qvm purged · plant locked 0 mrad · 0 keep-out breaches` | `governor/governor-vm-kill-resume.txt` |
+| GOVERNOR VM-kill scenario | Historical capture reports qvm purge and no observed keep-out breach; its platform label requires verification | `governor/governor-vm-kill-resume.txt` |
 | GOVERNOR on-target decision latency | `run max 80,911 cyc (1,294,576 ns ≈ 1.29 ms)` — a **TCG emulation observation, not a WCET** | `governor/governor-qemu-verify.txt` + `../GOVERNOR_JUDGE_READINESS.md` |
 | ~~Real-time latency benchmark~~ | **REJECTED** — the old `QNX WCET 61.08 us … 23,500 ticks` row was withdrawn: its generator inserted fixed values. Nothing in this archive quotes it. | `quarantine/README.txt` |
 ---
@@ -69,10 +69,8 @@ docs/evidence/
       governor-vm-kill-resume.txt
       homeostat-runtime-proof.txt
   host-sim/
-      20261113-181136-consistency.txt
-      20261113-181136-host-sim.txt
-      20261123-200535-consistency.txt
-      20261123-200535-host-sim.txt
+      20261125-123128-consistency.txt
+      20261125-123128-host-sim.txt
   on-target/
       01-guest-boot-console.txt
       02-run1-51-envelope-vetoes.txt
@@ -157,7 +155,8 @@ tools, each with its own regeneration command:
 GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image \
   make -C qnx verify-governor-qemu
 
-# governor-metrics.txt -- the 121-tick attack scorecard (host-sim build)
+# governor-metrics.txt -- the attack scorecard (host-sim build); the
+#   tick and attack counts in it are measured, not typed in by hand
 python3 tools/governor_metrics.py --out docs/evidence/governor/governor-metrics.txt
 
 # homeostat-runtime-proof.txt -- the HOMEOSTAT outer-loop runtime proof

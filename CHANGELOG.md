@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Producer-Scoped Dead-Man Lease (L-2, HIGH)**: The dead-man lease was renewed by **any** frame that arrived on `/dev/latch/proposal`, so a second unprivileged writer could keep a session alive whose real planner had died — precisely the failure a dead-man's switch exists to prevent. The lease is now owned by a **producer**: `latch_ipc_proposal_v2_t.reserved0` is repurposed as a `producer_tag` (the 48-byte struct size and the wire ABI are unchanged), `latch-ingest --producer-tag N` stamps it, and the supervisor resolves lease authority before the sequence check. A foreign producer's frame is **lease-inert** — it cannot renew the lease, cannot advance the coherence baseline, cannot earn warm-up credit, cannot move the plant, cannot advance the owner's sequence epoch and cannot reset the recovery streak. A takeover is possible only after the owner's lease has **expired**, and it starts a new epoch (fresh sequence baseline, re-earned warm-up). Tag `0` is reserved and an unscoped v2 frame is rejected at the IPC boundary. Telemetry: `lease_owner_tag`, `lease_owner_valid`, `session_dead`, `foreign_frames`, `producer_takeovers` (`DCMD_LATCH_GET_GOV_STATUS`, `extension_version` 4 → 5).
+- **Ring-Flush Read-Tail Regression (L-3)**: A session flush could move the consumer's `read_tail` **backwards**, letting a pre-reset frame be re-applied. The flush now bumps a `flush_epoch` and advances `read_tail` with an atomic compare-exchange; the consumer reads under an epoch guard.
+- **Manifest Key-Set Validation (L-4)**: The loader now rejects unknown keys in **every** section and at the top level, not just in a subset.
+- **Operator Release Honesty (L-5)**: The operator release token is **retained** while the ladder rung is unchanged and **invalidated** on any rung change; the new output-only `DCMD_LATCH_GET_HOLD_STATUS` (`0x46`) reports `LATCH_RELEASE_NONE` / `DEFERRED` / `ARMED`, and `latchctl hold 0` prints the same state instead of implying an armed release.
+
+### Added
+- **Attack A8 — Second Writer Keeps a Dead Agent Alive (`tools/attacks/attack_a8_second_writer.py`)**: Drives **two producers** through separate `latch-ingest` instances whose IPC streams are concatenated into one supervisor pipe — what two writers to `/dev/latch/proposal` produce on target. Asserts the lease still expires and demotes under continuous rogue traffic, that the rogue cannot move the plant, and that the post-expiry takeover is a new epoch. Registered in the unified rig and in the merged evidence tape.
+- **Producer identity on the wire (`qnx/latch_ingest.c`, `qnx/latch_ipc.c`)**: `latch-ingest --producer-tag N` (default `1`; `0` is refused fail-closed).
+
+### Changed
+- **Evidence and documentation counts are derived, not typed**: the merged governor tape now spans the full attack suite (each attack's rows come from the same scenario builder the rig uses), the evidence index reads the tick and attack counts back out of the generated `governor-metrics.txt`, and `tools/consistency_check.py` cross-checks the three generated artifacts against each other instead of asserting a hardcoded number.
+
+---
+
 ## [4.0.0] - 2026-11-18
 
 ### GOVERNOR — Deterministic Safety Interlock & Dead Man's Switch for Physical AI

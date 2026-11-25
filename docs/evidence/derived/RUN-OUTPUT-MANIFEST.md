@@ -49,7 +49,7 @@ carries the SHA-256 of the raw dump it was computed from.
 
 | # | Output file | What it contains |
 |---|---|---|
-| 1 | `host-sim/<ts>-host-sim.txt` | Four labelled sections: the 9 safety/EOF/parser/Seqlock self-tests; `manifest-verify` for the servo plant **and** the syringe plant (sidecar digests + admissibility); the 200-tick pipe-sim summary (`rx=200 \| wire_faults=12 \| env_faults=7 \| eperm_rejects=1`); the viewer's embedded-tape re-sync |
+| 1 | `host-sim/<ts>-host-sim.txt` | Four labelled sections: the safety/EOF/parser/Seqlock self-tests; `manifest-verify` for the servo plant **and** the syringe plant (sidecar digests + admissibility); the 200-tick pipe-sim summary (`rx=200 \| wire_faults=12 \| env_faults=7 \| eperm_rejects=1`); the viewer's embedded-tape re-sync |
 | 2 | `host-sim/<ts>-consistency.txt` | Every cross-file invariant check, each with its PASS line, and the exit status |
 | 3 | `derived/host-sim-signature.txt` | The exact signature table: `wire=12 · envelope=7 · last_seq=80 · HOME rows ≥ 10 · keep-out breaches = 0`, and a PASS/FAIL verdict |
 

@@ -917,10 +917,23 @@ def scenario_index(args):
     L.append("| HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |")
     # GOVERNOR rows: raw outputs of their named tools, quoted verbatim.
     L.append("| GOVERNOR on-target verify | `[GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held…; final lease expiry reached LATCH` | `governor/governor-qemu-verify.txt` (verbatim `make verify-governor-qemu` output) |")
-    L.append("| GOVERNOR attack scorecard | `121 ticks · 0 intrusions · 7/7 PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |")
+    # The attack scorecard's numbers are READ BACK from the generated
+    # metrics file, never re-typed here: a hardcoded tick or attack count
+    # in the index is a number that drifts the moment an attack is added.
+    gov_metrics_txt = read(os.path.join(out, "governor", "governor-metrics.txt"))
+    gov_ticks = "?"
+    gov_rate = "?"
+    for line in gov_metrics_txt.splitlines():
+        if "Total Ticks Evaluated" in line:
+            gov_ticks = line.split(":", 1)[1].strip()
+        elif "Deterministic Fault Detection Rate" in line:
+            m = re.search(r"\((\d+/\d+) attacks detected\)", line)
+            gov_rate = m.group(1) if m else "?"
+    L.append("| GOVERNOR attack scorecard | `%s ticks · 0 intrusions · %s PASS` (**host-sim build**, not on-target) | `governor/governor-metrics.txt` |"
+             % (gov_ticks, gov_rate))
     L.append("| HOMEOSTAT contraction | `per-tick velocity ceiling 24 → 1 mrad/tick` under a stressed epoch, recovering to `24` on a clean epoch (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |")
     L.append("| HOMEOSTAT contracting-only | `never moved the plant faster than the unadapted run` over 38 ticks; `default-off` with no `homeostat` section (**host-sim build**, not on-target) | `governor/homeostat-runtime-proof.txt` |")
-    L.append("| GOVERNOR VM-kill containment | `100% containment · qvm purged · plant locked 0 mrad · 0 keep-out breaches` | `governor/governor-vm-kill-resume.txt` |")
+    L.append("| GOVERNOR VM-kill scenario | Historical capture reports qvm purge and no observed keep-out breach; its platform label requires verification | `governor/governor-vm-kill-resume.txt` |")
     L.append("| GOVERNOR on-target decision latency | `run max 80,911 cyc (1,294,576 ns ≈ 1.29 ms)` — a **TCG emulation observation, not a WCET** | `governor/governor-qemu-verify.txt` + `../GOVERNOR_JUDGE_READINESS.md` |")
     # The withdrawn benchmark stays visible as a REJECTION, so the index
     # cannot silently forget that these numbers once lived here.
@@ -993,7 +1006,8 @@ def scenario_index(args):
     L.append("GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image \\")
     L.append("  make -C qnx verify-governor-qemu")
     L.append("")
-    L.append("# governor-metrics.txt -- the 121-tick attack scorecard (host-sim build)")
+    L.append("# governor-metrics.txt -- the attack scorecard (host-sim build); the")
+    L.append("#   tick and attack counts in it are measured, not typed in by hand")
     L.append("python3 tools/governor_metrics.py --out docs/evidence/governor/governor-metrics.txt")
     L.append("")
     L.append("# homeostat-runtime-proof.txt -- the HOMEOSTAT outer-loop runtime proof")
@@ -1199,7 +1213,7 @@ def scenario_index(args):
     M.append("")
     M.append("| # | Output file | What it contains |")
     M.append("|---|---|---|")
-    M.append("| 1 | `host-sim/<ts>-host-sim.txt` | Four labelled sections: the 9 safety/EOF/parser/Seqlock self-tests; `manifest-verify` for the servo plant **and** the syringe plant (sidecar digests + admissibility); the 200-tick pipe-sim summary (`rx=200 \\| wire_faults=12 \\| env_faults=7 \\| eperm_rejects=1`); the viewer's embedded-tape re-sync |")
+    M.append("| 1 | `host-sim/<ts>-host-sim.txt` | Four labelled sections: the safety/EOF/parser/Seqlock self-tests; `manifest-verify` for the servo plant **and** the syringe plant (sidecar digests + admissibility); the 200-tick pipe-sim summary (`rx=200 \\| wire_faults=12 \\| env_faults=7 \\| eperm_rejects=1`); the viewer's embedded-tape re-sync |")
     M.append("| 2 | `host-sim/<ts>-consistency.txt` | Every cross-file invariant check, each with its PASS line, and the exit status |")
     M.append("| 3 | `derived/host-sim-signature.txt` | The exact signature table: `wire=12 · envelope=7 · last_seq=80 · HOME rows ≥ 10 · keep-out breaches = 0`, and a PASS/FAIL verdict |")
     M.append("")
@@ -1370,8 +1384,8 @@ def scenario_resolution(args):
              "-> **84 of 84** |")
     L.append("| 6 | Opening the proposal node reset the supervisor | 15 envelope "
              "vetoes, last_seq frozen at 4, `VERIFY_RC=1` | a session reset is a "
-             "SESSION event, not an OPEN event; the harness joins the session "
-             "instead of resetting it | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / "
+             "historical fix made reset a session event; the current code rejects "
+             "a second writer with `EBUSY` (target validation pending) | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / "
              "`VERIFY_RC=0`** |")
     L.append("")
     L.append("The measured progression")
@@ -1641,9 +1655,9 @@ def scenario_resolution(args):
             "",
             "FIX",
             "  qnx/latchd.c, latch_io_open():",
-            "    - The reset is armed only on the 0 -> 1 WRITER TRANSITION. A",
-            "      second writer JOINS the live session: it does not reset it",
-            "      and it does not discard the queued frames.",
+            "    - The historical fix armed reset only on the first writer.",
+            "      Current source rejects a second writer with EBUSY; this",
+            "      newer behavior requires fresh on-target verification.",
             "    - The discarded frames (on a genuine new session) are COUNTED",
             "      as ring drops instead of vanishing silently.",
             "    - The writer count is rolled back if the OCB cannot be",
@@ -1872,7 +1886,7 @@ def scenario_governor(args):
     combined.append("")
 
     host_sim_file = os.path.join(out, "governor-host-sim.txt")
-    write(host_sim_file, "\n".join(combined) + "\n")
+    write(host_sim_file, "\n".join(line.rstrip() for line in "\n".join(combined).splitlines()) + "\n")
     print("[GOVERNOR] governor evidence captured -> %s" % os.path.relpath(host_sim_file, REPO_ROOT))
 
     # The HOMEOSTAT runtime proof, also as its own artifact so a judge can

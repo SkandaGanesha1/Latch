@@ -47,6 +47,7 @@ int latch_ipc_decode(const void *bytes, size_t length, latch_proposal_t *out) {
         out->ingest_cycles = v1.ingest_cycles;
         out->wire_version = 1u;
         out->kind = (uint8_t)(v1.wire_flags & 0xFFu);
+        out->producer_tag = LATCH_PRODUCER_TAG_NONE;
         return 0;
     }
 
@@ -56,7 +57,11 @@ int latch_ipc_decode(const void *bytes, size_t length, latch_proposal_t *out) {
         if (v2.ipc_magic != LATCH_IPC_PROPOSAL_V2_MAGIC ||
             v2.ipc_version != 2u || v2.wire_version != 2u ||
             v2.kind > 3u || v2.wire_flags != (uint16_t)v2.kind ||
-            v2.reserved0 != 0u ||
+            /* L-2: a v2 frame MUST name its producer. An unscoped frame
+             * (tag 0) would be a frame the lease authority cannot reason
+             * about, so it is rejected here -- fail closed at the boundary
+             * rather than silently treating it as "the owner". */
+            v2.producer_tag == LATCH_PRODUCER_TAG_NONE ||
             (v2.coherence_ctr & 0xFF000000u) != 0u ||
             !valid_pre_faults(v2.pre_fault_bits) || !valid_v2_payload(&v2)) return -1;
 
@@ -70,6 +75,7 @@ int latch_ipc_decode(const void *bytes, size_t length, latch_proposal_t *out) {
         out->kind = v2.kind;
         out->confidence_q8 = v2.confidence_q8;
         out->agent_state = v2.agent_state;
+        out->producer_tag = v2.producer_tag;
         out->coherence_ctr = v2.coherence_ctr;
         out->unit_id = v2.unit_id;
         out->shrink_v = v2.shrink_v;

@@ -259,8 +259,8 @@
       <div class="brand">
         <div class="logo-badge mono">QNX 8.0</div>
         <div class="title-group">
-          <h1>LATCH GOVERNOR Operator Console</h1>
-          <p>Deterministic Safety Interlock &amp; Dead Man's Switch for Physical AI</p>
+          <h1>LATCH GOVERNOR Console Simulation</h1>
+          <p>Simulated data and controls only; no connection to a QNX supervisor.</p>
         </div>
       </div>
       
@@ -287,8 +287,8 @@
         </div>
 
         <div class="metric-box">
-          <span class="metric-label">Simulation Mode</span>
-          <button id="simToggleBtn" class="btn btn-release" onclick="toggleSim()">Live Sim: ON</button>
+          <span class="metric-label">Browser simulation — no supervisor connection</span>
+          <button id="simToggleBtn" class="btn btn-release" onclick="toggleSim()">Simulation: ON</button>
         </div>
       </div>
     </header>
@@ -410,7 +410,7 @@
             <button class="btn btn-release" onclick="hitlAction('RELEASE')">&#128275; RELEASE</button>
           </div>
           <div id="hitlFeedback" class="mono" style="font-size: 0.75rem; color: #94a3b8; min-height: 18px;">
-            Operator oversight active. Awaiting input.
+            Simulation only. These controls do not operate the supervisor.
           </div>
         </div>
 
@@ -804,7 +804,7 @@
     function triggerAttack(type) {
       activeAttack = type;
       const fb = document.getElementById("hitlFeedback");
-      fb.innerHTML = `<span style='color:#f59e0b;'>&#9888; ADVERSARIAL ATTACK ${type} INJECTED &mdash; Observing microkernel safety response...</span>`;
+      fb.innerHTML = `<span style='color:#f59e0b;'>Simulation: attack ${type} selected; no target command was sent.</span>`;
       setTimeout(() => {
         if (activeAttack === type) activeAttack = null;
       }, 3500);
@@ -817,7 +817,7 @@
       leaseRemaining = 100;
       cleanStreak = 0;
       advisoryStreak = 0;
-      document.getElementById("hitlFeedback").innerHTML = "<span style='color:#10b981;'>System reset: Restored to nominal High Performance (HP) rung.</span>";
+      document.getElementById("hitlFeedback").innerHTML = "<span style='color:#10b981;'>Simulation reset to High Performance (HP).</span>";
       updateBanner();
       updateFaultMatrix();
       drawRadar();
@@ -825,7 +825,7 @@
 
     function toggleSim() {
       simRunning = !simRunning;
-      document.getElementById("simToggleBtn").textContent = simRunning ? "Live Sim: ON" : "Live Sim: PAUSED";
+      document.getElementById("simToggleBtn").textContent = simRunning ? "Simulation: ON" : "Simulation: PAUSED";
       document.getElementById("simToggleBtn").className = simRunning ? "btn btn-release" : "btn btn-edit";
     }
 

@@ -223,9 +223,24 @@ int main(int argc, char *argv[]) {
     bool explicit_manifest    = false;
     unsigned int target_cpu   = 1u;
     bool verbose              = false;
+    /*
+     * Producer identity (L-2).
+     *
+     * The supervisor's dead-man lease is scoped to the producer that
+     * established the session. This bridge stamps every forwarded v2 frame
+     * with its producer tag; a frame whose tag differs from the session
+     * owner's is lease-inert and cannot move the plant while the owner's
+     * lease is live.
+     *
+     * The default is 1 -- the single production guest bridge. A second
+     * producer (the A8 adversarial rig, or a second bridge) passes a
+     * DIFFERENT tag, and the supervisor treats it as a foreign producer
+     * rather than as the owner.
+     */
+    uint16_t producer_tag     = 1u;
 
     int opt;
-    while ((opt = getopt(argc, argv, "i:o:m:c:v")) != -1) {
+    while ((opt = getopt(argc, argv, "i:o:m:c:t:v")) != -1) {
         switch (opt) {
             case 'i':
                 input_path = optarg;
@@ -240,14 +255,24 @@ int main(int argc, char *argv[]) {
             case 'c':
                 target_cpu = (unsigned int)strtoul(optarg, NULL, 10);
                 break;
+            case 't':
+                producer_tag = (uint16_t)strtoul(optarg, NULL, 10);
+                break;
             case 'v':
                 verbose = true;
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-i input_dev] [-o /dev/latch/proposal|-] [-m latch.manifest] [-c cpu] [-v]\n",
+                fprintf(stderr, "Usage: %s [-i input_dev] [-o /dev/latch/proposal|-] "
+                                "[-m latch.manifest] [-c cpu] [-t producer_tag] [-v]\n",
                         argv[0]);
                 return EXIT_FAILURE;
         }
+    }
+
+    if (producer_tag == LATCH_PRODUCER_TAG_NONE) {
+        fprintf(stderr, "latch-ingest: FATAL: producer tag 0 is reserved (a v2 frame "
+                        "must name its producer); refusing to start (Fail-Closed)\n");
+        return EXIT_FAILURE;
     }
 
     if (!explicit_manifest && access(manifest_path, F_OK) != 0) {
@@ -351,6 +376,9 @@ int main(int argc, char *argv[]) {
             latch_parse_wire_v2_frame(wire_bytes, &ipc_prop_v2);
             ipc_data = &ipc_prop_v2;
             ipc_size = sizeof(ipc_prop_v2);
+            /* Stamp the producer identity (L-2): the supervisor's lease is
+             * scoped to the producer that established the session. */
+            ipc_prop_v2.producer_tag = producer_tag;
             if (ipc_prop_v2.pre_fault_bits != 0u) wire_faults++;
         } else {
             latch_wire_frame_t wire_frame;

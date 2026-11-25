@@ -7,10 +7,10 @@
 ================================================================================
 
 EXECUTIVE SUMMARY:
-  Total Adversarial Attack Scenarios : 7
-  Total Ticks Evaluated              : 121
+  Total Adversarial Attack Scenarios : 8
+  Total Ticks Evaluated              : 132
   Total Keep-Out Zone Intrusions     : 0 (Envelopes Breached: 0.0%)
-  Deterministic Fault Detection Rate : 100.0% (7/7 attacks detected)
+  Deterministic Fault Detection Rate : 100.0% (8/8 attacks detected)
   Supervisory Ladder Transitions     : Deterministic demotion & bounded hysteresis
   Overall Safety Suite Verdict       : PASS (0.0% failure rate)
 
@@ -74,6 +74,15 @@ ATTACK SCORECARD BREAKDOWN:
    - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
    - Verdict         : PASS
 
+8. Attack A8: Second Writer Keeps Dead Alive
+   - Evaluated Ticks : 11
+   - Target Parameter: A second producer keeps sending frames after the real planner dies
+   - Invariant Result: LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) asserted
+   - Ladder Reaction : HP -> ADVISE on lease expiry despite a live second writer
+   - Recovery Proof  : The second producer's takeover starts a new epoch: fresh sequence baseline and re-earned warm-up
+   - Envelope Safety : Keep-out [250, 650] mrad breach count = 0
+   - Verdict         : PASS
+
 --------------------------------------------------------------------------------
 UNIVERSAL CRITERIA ATTESTATION:
   [CRITERION 1] Zero Keep-Out Envelope Intrusions (0% Breach Rate): SATISFIED
@@ -81,5 +90,5 @@ UNIVERSAL CRITERIA ATTESTATION:
   [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 ================================================================================
-[CONCLUSION] All 121 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
-             (same C sources as the on-target binary; suite wall time 0.134 s).
+[CONCLUSION] All 132 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
+             (same C sources as the on-target binary; suite wall time 0.263 s).

@@ -7,7 +7,7 @@
  *   - Attaches to /dev/latch/actuator via devctl(DCMD_LATCH_DUMP_TAPE).
  *   - Periodically queries the in-memory .bss ring buffer.
  *   - Persists evidence records to /dev/shmem/latch_tape.csv or specified file.
- *   - Ensures continuous auditability across target reboots.
+ *   - Reports gaps; persistence depends on the selected output filesystem.
  */
 
 #ifndef _POSIX_C_SOURCE
@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
            dev_path, output_file, interval_ms);
 
     uint64_t last_persisted_tick = 0;
-    uint32_t next_read_index = 0u;
+    uint64_t next_read_index = 0u;
     bool initial_query = true;
 
     struct timespec sleep_ts = {
@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
         do {
             latch_tape_dump_t dump;
             memset(&dump, 0, sizeof(dump));
-            dump.start_index = initial_query ? UINT32_MAX : next_read_index;
+            dump.start_index = initial_query ? UINT64_MAX : next_read_index;
             dump.count       = LATCH_DUMP_MAX_ENTRIES;
 
             int rc = devctl(fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL);
@@ -164,12 +164,12 @@ int main(int argc, char *argv[]) {
                 next_read_index = dump.start_index;
                 initial_query = false;
             } else if (dump.start_index != next_read_index) {
-                uint32_t missed = (dump.start_index >= next_read_index)
+                uint64_t missed = (dump.start_index >= next_read_index)
                                       ? (dump.start_index - next_read_index)
                                       : 0u;
-                fprintf(stderr, "latchlog: WARNING: tape wrapped across %u slots (#%u -> #%u)\n",
+                fprintf(stderr, "latchlog: WARNING: tape wrapped across %" PRIu64 " slots (#%" PRIu64 " -> #%" PRIu64 ")\n",
                         missed, next_read_index, dump.start_index);
-                fprintf(fp, "# GAP missed_slots=%u expected=%u actual=%u\n",
+                fprintf(fp, "# GAP missed_slots=%" PRIu64 " expected=%" PRIu64 " actual=%" PRIu64 "\n",
                         missed, next_read_index, dump.start_index);
                 fflush(fp);
             }

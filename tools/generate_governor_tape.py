@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """generate_governor_tape.py — Generate merged adversarial tape (governor-tape.csv).
 
-Executes the cyber-physical adversarial attack suite (A1-A7) through the real
+Executes the cyber-physical adversarial attack suite (A1-A8) through the real
 pipeline, captures the per-attack tape rows, prepends the attack ID, renumbers
 ticks monotonically, and writes out the canonical governor-tape.csv.
+
+Every attack's rows come from the SAME scenario builder the attack rig uses
+(`tools/attacks/attack_*.py`), so the archived tape cannot diverge from the
+scorecard in `governor-metrics.txt`.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ for p in (tools_dir, attacks_dir):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from attacks import find_pipeline_binaries, run_attack_pipeline
+from attacks import find_pipeline_binaries, run_attack_pipeline, run_producer_pipeline
 from governor_client import GovernorClient
 
 
@@ -185,6 +189,19 @@ def collect_attack_rows() -> List[Dict[str, Any]]:
             "rung": "0"
         })
 
+    # A8: Second Writer Keeps a Dead Agent Alive (11 ticks, two producers)
+    # The scenario is built by the ATTACK MODULE itself, so the tape rows are
+    # the rows the attack actually produced -- not a second implementation
+    # that could drift away from it.
+    from attack_a8_second_writer import build_a8_scenario
+    a8 = build_a8_scenario(manifest_dict)
+    a8_rows = run_producer_pipeline(a8["streams"], a8["manifest"], name="tape_a8")
+    for r in a8_rows:
+        global_tick += 1
+        r["attack_id"] = "A8"
+        r["tick"] = str(global_tick)
+        all_rows.append(r)
+
     return all_rows
 
 
@@ -207,7 +224,7 @@ def main() -> int:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 

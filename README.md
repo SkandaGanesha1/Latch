@@ -111,7 +111,7 @@ Transferred from `latch-ingest` to `latchd` via `/dev/latch/proposal` (`_Static_
 
 ## Adversarial Evaluation Scorecard
 
-GOVERNOR was evaluated against seven named cyber-physical attacks using the unified adversarial test harness (`latch/tools/attacks/run_attacks.py`), which drives the **host-sim build of the same C sources** cross-compiled for the QNX target (on-target proof is archived separately under `docs/evidence/governor/`). Across **121 executed ticks**, the system achieved a **0.0% keep-out breach rate** and a **7/7 deterministic fault detection rate**:
+GOVERNOR was evaluated against eight named cyber-physical attacks using the unified adversarial test harness (`latch/tools/attacks/run_attacks.py`), which drives the **host-sim build of the same C sources** cross-compiled for the QNX target (on-target proof is archived separately under `docs/evidence/governor/`). Across **132 executed ticks**, the system achieved a **0.0% keep-out breach rate** and a **8/8 deterministic fault detection rate**:
 
 | ID | Attack Scenario | Evaluated Ticks | Target Vulnerability Probed | Fault Bit Verified | Outcome & Ladder Verdict |
 |:---:|:---|:---:|:---|:---|:---:|
@@ -122,8 +122,9 @@ GOVERNOR was evaluated against seven named cyber-physical attacks using the unif
 | **A5** | **Coherence Spoof Attack**| 6 | Frozen counter ($\Delta c = 0$) or jump ($\Delta c = 10 > 3$) | `LATCH_FAULT_HEARTBEAT` (bit 13, `0x2000`) | Lease renewal refused; ladder demotes `HP` → `ADVISE` → `CLAMP`; plant held stationary. **PASS** |
 | **A6** | **Sequence Replay Attack** | 7 | Attacker replays captured frame ($seq \le last\_seq$) | `LATCH_FAULT_SEQ` (bit 2, `0x0004`) | Replay detected; supervisor triggers immediate fail-closed transition to `LATCH` (`HOLD`). **PASS** |
 | **A7** | **Chain Tamper Attack** | 10 | Adversary modifies recorded blackbox flight recorder | `TAMPER_DETECTED` (exit code 1) | Rolling SHA-256 chain detects payload/hash mismatch; post-seal payload/hash mismatch detected. **PASS** |
+| **A8** | **Second Writer Keeps a Dead Agent Alive** | 11 | A second producer keeps sending well-formed, coherence-advancing frames after the real planner dies | `LATCH_FAULT_HEARTBEAT` (bit 13, `0x2000`) | The dead-man lease is scoped to the **producer**, so the rogue's frames are lease-inert: they cannot renew the lease, cannot move the plant, and cannot advance the owner's coherence baseline. The lease still expires and demotes `HP` → `ADVISE`. The takeover after expiry starts a **new epoch** (fresh sequence baseline, re-earned warm-up). **PASS** |
 
-**Adversarial Audit Summary:** 121 ticks evaluated · 0 keep-out breaches · 0% failure rate · 7/7 attacks passed (regenerate with `python3 latch/tools/governor_metrics.py` — **requires host-sim binaries: `CCACHE_DISABLE=1 make -C latch/qnx host-sim`**).
+**Adversarial Audit Summary:** 132 ticks evaluated · 0 keep-out breaches · 0% failure rate · 8/8 attacks passed (regenerate with `python3 latch/tools/governor_metrics.py` — **requires host-sim binaries: `CCACHE_DISABLE=1 make -C latch/qnx host-sim`**).
 
 ---
 
@@ -133,16 +134,16 @@ GOVERNOR is not an abstract concept; it is an engineered QNX 8.0 application uti
 
 | QNX 8.0 Subsystem / API | Source File & Exact Line Citation | Engineering Role in GOVERNOR |
 |:---|:---|:---|
-| `resmgr_attach()` | `latch/qnx/latchd.c:2345, 2348, 2351` | Registers `/dev/latch/proposal` (ingest sink), `/dev/latch/actuator` (ability-protected actuator devctl node), and `/dev/governor` (supervisor alias) into QNX pathname space. |
-| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:1855`<br>`latch/qnx/latch_ingest.c:99` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
-| `procmgr_ability_create()` | `latch/qnx/latchd.c:2280` | Creates custom ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). |
-| `procmgr_ability()` | `latch/qnx/latch_ingest.c:295, 322` | Ingestion bridge drops all root abilities, sub-range abilities, and custom abilities at startup (Principle of Least Privilege). |
-| `iofunc_client_info_able()` | `latch/qnx/latchd.c:1877, 1915` | Verifies client process holds `latch/actuator` ability before allowing actuation devctls; unauthorized callers receive `EPERM`. |
-| `ClockCycles()` | `latch/qnx/latchd.c:212`<br>`latch/qnx/latch_ingest.c:68` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
-| `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:2167` | Allocates non-blocking microkernel pulse pool for deterministic 1.000 ms periodic decision events. |
-| `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:2188` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
-| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:2106, 2125, 2454, 2460, (+3 more)`<br>`latch/qnx/latchctl.c:135, 394` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
-| `devctl(..., DCMD_I2C_SEND, ...)` | `latch/qnx/latchd.c:725, 729, 791, 795` | Direct register programming of PCA9685 12-bit PWM controller over QNX I2C framework (`/dev/i2c1`). |
+| `resmgr_attach()` | `latch/qnx/latchd.c:2630, 2633, 2636` | Registers `/dev/latch/proposal` (ingest sink), `/dev/latch/actuator` (ability-protected actuator devctl node), and `/dev/governor` (supervisor alias) into QNX pathname space. |
+| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:2136`<br>`latch/qnx/latch_ingest.c:99` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
+| `procmgr_ability_create()` | `latch/qnx/latchd.c:2565` | Creates custom ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). |
+| `procmgr_ability()` | `latch/qnx/latch_ingest.c:320, 347` | Ingestion bridge drops all root abilities, sub-range abilities, and custom abilities at startup (Principle of Least Privilege). |
+| `iofunc_client_info_able()` | `latch/qnx/latchd.c:2158, 2196` | Verifies client process holds `latch/actuator` ability before allowing actuation devctls; unauthorized callers receive `EPERM`. |
+| `ClockCycles()` | `latch/qnx/latchd.c:257`<br>`latch/qnx/latch_ingest.c:68` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
+| `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:2452` | Allocates non-blocking microkernel pulse pool for deterministic 1.000 ms periodic decision events. |
+| `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:2473` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
+| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:2391, 2410, 2754, 2760, (+3 more)`<br>`latch/qnx/latchctl.c:135, 435` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
+| `devctl(..., DCMD_I2C_SEND, ...)` | `latch/qnx/latchd.c:822, 826, 888, 892` | Direct register programming of PCA9685 12-bit PWM controller over QNX I2C framework (`/dev/i2c1`). |
 | `qvm` Hypervisor Guest Isolation (`vdev virtio-console`, `cluster _cpu-2` / `_cpu-3` pins) | `latch/qnx/latch_qemu_virt.qvmconf:128`<br>`latch/qnx/latch_qemu_governor.build:87` | QNX Hypervisor 8.0 EL2 VHE guest configuration isolating untrusted Linux 6.12 guest on vCPUs 2-3 with virtio-console black channel. |
 | `secpolcompile` / `secpolpush` (`type latchd_t`, `type latch_ingest_t`, `type qvm_host_t`) | `latch/qnx/latch.secpol:23`<br>`latch/qnx/latch_qemu.build:41, latch_qemu_governor.build:41` | QNX 8.0 declarative Mandatory Access Control (MAC) enforcing process type isolation (`latchd_t`, `latch_ingest_t`, `qvm_host_t`). |
 
@@ -235,7 +236,7 @@ latch/
   tools/
     consistency_check.py         # Cross-file architecture & metadata invariant checker
     capture_evidence.py          # Evidence generation & archival engine (all scenarios)
-    generate_governor_tape.py    # Merged adversarial tape generator (A1-A7, 121 ticks)
+    generate_governor_tape.py    # Merged adversarial tape generator (the full A1..AN suite)
     benchmark_qnx_vs_linux.py    # Determinism & jitter benchmark against Linux CFS
     governor_metrics.py          # Adversarial evaluation scorecard generator
     governor_client.py           # Python SDK for wire v2 encoding, CRC32, kinds, Q8, unit conversions
@@ -376,7 +377,7 @@ cannot rebuild the IFS, so every console log of every run is committed.
 | **`docs/evidence/on-target/`** | The raw QNX console of every QEMU boot, numbered by the story it tells |
 | **`docs/evidence/tape/`** | The windowed evidence tapes and their analysis |
 | **`docs/evidence/resolution/`** | The four defects, each with its mechanism and its proof |
-| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived `make verify-governor-qemu` PASS log, live status transitions, 121-tick attack tape, metrics, and manifest attestations |
+| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived `make verify-governor-qemu` PASS log, live status transitions, the merged attack tape (the full adversarial suite), metrics, and manifest attestations |
 | **`docs/evidence/host-sim/`, `build/`, `derived/`** | The workstation pipeline, what is inside the bootable image, and the machine-readable summaries |
 
 Regenerate it all with one command:

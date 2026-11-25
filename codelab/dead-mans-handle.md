@@ -196,11 +196,11 @@ latchctl status     # queries devctl 0x43 (or falls back to 0x40)
 latchctl dump-gov   # queries devctl 0x44 to export JSON flight events
 ```
 
-### 6.2 Run the 7-Attack Adversarial Rig
+### 6.2 Run the Adversarial Attack Rig
 ```bash
 python3 tools/attacks/run_attacks.py
 ```
-Asserts 7/7 cyber-physical attacks (A1 unit injection, A2 rate flood, A3 prompt injection, A4 deadman lease trip, A5 coherence spoof, A6 sequence replay, A7 chain tamper) with **0 keep-out breaches (0.0% breach rate)**.
+Asserts every cyber-physical attack (A1 unit injection, A2 rate flood, A3 prompt injection, A4 deadman lease trip, A5 coherence spoof, A6 sequence replay, A7 chain tamper, A8 second writer keeps a dead agent alive) with **0 keep-out breaches (0.0% breach rate)**.
 
 ### 6.3 Run the GOVERNOR Gate Suite & QEMU AArch64 Target Test
 ```bash

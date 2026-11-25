@@ -10,7 +10,7 @@ Safety Assertions:
   1. Rolling SHA-256 blackbox hash chain binds every event to its predecessor and the manifest.
   2. Any payload alteration, manifest swap, event deletion, or gap immediately breaks hash continuity.
   3. Verification engine terminates fail-closed with exit code 1 and outputs "TAMPER DETECTED".
-  4. Mathematical non-repudiation is strictly proven against tampering.
+  4. A modified event is detected by the replay checker.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def run_attack_a7(verbose: bool = True) -> Dict[str, Any]:
             print("  [PASS] Zero keep-out breaches: 0% breach rate verified.")
             print("  [PASS] Pristine cryptographic hash chain verified successfully.")
             print("  [PASS] Adversarial bit-flip in event #5 intercepted: TAMPER DETECTED (exit code 1).")
-            print("  [PASS] Mathematical non-repudiation verified against forensic log manipulation.")
+            print("  [PASS] The replay checker detected the modified event.")
             print("[ATTACK A7 VERDICT] PASS\n")
 
         return {

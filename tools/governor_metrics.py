@@ -37,6 +37,7 @@ from attack_a4_deadman import run_attack_a4  # noqa: E402
 from attack_a5_coherence_spoof import run_attack_a5  # noqa: E402
 from attack_a6_replay import run_attack_a6  # noqa: E402
 from attack_a7_chain_tamper import run_attack_a7  # noqa: E402
+from attack_a8_second_writer import run_attack_a8  # noqa: E402
 
 MANIFEST_PATH = ROOT_DIR / "qnx" / "contracts" / "governor_servo.manifest"
 
@@ -51,6 +52,7 @@ ATTACK_LABELS = {
     "A5": "Frozen counter (delta=0) and forward jump (delta=10 > gap={gap})",
     "A6": "Replay of past sequence number (seq <= last_seq)",
     "A7": "Adversarial byte modification in recorded blackbox hash chain",
+    "A8": "A second producer keeps sending frames after the real planner dies",
 }
 
 
@@ -89,6 +91,9 @@ def detail_lines(attack_id: str, report: dict, bounds: dict) -> list[str]:
         lines.append(f"   - Supervisory FSM : {report['fail_closed_verified']}")
     elif attack_id == "A7":
         lines.append(f"   - Forensic Audit  : Cryptographic tamper detection asserted")
+    elif attack_id == "A8":
+        lines.append(f"   - Ladder Reaction : {report['demotion_verified']}")
+        lines.append(f"   - Recovery Proof  : {report['recovery_verified']}")
     lines.append(f"   - Envelope Safety : Keep-out [{bounds['lo']}, {bounds['hi']}] mrad "
                  f"breach count = {report['keepout_intrusions']}")
     lines.append(f"   - Verdict         : {report['status']}")
@@ -110,6 +115,7 @@ def main() -> int:
         ("A5", "Coherence Spoof Attack", run_attack_a5),
         ("A6", "Sequence Replay Attack", run_attack_a6),
         ("A7", "Chain Tamper Attack", run_attack_a7),
+        ("A8", "Second Writer Keeps Dead Alive", run_attack_a8),
     ]
 
     started = time.monotonic()

@@ -17,19 +17,19 @@
 
 ## Inspiration: The Lethal Trifecta of Physical AI
 
-Autonomous Physical AI systems—humanoid robots, surgical manipulators, autonomous surgical drills, and medical infusion pumps—suffer from what safety engineers call the **Lethal Trifecta**:
+The prototype explores three risks for systems that accept proposals from AI software:
 1. **Untrusted, Probabilistic Reasoning:** Large Language Models (LLMs), Vision-Language-Action (VLA) models, and deep neural policies hallucinate coordinates, misinterpret visual cues, and remain vulnerable to prompt injection attacks.
-2. **Direct Actuator Handles:** Modern AI frameworks grant neural policies raw socket, memory-mapped, or bus access directly to motor controllers.
-3. **Non-Deterministic Execution:** Standard operating systems (such as Linux) cannot guarantee microsecond bounded execution times, leaving systems vulnerable to scheduling jitter and thread hangs.
+2. **Actuator Access:** An implementation that gives a planner direct actuator access must constrain that access and validate its commands.
+3. **Execution Delays:** Scheduling delays and thread hangs can interrupt a control loop; a measured deadline and independent fallback are needed for the deployment in question.
 
-When an autonomous robot hallucinates a 370° rotation, a medical pump is told to dump a lethal bolus, or an AI planning thread hangs mid-motion, traditional Linux-based safety wrappers fail because Linux cannot provide hard real-time scheduling, memory-enforced capability separation, or kernel-level ability locks.
+The demonstration injects out-of-range proposals and planner silence and observes the supervisor's response. It does not establish that other operating systems or safety wrappers fail, or that this prototype is suitable for a medical device.
 
 We realized that the solution to cutting-edge 2026 AI safety lay in three mechanical and cybernetic inventions from industrial history:
 1. **James Watt's Centrifugal Flyball Governor (1788):** A physical feedback mechanism that mechanically throttled steam engine valves when rotational speeds exceeded safe thresholds.
 2. **The Railway Dead Man's Switch (1880s):** A spring-loaded pedal or handle that locomotive engineers had to hold; if the driver lost consciousness, braking engaged fail-closed.
 3. **The Aviation Flight Data Recorder (1953):** A crash-survivable, tamper-evident blackbox recording continuous telemetry for incident forensics.
 
-We resurrected all three industrial safety inventions natively inside **QNX SDP 8.0**.
+The prototype draws on these ideas using **QNX SDP 8.0**. Its current event ring is volatile and is not a crash-survivable flight recorder.
 
 ---
 
@@ -91,7 +91,7 @@ GOVERNOR was built from the ground up to showcase the unique capabilities of **Q
 
 ---
 
-## Adversarial Evaluation: 121 Ticks, 0% Breach Rate (host-sim rig)
+## Adversarial Evaluation: 132 Ticks, 0% Breach Rate (host-sim rig)
 
 We evaluated GOVERNOR against a dedicated adversarial attack suite (`latch/tools/attacks/run_attacks.py`), which drives the **host-sim build of the same C sources** that are cross-compiled for the QNX AArch64 target; the on-target QEMU proof is captured separately in `docs/evidence/governor/`:
 
@@ -104,8 +104,9 @@ We evaluated GOVERNOR against a dedicated adversarial attack suite (`latch/tools
 | **A5** | **Coherence Spoof Attack** | 6 | Frozen counter ($\Delta c = 0$) or jump ($\Delta c = 10 > 3$) | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Lease renewal refused; plant held stationary) |
 | **A6** | **Sequence Replay Attack** | 7 | Attacker replays captured frame ($seq \le last\_seq$) | `LATCH_FAULT_SEQ` (`0x0004`) | **PASS** (Fail-closed transition to `LATCH`) |
 | **A7** | **Chain Tamper Attack** | 10 | Adversary modifies recorded blackbox flight recorder | `TAMPER_DETECTED` (exit 1) | **PASS** (Rolling SHA-256 chain detects alteration) |
+| **A8** | **Second Writer Keeps a Dead Agent Alive** | 11 | A second producer keeps sending well-formed frames after the real planner dies | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Lease is producer-scoped: the rogue cannot renew it or move the plant; the lease still expires and demotes) |
 
-**Summary:** 121 evaluated ticks · 0 keep-out breaches · 0% failure rate · 7/7 attacks passed (regenerate the scorecard any time with `python3 latch/tools/governor_metrics.py`).
+**Summary:** 132 evaluated ticks · 0 keep-out breaches · 0% failure rate · 8/8 attacks passed (regenerate the scorecard any time with `python3 latch/tools/governor_metrics.py`).
 
 ---
 
@@ -150,7 +151,7 @@ The demonstration configures QNX priorities, CPU affinity, security policy, and 
 
 ## Accomplishments We're Proud Of
 
-- **Mathematical Determinism:** A 0.0% keep-out violation rate across 121 adversarial attack ticks (host-sim rig), with the on-target QEMU governor run archived alongside it.
+- **Mathematical Determinism:** A 0.0% keep-out violation rate across 132 adversarial attack ticks (host-sim rig), with the on-target QEMU governor run archived alongside it.
 - **Genuine QNX 8.0 Target Deployment:** A fully bootable QNX 8.0 image running the QNX Hypervisor, isolating a Linux 6.12 guest, and passing all runtime assertions under QEMU AArch64. (The Raspberry Pi 4B profile builds cleanly but is not hardware-verified.)
 - **Dual Safety Domains:** Successfully applying the identical supervisory binary to industrial robotics (servo motor) and healthcare (linear infusion pump).
 - **Zero-Rot Evidence Trail:** Selected results are backed by console logs and metrics in `latch/docs/evidence/`.
@@ -179,7 +180,7 @@ We learned that trying to make AI safe from *within* AI (prompt engineering, RLH
 # 1. Verify Architectural Consistency & Invariant Admissibility (0 errors)
 python3 latch/tools/consistency_check.py
 
-# 2. Run Unified Adversarial Attack Rig (Attacks A1-A7 - 7/7 PASS)
+# 2. Run Unified Adversarial Attack Rig (Attacks A1-A8 - 8/8 PASS)
 python3 latch/tools/attacks/run_attacks.py
 
 # 3. Run Dedicated GOVERNOR Seven-Scenario Gate

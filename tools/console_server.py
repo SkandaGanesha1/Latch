@@ -3,7 +3,7 @@
 LATCH GOVERNOR — Live Operator Console & Forensics HTTP Bridge (G5)
 
 Serves the offline HTML5 Canvas console (host/console.html) and evidence tape (host/tape.html)
-and provides an HTTP REST API to stream live telemetry from latchctl or replay blackbox tapes.
+    The dashboard is a browser simulation; it does not connect to a supervisor.
 
 Zero external dependencies (uses standard library http.server).
 Usage:
@@ -42,17 +42,7 @@ class GovernorConsoleHandler(http.server.SimpleHTTPRequestHandler):
 
             # Attempt to query live latchctl if available in host-sim
             latchctl_bin = self.root_dir / "qnx/build/host-sim/latchctl"
-            status_data = {
-                "active": False,
-                "rung": "HP",
-                "mode": "HP",
-                "theta_mrad": 0,
-                "u_mrad": 0,
-                "faults": "0x0000",
-                "coherence": 0,
-                "lease_remaining": 100,
-                "deadline_misses": 0,
-            }
+            status_data = {"active": False, "source": "unavailable"}
             if latchctl_bin.is_file():
                 try:
                     res = subprocess.run(
@@ -61,6 +51,7 @@ class GovernorConsoleHandler(http.server.SimpleHTTPRequestHandler):
                     )
                     if res.returncode == 0:
                         status_data["active"] = True
+                        status_data["source"] = "latchctl"
                         for line in res.stdout.splitlines():
                             if "Actuator Angle" in line:
                                 status_data["theta_mrad"] = int(line.split(":")[1].split()[0])
@@ -82,7 +73,7 @@ class GovernorConsoleHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status": "OK", "governor": "active"}\n')
+            self.wfile.write(b'{"status": "OK", "governor": "unverified", "dashboard": "simulation"}\n')
             return
 
         return super().do_GET()
@@ -108,7 +99,7 @@ def main() -> int:
 
     socketserver.TCPServer.allow_reuse_address = True
     try:
-        with socketserver.TCPServer(("", args.port), GovernorConsoleHandler) as httpd:
+        with socketserver.TCPServer(("127.0.0.1", args.port), GovernorConsoleHandler) as httpd:
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n[CONSOLE SERVER] Server stopped cleanly.")

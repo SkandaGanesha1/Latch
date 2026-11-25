@@ -1,6 +1,6 @@
 ================================================================================
 LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION
-Date: 20261125-000405
+Date: 20261125-135633
 Host: Linux fedora 7.3.4-300.fc45.x86_64
 Compiler: gcc (host)
 ================================================================================
@@ -33,9 +33,9 @@ Compiler: gcc (host)
 
 --- 3. ADVERSARIAL ATTACK RIG EVALUATION (run_attacks.py) ---
 ================================================================================
- LATCH GOVERNOR — Unified Adversarial Attack Rig & Invariant Verification Suite 
- Target: GOVERNOR supervisor, host-sim build of the QNX SDP 8.0 sources        
-         (x86_64 build host; on-target proof is captured separately)           
+ LATCH GOVERNOR — Unified Adversarial Attack Rig & Invariant Verification Suite
+ Target: GOVERNOR supervisor, host-sim build of the QNX SDP 8.0 sources
+         (x86_64 build host; on-target proof is captured separately)
 ================================================================================
 
 === [ATTACK A1: ROGUE UNIT INJECTION] ===
@@ -94,22 +94,31 @@ Scenario: Adversary modifies recorded flight recorder event payload...
   [PASS] Mathematical non-repudiation verified against forensic log manipulation.
 [ATTACK A7 VERDICT] PASS
 
+=== [ATTACK A8: SECOND WRITER KEEPS A DEAD AGENT ALIVE] ===
+Scenario: Owner warms up -> Owner dies -> Rogue keeps talking -> Lease still expires -> Rogue takes the DEAD session over
+  [PASS] Zero keep-out breaches: 0% breach rate verified.
+  [PASS] The owner's lease expired at tick 7 even though a second producer was sending well-formed frames on every tick.
+  [PASS] The second producer's frames could not move the plant while the owner's session was live.
+  [PASS] The takeover after expiry started a NEW epoch: the new producer had to re-earn its warm-up before its command was admitted.
+[ATTACK A8 VERDICT] PASS
+
 ================================================================================
-                         ADVERSARIAL EVALUATION SCORECARD                       
+                         ADVERSARIAL EVALUATION SCORECARD
 ================================================================================
 ID   | Attack Scenario                  | Ticks  | Fault Bit Verified | Status
 ------------------------------------------------------------------------------
-A1   | Rogue Unit Injection             | 8      | FAULT_UNIT (bit 12 | PASS  
-A2   | Rate Flood Attack                | 5      | FAULT_RATE (bit 7, | PASS  
-A3   | Prompt Injection Attack          | 6      | FAULT_KEEPOUT (bit | PASS  
-A4   | Deadman Lease Trip & Recovery    | 79     | FAULT_HEARTBEAT (b | PASS  
-A5   | Coherence Spoof Attack           | 6      | FAULT_HEARTBEAT (b | PASS  
-A6   | Sequence Replay Attack           | 7      | FAULT_SEQ (bit 2,  | PASS  
-A7   | Chain Tamper Attack              | 10     | TAMPER_DETECTED (e | PASS  
+A1   | Rogue Unit Injection             | 8      | FAULT_UNIT (bit 12 | PASS
+A2   | Rate Flood Attack                | 5      | FAULT_RATE (bit 7, | PASS
+A3   | Prompt Injection Attack          | 6      | FAULT_KEEPOUT (bit | PASS
+A4   | Deadman Lease Trip & Recovery    | 79     | FAULT_HEARTBEAT (b | PASS
+A5   | Coherence Spoof Attack           | 6      | FAULT_HEARTBEAT (b | PASS
+A6   | Sequence Replay Attack           | 7      | FAULT_SEQ (bit 2,  | PASS
+A7   | Chain Tamper Attack              | 10     | TAMPER_DETECTED (e | PASS
+A8   | Second Writer Keeps Dead Agent Alive | 11     | FAULT_HEARTBEAT (b | PASS
 ------------------------------------------------------------------------------
-Total Ticks Evaluated     : 121
+Total Ticks Evaluated     : 132
 Total Keep-Out Intrusions : 0 (Envelopes Breached: 0.0%)
-Execution Wall Time       : 0.119 s
+Execution Wall Time       : 0.306 s
 ================================================================================
 
 UNIVERSAL SAFETY CRITERIA AUDIT:
@@ -118,7 +127,7 @@ UNIVERSAL SAFETY CRITERIA AUDIT:
   [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 --------------------------------------------------------------------------------
-[SUITE VERDICT] ALL 7 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
+[SUITE VERDICT] ALL 8 ADVERSARIAL ATTACKS PASSED (0% FAILURE RATE)
 
 --- 4. HOMEOSTAT RUNTIME PROOF (homeostat_e2e.py) ---
 [HOMEOSTAT_SCENARIO_A] PASS: stressed epoch contracted the per-tick velocity ceiling 24 -> 1 mrad/tick
@@ -127,4 +136,3 @@ UNIVERSAL SAFETY CRITERIA AUDIT:
 [HOMEOSTAT_SCENARIO_D] PASS: default-off -- a manifest with no homeostat section is behaviourally identical to the baseline
 [HOMEOSTAT_NEGATIVE] PASS: out-of-range homeostat parameters are rejected at manifest load (fail closed, never silently clamped)
 [HOMEOSTAT_E2E] PASS: contraction, recovery, contracting-only invariant, default-off and fail-closed parameter validation verified
-

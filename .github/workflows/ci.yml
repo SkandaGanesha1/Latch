@@ -136,7 +136,7 @@ jobs:
           assert envelope == 7, f"Expected exactly 7 envelope vetoes, got {envelope}"
           assert last_seq == 80, f"Expected last accepted seq == 80, got {last_seq}"
 
-          print(f"[CI ASSERTION PASS] All 200 ticks satisfied keep-out, WCET (<{wcet_ns}ns), "
+          print(f"[CI ASSERTION PASS] All 200 ticks satisfied keep-out, observed latency budget (<{wcet_ns}ns), "
                 f"monotonic seq, HA-HOME ({home_rows} ticks), and EPERM invariants. "
                 f"EXACT SIGNATURE: wire_faults={wire}, envelope_vetoes={envelope}, last_seq={last_seq}.")
           '
@@ -321,7 +321,7 @@ jobs:
           # The dedicated signed contract must still attest.
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/homeostat_servo.manifest
 
-      - name: Verify 7-Attack Adversarial Rig
+      - name: Verify Adversarial Attack Rig
         run: |
           make -C qnx host-sim
           python3 tools/attacks/run_attacks.py
