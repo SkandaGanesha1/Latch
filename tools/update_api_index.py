@@ -228,12 +228,14 @@ def resolve_path(raw: str, doc_path: pathlib.Path,
     candidates.append(REPO_ROOT / plain)
     candidates.append(doc_path.parent / plain)
     # The documentation often prefixes repository paths with the repository
-    # directory name itself (`latch/qnx/latchd.c`).
-    if plain.parts and plain.parts[0] == REPO_ROOT.name:
+    # directory name itself (`latch/qnx/latchd.c`).  The CI checkout directory
+    # may be named differently (e.g., "Latch" vs "latch"), so we match
+    # case-insensitively.
+    if plain.parts and plain.parts[0].lower() == REPO_ROOT.name.lower():
         candidates.append(REPO_ROOT / pathlib.PurePosixPath(*plain.parts[1:]))
     # And sometimes the path is relative to the parent of the repository.
     candidates.append(REPO_ROOT.parent / plain)
-    if plain.parts and plain.parts[0] == REPO_ROOT.name:
+    if plain.parts and plain.parts[0].lower() == REPO_ROOT.name.lower():
         candidates.append(REPO_ROOT.parent / pathlib.PurePosixPath(*plain.parts[1:]))
     # A bare file name next to a fully qualified one: look beside it.
     if len(plain.parts) == 1:
