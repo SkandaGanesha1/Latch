@@ -462,10 +462,32 @@ static bool json_object_has_only_uint_keys(const char *obj, const char *obj_end,
     }
 }
 
+static bool json_object_has_only_keys_ex(const char *obj, const char *obj_end,
+                                          const char *const *allowed, size_t allowed_count,
+                                          size_t required_count);
+
 static bool json_object_has_only_keys(const char *obj, const char *obj_end,
                                       const char *const *allowed, size_t allowed_count) {
+    return json_object_has_only_keys_ex(obj, obj_end, allowed, allowed_count, allowed_count);
+}
+
+/*
+ * Strict key-set validation with an OPTIONAL tail.
+ *
+ * The first `required_count` entries of `allowed` must all be present; the
+ * remaining entries are OPTIONAL -- if present they must still be known and
+ * unique, but their absence is not an error.  This is what lets the
+ * schema-3 top level accept "medical" and "homeostat" as optional sections
+ * while still rejecting a typo that would silently DISABLE a safety gate
+ * (e.g. "medcial" would otherwise be ignored and the dose gate would be
+ * off with no diagnostic).
+ */
+static bool json_object_has_only_keys_ex(const char *obj, const char *obj_end,
+                                          const char *const *allowed, size_t allowed_count,
+                                          size_t required_count) {
     if (obj == NULL || obj_end == NULL || obj >= obj_end || *obj != '{' ||
-        allowed == NULL || allowed_count == 0u || allowed_count > 16u) return false;
+        allowed == NULL || allowed_count == 0u || allowed_count > 16u ||
+        required_count > allowed_count) return false;
     bool seen[16] = { false };
     const char *p = skip_pure_ws(obj + 1, obj_end);
     if (p == obj_end || *p == '}') return false;
@@ -521,7 +543,7 @@ static bool json_object_has_only_keys(const char *obj, const char *obj_end,
             continue;
         }
         if (p == obj_end && *p == '}') {
-            for (size_t i = 0; i < allowed_count; ++i) {
+            for (size_t i = 0; i < required_count; ++i) {
                 if (!seen[i]) return false;
             }
             return true;
@@ -739,6 +761,171 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
              out_m->schema_version == LATCH_MANIFEST_SCHEMA_VERSION ||
              out_m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION)) {
             has_schema = true;
+        }
+    }
+
+    /*
+     * 1b. STRICT KEY-SET VALIDATION FOR EVERY SECTION (L-4).
+     *
+     * The sidecar digest defends the manifest against TAMPERING; it does not
+     * defend it against AUTHORSHIP ERROR.  A signed manifest with a typo
+     * ("v_max" written twice, "hysteresis_clean_frames" misspelled) used to
+     * load the first value and silently ignore the rest -- the loader was
+     * first-match-wins for duplicate keys and ignored unknown keys outside
+     * the governor/units/medical/rate/homeostat sections.
+     *
+     * Every section is therefore checked here: the key set must be exactly
+     * the known set, with no unknown keys and no duplicates.  A typo is now
+     * a LOAD FAILURE, not a silently different safety envelope.
+     *
+     * The TOP level is checked too, and that is the sharpest edge of it: a
+     * misspelled "medical" or "homeostat" section used to be ignored, which
+     * silently turned the dose gate or the contraction loop OFF while the
+     * manifest still verified against its sidecar.
+     */
+    {
+        static const char *const top_keys_v12[] = {
+            "schema_version", "plant", "envelope", "timing", "recovery",
+            "decision", "ingest", "paths", "actuator", "tape", "protocol"
+        };
+        static const char *const top_keys_v3[] = {
+            "schema_version", "plant", "envelope", "timing", "recovery",
+            "decision", "ingest", "paths", "actuator", "tape", "protocol",
+            "governor", "medical", "homeostat"
+        };
+        static const char *const plant_keys[] = { "name", "axes" };
+        static const char *const axis_keys[] = { "id", "kind", "unit", "min", "max" };
+        static const char *const envelope_keys[] = {
+            "theta_min_mrad", "theta_max_mrad", "home_mrad", "keepout",
+            "v_max", "a_max", "j_max", "v_home", "lookahead_ticks"
+        };
+        static const char *const keepout_keys[] = { "lo_mrad", "hi_mrad", "label" };
+        static const char *const timing_keys[] = {
+            "period_us", "watchdog_ticks", "wcet_budget_us", "max_backlog_ticks"
+        };
+        static const char *const recovery_keys[] = {
+            "hysteresis_clean_frames", "hold_to_home_ticks"
+        };
+        static const char *const decision_keys[] = { "cpu", "priority", "pulse_priority" };
+        static const char *const ingest_keys[] = { "cpu", "delivery", "queue_depth" };
+        static const char *const paths_keys[] = {
+            "proposal", "actuator", "ability", "i2c_bus"
+        };
+        static const char *const actuator_keys[] = {
+            "type", "addr", "freq_hz", "prescale", "pwm_center", "pwm_min",
+            "pwm_max", "retries", "init_delay_us", "required"
+        };
+        static const char *const tape_keys[] = { "capacity", "log_path" };
+        static const char *const protocol_keys[] = { "magic", "version", "crc", "coverage" };
+
+        const char *top_end = json_find_object_end(buf, buf_end);
+        bool top_ok = false;
+        if (top_end != NULL && buf_end >= top_end) {
+            if (out_m->schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION) {
+                top_ok = json_object_has_only_keys_ex(buf, top_end, top_keys_v3,
+                                                      sizeof(top_keys_v3) / sizeof(top_keys_v3[0]),
+                                                      11u);
+            } else {
+                top_ok = json_object_has_only_keys_ex(buf, top_end, top_keys_v12,
+                                                      sizeof(top_keys_v12) / sizeof(top_keys_v12[0]),
+                                                      11u);
+            }
+        }
+        if (!top_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Manifest top level contains unknown or duplicate keys "
+                                  "(a typo must fail closed, not silently change the safety envelope)");
+            return -EINVAL;
+        }
+
+        bool sections_ok =
+            json_object_has_only_keys(plant_sec, plant_end, plant_keys,
+                                      sizeof(plant_keys) / sizeof(plant_keys[0])) &&
+            json_object_has_only_keys(env_sec, env_end, envelope_keys,
+                                      sizeof(envelope_keys) / sizeof(envelope_keys[0])) &&
+            json_object_has_only_keys(tim_sec, tim_end, timing_keys,
+                                      sizeof(timing_keys) / sizeof(timing_keys[0])) &&
+            json_object_has_only_keys(rec_sec, rec_end, recovery_keys,
+                                      sizeof(recovery_keys) / sizeof(recovery_keys[0])) &&
+            json_object_has_only_keys(dec_sec, dec_end, decision_keys,
+                                      sizeof(decision_keys) / sizeof(decision_keys[0])) &&
+            json_object_has_only_keys(ing_sec, ing_end, ingest_keys,
+                                      sizeof(ingest_keys) / sizeof(ingest_keys[0])) &&
+            json_object_has_only_keys(paths_sec, paths_end, paths_keys,
+                                      sizeof(paths_keys) / sizeof(paths_keys[0])) &&
+            json_object_has_only_keys(act_sec, act_end, actuator_keys,
+                                      sizeof(actuator_keys) / sizeof(actuator_keys[0])) &&
+            json_object_has_only_keys(tape_sec, tape_end, tape_keys,
+                                      sizeof(tape_keys) / sizeof(tape_keys[0])) &&
+            json_object_has_only_keys(proto_sec, proto_end, protocol_keys,
+                                      sizeof(protocol_keys) / sizeof(protocol_keys[0]));
+        if (!sections_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Manifest section contains unknown or duplicate keys "
+                                  "(a typo must fail closed, not silently change the safety envelope)");
+            return -EINVAL;
+        }
+
+        /* Every axis entry and every keep-out entry is a safety parameter
+         * too, so each object in those arrays is checked individually. */
+        bool entries_ok = true;
+        {
+            const char *axes_ptr = json_find_key_bounded(plant_sec, plant_end, "axes");
+            if (axes_ptr != NULL) {
+                axes_ptr = skip_pure_ws(axes_ptr, plant_end);
+                if (axes_ptr < plant_end && *axes_ptr == '[') {
+                    axes_ptr++;
+                    while (axes_ptr < plant_end) {
+                        axes_ptr = skip_pure_ws(axes_ptr, plant_end);
+                        while (axes_ptr < plant_end && *axes_ptr == ',') {
+                            axes_ptr = skip_pure_ws(axes_ptr + 1, plant_end);
+                        }
+                        if (axes_ptr >= plant_end || *axes_ptr == ']') break;
+                        if (*axes_ptr != '{') { entries_ok = false; break; }
+                        const char *obj = axes_ptr;
+                        const char *obj_end = json_find_object_end(obj, plant_end);
+                        if (!obj_end || obj_end >= plant_end) { entries_ok = false; break; }
+                        if (!json_object_has_only_keys(obj, obj_end, axis_keys,
+                                                        sizeof(axis_keys) / sizeof(axis_keys[0]))) {
+                            entries_ok = false;
+                            break;
+                        }
+                        axes_ptr = obj_end + 1;
+                    }
+                }
+            }
+            const char *ko_ptr = json_find_key_bounded(env_sec, env_end, "keepout");
+            if (ko_ptr != NULL) {
+                ko_ptr = skip_pure_ws(ko_ptr, env_end);
+                if (ko_ptr < env_end && *ko_ptr == '[') {
+                    ko_ptr++;
+                    while (ko_ptr < env_end) {
+                        ko_ptr = skip_pure_ws(ko_ptr, env_end);
+                        while (ko_ptr < env_end && *ko_ptr == ',') {
+                            ko_ptr = skip_pure_ws(ko_ptr + 1, env_end);
+                        }
+                        if (ko_ptr >= env_end || *ko_ptr == ']') break;
+                        if (*ko_ptr != '{') { entries_ok = false; break; }
+                        const char *obj = ko_ptr;
+                        const char *obj_end = json_find_object_end(obj, env_end);
+                        if (!obj_end || obj_end >= env_end) { entries_ok = false; break; }
+                        if (!json_object_has_only_keys(obj, obj_end, keepout_keys,
+                                                        sizeof(keepout_keys) / sizeof(keepout_keys[0]))) {
+                            entries_ok = false;
+                            break;
+                        }
+                        ko_ptr = obj_end + 1;
+                    }
+                }
+            }
+        }
+        if (!entries_ok) {
+            free(buf);
+            if (err_buf) snprintf(err_buf, err_len,
+                                  "Manifest axis or keep-out entry contains unknown or duplicate keys");
+            return -EINVAL;
         }
     }
 

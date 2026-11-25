@@ -24,6 +24,17 @@ jobs:
         run: |
           python3 tools/consistency_check.py
 
+      - name: Verify Judge-Facing Source Anchors Have Not Drifted
+        run: |
+          # The README's "Evidence-of-QNX-Use" table quotes exact `file:line`
+          # anchors so a judge can open a file and land on the line that proves
+          # a QNX-native technique is used. A stale anchor is worse than no
+          # anchor: it reads as "documentation nobody audited". The anchors
+          # are therefore DERIVED from the source, not hand-maintained, and
+          # this gate fails the build when the code moves and the table does
+          # not.
+          python3 tools/update_api_index.py --check
+
       - name: Validate Protocol Static Asserts & Manifest
         run: |
           cd qnx

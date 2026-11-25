@@ -95,6 +95,21 @@ typedef struct latch_publish_buffer {
     _Atomic uint32_t     active_idx;
     _Atomic uint32_t     total_publishes;
     _Atomic uint32_t     dropped_full;
+    /*
+     * Bumped by the session flush (the first-writer open).  A consumer that
+     * copied a slot across the bump is holding a PREVIOUS session's frame and
+     * must refuse it rather than judge it against the new session's fresh
+     * sequence baseline.
+     *
+     * This is the L-3 fix.  The previous revision flushed the ring from the
+     * dispatch thread (write_tail = write_head) while the tick thread could
+     * be mid-consume holding a stale tail `t`; the consumer then stored
+     * `read_tail = t + 1`, moving the tail BACKWARDS, so a pre-reset frame
+     * was delivered into the new session -- where `seq_valid == false`
+     * accepts any seq != 0.  One tick wide, but a stale frame judged with a
+     * fresh baseline is exactly the hole the session reset exists to close.
+     */
+    _Atomic uint32_t     flush_epoch;
 } latch_publish_buffer_t;
 
 /* ==========================================================================
@@ -324,6 +339,36 @@ static void latch_record_eperm_fault(void) {
  * 5. Dual Delivery Buffering: 256-Slot Lock-Free Ring Queue & Latest-Wins
  * ========================================================================== */
 
+/*
+ * Drop every frame still queued in the ring and start a new session epoch.
+ *
+ * Returns the number of frames that were discarded (the caller counts them
+ * as ring drops so the loss is visible in the telemetry).
+ *
+ * The tail is advanced with a compare-and-swap, so it can only ever move
+ * FORWARD.  The consumer advances it with a CAS as well, so neither side can
+ * regress the other: a consumer that was mid-copy when the flush landed
+ * fails its CAS and refuses the frame instead of resurrecting it.
+ */
+static uint32_t latch_ring_flush_session(latch_publish_buffer_t *buf) {
+    atomic_fetch_add_explicit(&buf->flush_epoch, 1u, memory_order_acq_rel);
+    uint32_t head = atomic_load_explicit(&buf->write_head, memory_order_relaxed);
+    uint32_t tail = atomic_load_explicit(&buf->read_tail, memory_order_acquire);
+    uint32_t stale = head - tail;
+    uint32_t expected = tail;
+    while (expected != head) {
+        if (atomic_compare_exchange_weak_explicit(&buf->read_tail, &expected,
+                                                  head,
+                                                  memory_order_release,
+                                                  memory_order_relaxed)) {
+            break;
+        }
+        /* `expected` was refreshed by the failed CAS: re-check. */
+        if (expected == head) break;
+    }
+    return stale;
+}
+
 static void latch_publish_proposal(latch_publish_buffer_t *buf,
                                    const latch_proposal_t *prop) {
     if (strcmp(g_manifest.ingest.delivery, "queued") == 0) {
@@ -370,6 +415,12 @@ static bool latch_consume_proposal(latch_publish_buffer_t *buf,
         uint32_t t = atomic_load_explicit(&buf->read_tail, memory_order_relaxed);
         uint32_t h = atomic_load_explicit(&buf->write_head, memory_order_acquire);
         if (t < h) {
+            /*
+             * Snapshot the session epoch BEFORE the payload is copied.  If a
+             * session flush lands while this frame is in flight, the epoch
+             * changes and the frame belongs to the previous session.
+             */
+            uint32_t epoch0 = atomic_load_explicit(&buf->flush_epoch, memory_order_acquire);
             uint32_t slot_idx = t % LATCH_PUB_RING_SIZE;
             const latch_seqlock_slot_t *slot = &buf->slots[slot_idx];
             for (int tries = 0; tries < 4; tries++) {
@@ -378,7 +429,28 @@ static bool latch_consume_proposal(latch_publish_buffer_t *buf,
                 *out_prop = slot->proposal;
                 uint32_t g2 = atomic_load_explicit(&slot->gen, memory_order_acquire);
                 if (g1 == g2) {
-                    atomic_store_explicit(&buf->read_tail, t + 1u, memory_order_release);
+                    /*
+                     * Advance the tail with a compare-and-swap, never with an
+                     * unconditional store.  An unconditional `read_tail = t+1`
+                     * can move the tail BACKWARDS when the session flush has
+                     * already pushed it forward to the write head -- which
+                     * resurrects the flushed frames.  The CAS only succeeds
+                     * while the tail is still exactly the slot this frame was
+                     * read from, so the tail is monotonic by construction.
+                     */
+                    uint32_t epoch1 = atomic_load_explicit(&buf->flush_epoch, memory_order_acquire);
+                    if (epoch0 != epoch1) {
+                        /* The session was flushed under this frame: refuse it. */
+                        return false;
+                    }
+                    uint32_t expected = t;
+                    if (!atomic_compare_exchange_strong_explicit(&buf->read_tail, &expected,
+                                                                 t + 1u,
+                                                                 memory_order_release,
+                                                                 memory_order_relaxed)) {
+                        /* The tail moved: a flush discarded this slot. Refuse it. */
+                        return false;
+                    }
                     return true;
                 }
             }
@@ -1887,13 +1959,17 @@ static int latch_io_open(resmgr_context_t *ctp,
             bool first_writer = (prior_writers == 0u);
 
             if (first_writer) {
-                /* Discard the PREVIOUS session's queued frames -- they belong
+                /*
+                 * Discard the PREVIOUS session's queued frames -- they belong
                  * to a producer that is gone -- and COUNT them, so the loss
-                 * is visible in the telemetry instead of being silent. */
-                uint32_t head = atomic_load_explicit(&g_pub_buf.write_head, memory_order_relaxed);
-                uint32_t tail = atomic_load_explicit(&g_pub_buf.read_tail, memory_order_acquire);
-                uint32_t stale = head - tail;
-                atomic_store_explicit(&g_pub_buf.read_tail, head, memory_order_release);
+                 * is visible in the telemetry instead of being silent.
+                 *
+                 * The epoch is bumped FIRST, so a consumer that is already
+                 * copying a slot from the previous session sees the change
+                 * and refuses the frame instead of delivering it into the
+                 * new session (see latch_consume_proposal()).
+                 */
+                uint32_t stale = latch_ring_flush_session(&g_pub_buf);
                 if (stale > 0u) {
                     atomic_fetch_add_explicit(&g_simplex.total_ring_drops, stale, memory_order_relaxed);
                 }
@@ -2519,10 +2595,22 @@ static int latch_run_pipe_simulation(const char *csv_path, const char *events_js
     while (1) {
         uint8_t wire_prop[sizeof(latch_ipc_proposal_v2_t)];
         size_t total = 0u;
+
+        /* The wire buffer has to hold the larger of the two proposal wire
+         * formats. The protocol header pins both sizes; this ties the buffer
+         * to them so a future format cannot silently outgrow it. */
+        _Static_assert(sizeof(latch_ipc_proposal_v2_t) >= sizeof(latch_ipc_proposal_t),
+                       "wire buffer must hold the largest proposal wire format");
+
         while (total < sizeof(uint32_t)) {
-            ssize_t n = read(STDIN_FILENO, wire_prop + total, sizeof(uint32_t) - total);
+            const size_t want = sizeof(uint32_t) - total;
+            ssize_t n = read(STDIN_FILENO, wire_prop + total, want);
             if (n > 0) {
-                total += (size_t)n;
+                /* read() never returns more than `want`, but the clamp makes
+                 * that explicit, so `total` can never exceed the bytes that
+                 * were requested. */
+                const size_t got = ((size_t)n > want) ? want : (size_t)n;
+                total += got;
             } else if (n == 0) {
                 break;
             } else if (errno != EINTR) {
@@ -2545,10 +2633,42 @@ static int latch_run_pipe_simulation(const char *csv_path, const char *events_js
             fprintf(stderr, "latchd: invalid IPC proposal on pipe\n");
             return EXIT_FAILURE;
         }
-        while (total < packet_len) {
-            ssize_t n = read(STDIN_FILENO, wire_prop + total, packet_len - total);
+        /* Fail-closed admission: a wire format larger than the buffer is
+         * rejected outright, never truncated into it. */
+        if (packet_len > sizeof(wire_prop)) {
+            fprintf(stderr, "latchd: IPC proposal exceeds the wire buffer\n");
+            return EXIT_FAILURE;
+        }
+        /* Read the rest of the packet.
+         *
+         * `remaining` only ever decreases, so the read length can never wrap
+         * around, and `room` is the space left in `wire_prop`. The count is
+         * the smaller of the two, so no single read can ever ask for more
+         * bytes than the destination has room for -- and the compiler can
+         * prove it, which is what keeps -Werror=stringop-overflow honest on
+         * every toolchain instead of only the ones whose value ranges it
+         * happens to track. */
+        size_t remaining = packet_len - total;
+        while (remaining > 0u) {
+            if (total > sizeof(wire_prop)) {
+                fprintf(stderr, "latchd: IPC proposal exceeds the wire buffer\n");
+                return EXIT_FAILURE;
+            }
+            const size_t room = sizeof(wire_prop) - total;
+            const size_t want = (remaining < room) ? remaining : room;
+            if (want == 0u) {
+                fprintf(stderr, "latchd: IPC proposal exceeds the wire buffer\n");
+                return EXIT_FAILURE;
+            }
+            ssize_t n = read(STDIN_FILENO, wire_prop + total, want);
             if (n > 0) {
-                total += (size_t)n;
+                /* read() cannot return more than `want`; clamp anyway so that
+                 * `total` and `remaining` stay consistent no matter what. */
+                size_t got = (size_t)n;
+                if (got > want) got = want;
+                if (got > remaining) got = remaining;
+                total += got;
+                remaining -= got;
             } else if (n == 0) {
                 break;
             } else if (errno != EINTR) {
@@ -2891,6 +3011,77 @@ static int latch_run_self_tests(void) {
         bool ok = latch_consume_proposal(&test_buf, &consumed_gen, &out);
         if (!ok || out.seq != s || out.u_mrad != (int32_t)(s * 10)) {
             fprintf(stderr, "FAIL: Ring buffer FIFO test failed at sequence %u\n", s);
+            return EXIT_FAILURE;
+        }
+    }
+
+    /*
+     * Test 1b: the session flush never lets the read tail REGRESS (L-3).
+     *
+     * The defect this pins: the flush ran on the dispatch thread and moved
+     * `read_tail` to the write head while the tick thread could be mid-copy
+     * holding a stale tail.  The consumer then stored `read_tail = t + 1`,
+     * moving the tail BACKWARDS, so a pre-reset frame was delivered into the
+     * new session -- where a fresh sequence baseline accepts any seq != 0.
+     *
+     * The property asserted here is the one that closes it: the tail is
+     * advanced by compare-and-swap from the slot the frame was actually read
+     * from, so a consumer that was overtaken by a flush can never move the
+     * tail backwards, and the flushed frames are never delivered.
+     */
+    {
+        latch_publish_buffer_t race_buf;
+        memset(&race_buf, 0, sizeof(race_buf));
+        for (uint32_t s = 1; s <= 3u; ++s) {
+            latch_proposal_t in = {
+                .ipc_magic      = LATCH_IPC_PROPOSAL_MAGIC,
+                .seq            = s,
+                .u_mrad         = (int32_t)(s * 10),
+                .wire_flags     = 0u,
+                .pre_fault_bits = 0u,
+                .ingest_cycles  = s
+            };
+            latch_publish_proposal(&race_buf, &in);
+        }
+
+        /* A consumer has loaded the tail and copied the payload of slot 0,
+         * but has NOT advanced the tail yet. */
+        uint32_t stale_tail = atomic_load_explicit(&race_buf.read_tail, memory_order_relaxed);
+
+        /* Meanwhile the first-writer open flushes the ring. */
+        uint32_t dropped = latch_ring_flush_session(&race_buf);
+        if (dropped != 3u) {
+            fprintf(stderr, "FAIL: session flush dropped %u frames, expected 3\n", dropped);
+            return EXIT_FAILURE;
+        }
+        uint32_t after_flush = atomic_load_explicit(&race_buf.read_tail, memory_order_relaxed);
+        if (after_flush != 3u) {
+            fprintf(stderr, "FAIL: session flush left read_tail=%u, expected 3\n", after_flush);
+            return EXIT_FAILURE;
+        }
+
+        /* The overtaken consumer now tries to advance the tail from the slot
+         * it read. The CAS MUST fail: it cannot regress the tail. */
+        uint32_t expected = stale_tail;
+        if (atomic_compare_exchange_strong_explicit(&race_buf.read_tail, &expected,
+                                                     stale_tail + 1u,
+                                                     memory_order_release,
+                                                     memory_order_relaxed)) {
+            fprintf(stderr, "FAIL: an overtaken consumer regressed the read tail\n");
+            return EXIT_FAILURE;
+        }
+        uint32_t final_tail = atomic_load_explicit(&race_buf.read_tail, memory_order_relaxed);
+        if (final_tail != after_flush) {
+            fprintf(stderr, "FAIL: read tail moved after the flush (%u -> %u)\n",
+                    after_flush, final_tail);
+            return EXIT_FAILURE;
+        }
+
+        /* And the flushed frames are NOT delivered into the new session. */
+        uint32_t consumed_gen = 0u;
+        latch_proposal_t out;
+        if (latch_consume_proposal(&race_buf, &consumed_gen, &out)) {
+            fprintf(stderr, "FAIL: a flushed frame was delivered into the new session\n");
             return EXIT_FAILURE;
         }
     }

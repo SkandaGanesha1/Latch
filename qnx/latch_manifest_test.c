@@ -146,6 +146,26 @@ static char *with_homeostat(const char *section) {
     return buffer;
 }
 
+/*
+ * Replaces the FIRST occurrence of `needle` in BASE_SCHEMA3 with `repl`.
+ *
+ * This is how the strict-key tests build a manifest that is byte-for-byte
+ * valid JSON, carries a matching SHA-256 sidecar, and differs from the
+ * baseline only by the key error under test.  That matters: the defect being
+ * pinned is "the loader accepts this document", not "the loader dislikes
+ * malformed JSON" -- the sidecar is regenerated for every case, so nothing
+ * here is caught by the tamper check.
+ */
+static char *mutate(const char *needle, const char *repl) {
+    static char buffer[16384];
+    const char *hit = strstr(BASE_SCHEMA3, needle);
+    if (hit == NULL) return NULL;
+    size_t head = (size_t)(hit - BASE_SCHEMA3);
+    snprintf(buffer, sizeof(buffer), "%.*s%s%s", (int)head, BASE_SCHEMA3, repl,
+             hit + strlen(needle));
+    return buffer;
+}
+
 int main(void) {
     char err[512] = {0};
 
@@ -371,11 +391,83 @@ int main(void) {
         }
     }
 
+    /* ------------------------------------------------------------------
+     * 8. STRICT KEY-SET VALIDATION FOR EVERY SECTION (L-4).
+     *
+     * The sidecar digest defends the manifest against TAMPERING.  It does
+     * NOT defend it against AUTHORSHIP ERROR.  These cases are all
+     * well-formed JSON with a MATCHING sidecar, so the only thing that can
+     * reject them is the loader's own strict key check.
+     *
+     * Before the fix, each of these LOADED: the parser was first-match-wins
+     * for duplicate keys and silently ignored unknown keys outside the
+     * governor/units/medical/rate/homeostat sections.  The worst case is the
+     * top-level one: a misspelled "governor" section was ignored, so the
+     * whole GOVERNOR ladder was OFF while the manifest still verified.
+     * ------------------------------------------------------------------ */
+    expect_rejected("envelope with a DUPLICATE key",
+        mutate("\"v_max\": 25", "\"v_max\": 25, \"v_max\": 30"));
+    expect_rejected("envelope with an UNKNOWN key",
+        mutate("\"v_max\": 25", "\"v_max\": 25, \"v_mx\": 30"));
+    expect_rejected("timing with a DUPLICATE key",
+        mutate("\"watchdog_ticks\": 2", "\"watchdog_ticks\": 2, \"watchdog_ticks\": 5"));
+    expect_rejected("timing with an UNKNOWN key",
+        mutate("\"wcet_budget_us\": 100", "\"wcet_budget_us\": 100, \"wcet_us\": 100"));
+    expect_rejected("recovery with a DUPLICATE key",
+        mutate("\"hysteresis_clean_frames\": 25",
+               "\"hysteresis_clean_frames\": 25, \"hysteresis_clean_frames\": 3"));
+    expect_rejected("recovery with an UNKNOWN key",
+        mutate("\"hold_to_home_ticks\": 50", "\"hold_to_home_ticks\": 50, \"home_ticks\": 50"));
+    expect_rejected("decision with an UNKNOWN key",
+        mutate("\"pulse_priority\": 63", "\"pulse_priority\": 63, \"pulse_prio\": 63"));
+    expect_rejected("paths with an UNKNOWN key",
+        mutate("\"i2c_bus\": \"/dev/i2c1\"", "\"i2c_bus\": \"/dev/i2c1\", \"bus\": \"/dev/i2c1\""));
+    expect_rejected("ingest with a DUPLICATE key",
+        mutate("\"queue_depth\": 256", "\"queue_depth\": 256, \"queue_depth\": 16"));
+    expect_rejected("actuator with an UNKNOWN key",
+        mutate("\"prescale\": 121", "\"prescale\": 121, \"pre_scale\": 121"));
+    expect_rejected("tape with an UNKNOWN key",
+        mutate("\"capacity\": 4096", "\"capacity\": 4096, \"cap\": 4096"));
+    expect_rejected("protocol with a DUPLICATE key",
+        mutate("\"version\": 2", "\"version\": 2, \"version\": 3"));
+    expect_rejected("plant with an UNKNOWN key",
+        mutate("\"name\": \"servo-horn-1d\"", "\"name\": \"servo-horn-1d\", \"owner\": \"x\""));
+
+    /* The top level.  These are the dangerous ones: a misspelled section
+     * name used to be IGNORED, which silently switched a safety gate off. */
+    expect_rejected("a misspelled GOVERNOR section (the ladder would be silently OFF)",
+        mutate("\"governor\": {", "\"governerr\": {"));
+    expect_rejected("a misspelled MEDICAL section (the dose gate would be silently OFF)",
+        mutate("\"governor\": {",
+               "\"medcial\": {\"drug_name\": \"x\", \"drug_id\": 1,"
+               " \"concentration_uL_per_unit\": 1, \"max_bolus_uL\": 1,"
+               " \"min_bolus_interval_ticks\": 1, \"cumulative_dose_window_ticks\": 1,"
+               " \"max_cumulative_dose_uL\": 1}, \"governor\": {"));
+    expect_rejected("an unknown top-level section",
+        mutate("\"governor\": {", "\"safety_margin\": 1, \"governor\": {"));
+
+    /* The entries inside the arrays are safety parameters too. */
+    expect_rejected("a keep-out entry with an UNKNOWN key",
+        mutate("\"label\": \"PERSON\"", "\"label\": \"PERSON\", \"colour\": \"red\""));
+    expect_rejected("a keep-out entry with a DUPLICATE key",
+        mutate("\"lo_mrad\": 250", "\"lo_mrad\": 250, \"lo_mrad\": 300"));
+    expect_rejected("an axis entry with an UNKNOWN key",
+        mutate("\"max\": 1000", "\"max\": 1000, \"scale\": 1"));
+
+    /* A MISSING key in a core section must also fail closed: the loader
+     * would otherwise apply a compiled-in default for a safety parameter. */
+    expect_rejected("envelope missing v_max",
+        mutate("\"v_max\": 25, ", ""));
+    expect_rejected("timing missing watchdog_ticks",
+        mutate("\"watchdog_ticks\": 2, ", ""));
+    expect_rejected("recovery missing hysteresis_clean_frames",
+        mutate("\"hysteresis_clean_frames\": 25, ", ""));
+
     if (failures != 0) {
         fprintf(stderr, "[LATCH_MANIFEST] FAIL: %d of %d checks failed\n", failures, checks);
         return 1;
     }
     printf("[LATCH_MANIFEST] PASS: %d checks -- strict homeostat parsing, range "
-           "fail-closed, default-off, schema-3-only and sidecar enforcement\n", checks);
+           "fail-closed, default-off, schema-3-only, strict key sets and sidecar enforcement\n", checks);
     return 0;
 }

@@ -46,7 +46,15 @@ else ifeq ($(TARGET),native)
     OUT_DIR    := $(BUILD_DIR)/native
 else ifeq ($(TARGET),host-sim)
     CC         := gcc
-    CFLAGS     := -std=c11 $(COMMON_CFLAGS) -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM
+    # The host-sim is the glibc/POSIX harness, so it can use glibc's
+    # _FORTIFY_SOURCE. It is requested EXPLICITLY, at level 3, instead of
+    # relying on the toolchain's default: Ubuntu's gcc enables level 3 by
+    # itself, Fedora's enables nothing, and the difference is exactly what
+    # let a bounds defect compile cleanly on one workstation and fail on
+    # another. -U first, so a distro that already defines the macro at a
+    # different level does not produce a redefinition warning under -Werror.
+    CFLAGS     := -std=c11 $(COMMON_CFLAGS) -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
+                  -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM
     LDFLAGS    := -lpthread -lrt -lm
     OUT_DIR    := $(BUILD_DIR)/host-sim
 else
