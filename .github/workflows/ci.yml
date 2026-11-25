@@ -146,10 +146,46 @@ jobs:
           # tools/verify_qemu_aarch64.py boots the built IFS under QEMU and
           # asserts the same signature. It needs qemu-system-aarch64 and the
           # QNX SDP, so it runs on a self-hosted runner rather than here.
-          grep -qE 'Proposals Received\\s*:\\s*\\d+' tools/verify_qemu_aarch64.py
-          grep -qE 'Envelope Vetoes' tools/verify_qemu_aarch64.py
-          grep -qE 'Ring Drops' tools/verify_qemu_aarch64.py
-          echo "[CI ASSERTION PASS] The on-target harness asserts the same counters as the host-sim gate."
+          #
+          # This step is a YAML BLOCK SCALAR (`run: |`), so the shell receives
+          # its text verbatim -- YAML escape processing does not apply.  The
+          # previous revision used `grep -qE 'Proposals Received\\s*...'`,
+          # which reaches grep -E as "literal backslash followed by s" and
+          # can never match the harness source's "\s*".  It also used "\d",
+          # which is a PCRE extension that GNU grep does not implement.  Both
+          # faults made this step fail with "no match" even though the
+          # harness asserted exactly what the step claimed to check -- and
+          # the step had been RED since v10.1.
+          #
+          # The check below uses LITERAL substring matching instead of a
+          # regex, so there is no escaping layer between this file and the
+          # harness.  It also proves the patterns are LIVE assertions (the
+          # harness applies them with re.search) rather than prose.
+          python3 - <<'PYEOF'
+          import sys
+          src = open("tools/verify_qemu_aarch64.py").read()
+          required = [
+              r'Proposals Received\s*:\s*%d\b',
+              r'Wire Faults Caught\s*:\s*12',
+              r'Envelope Vetoes\s*:\s*7\b',
+              r'Ring Drops / WCET\s*:\s*0 drops',
+              r'ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED',
+              r'VERIFY_RC=0',
+          ]
+          missing = [p for p in required if p not in src]
+          if missing:
+              print("[CI HARNESS FAIL] tools/verify_qemu_aarch64.py no longer asserts: "
+                    + "; ".join(missing))
+              sys.exit(1)
+          # The patterns must be APPLIED, not merely mentioned.
+          for live in ("for pattern, label in checks:", "re.search(pattern, text)"):
+              if live not in src:
+                  print("[CI HARNESS FAIL] the harness no longer applies its check list "
+                        "(missing: %s)" % live)
+                  sys.exit(1)
+          print("[CI ASSERTION PASS] The on-target harness asserts the same counters as "
+                "the host-sim gate (12 wire / 7 envelope / 0 drops / VERIFY_RC=0).")
+          PYEOF
 
       - name: Verify The Committed Evidence Archive Is Not Stale
         run: |
