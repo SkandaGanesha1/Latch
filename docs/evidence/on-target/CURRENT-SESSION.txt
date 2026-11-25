@@ -7,13 +7,13 @@ produced by the current code, it is the run the archive's quotable
 numbers were derived from, and it is the session the
 consistency gate checks.
 
-  Family         : 20261113-001157
-  Console        : docs/evidence/on-target/20261113-001157-console.txt
-  Status         : docs/evidence/on-target/20261113-001157-status.txt
-  Verification   : docs/evidence/on-target/20261113-001157-verify.txt
-  Guest console  : docs/evidence/on-target/20261113-001157-guest-console.txt
-  Evidence tape  : docs/evidence/on-target/20261113-001157-tape-dump.txt
-  Threads        : docs/evidence/on-target/20261113-001157-threads.txt
+  Family         : 20261125-090128
+  Console        : docs/evidence/on-target/20261125-090128-console.txt
+  Status         : docs/evidence/on-target/20261125-090128-status.txt
+  Verification   : docs/evidence/on-target/20261125-090128-verify.txt
+  Guest console  : docs/evidence/on-target/20261125-090128-guest-console.txt
+  Evidence tape  : docs/evidence/on-target/20261125-090128-tape-dump.txt
+  Threads        : docs/evidence/on-target/20261125-090128-threads.txt
 
   The numbered files 01-..09 in the same directory are the BRING-UP
   HISTORY: each of them differs from the one before it by exactly

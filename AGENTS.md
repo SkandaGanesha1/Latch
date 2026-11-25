@@ -244,6 +244,54 @@ wrong.
   exactly one Pi buildfile, `qnx/latch_rpi4.build`, so Pi 4B is the only board
   this project claims. `tools/consistency_check.py` fails the build if a doc
   ever names a target the repository cannot build.
+- **The QSC package manifest is the authority for "what is installed".**
+  Every installed package has a directory
+  `~/qnx800/.packages/metadata/<package-id>/<package-version>/`, so the
+  exact build strings are readable without opening the GUI:
+  `ls ~/qnx800/.packages/metadata/*/*/AssetDescriptor.json`.
+  On this workstation that yields `com.qnx.qnx800
+  8.0.0.00141T202311271501L` (SDP) and `com.qnx.qnx800.target.hypervisor.*
+  3.6.0.00802T202608071638L` (Hypervisor).
+- **The host-tools package is a METAPACKAGE, and it does not require
+  `mkifs`.** `com.qnx.qnx800.host.linux.x86_64`'s `ResourceDescriptor.afd`
+  requires `.qcc`, `.gcc`, `.secpol`, `.qlicense`, `.mkxfs`, `.mkqfs` and
+  others — but **not** `mkifs`. The tool-providing packages are separate:
+  `...host.linux.x86_64.qcc`, `...host.linux.x86_64.secpol`,
+  `...host.linux.x86_64.qlicense`, `...host.linux.x86_64.mkifs`
+  (`1.2.2.00014T202605190942L`). So "the host-tools package provides
+  `qcc`, `mkifs`, `secpolcompile`, `qlicense`" is **false**; name the
+  per-tool packages instead.
+- **The host-sim's decision latency is HOST-LOAD dependent, so the
+  hand-written docs must not quote it.** The archived captures show
+  `max_latency=1413 ns` and `max_latency=2154 ns` on the same code — the
+  number moves with the machine's load, and `make evidence` re-measures it
+  on every capture. The docs therefore **point at**
+  `docs/evidence/host-sim/` instead of copying its number; a quoted
+  figure would be stale the moment the archive is refreshed, and the
+  refresh is what archives the gate's own output. `tools/consistency_check.py`
+  enforces this (§6j): a fragment that mentions the host-sim may not carry
+  a measured latency figure.
+- **In an on-target console there are SEVERAL status polls.** The first
+  `Decision Latency` line in `*-console.txt` reads `last = 0 cyc (0 ns)` —
+  it was polled before the guest booted. The quotable latency is the one
+  in the family's **`*-status.txt`** (the pre-verification snapshot), and
+  that is the file `tools/consistency_check.py` treats as the authority.
+  The post-verification `*-verify.txt` shows a different `last` because
+  the harness's own frames have run by then.
+- **A Hypervisor package internal version identifies the product release.**
+  `3.6.0.00802T202608071638L` is published by the **QNX Hypervisor 8.0.5
+  Product Release Notes** ("Date of this edition: August 21, 2026"), so the
+  installed hypervisor **is** 8.0.5 — the `00802` is the product build
+  number, and the `3.x.y` prefix is the package's own version. The mapping is
+  checkable against the official page:
+  `https://www.qnx.com/developers/docs/relnotes8.0/com.qnx.doc.release_notes/topic/qh8.0_prod_release_notes/hypervisor8.0.5_rn.html`.
+  The child pages live under `topic/qh8.0_prod_release_notes/`; the plain
+  `qh8.0_updates.html` page only carries the older build 549.
+- **No Raspberry Pi BSP is installed on this workstation.** The only BSP
+  packages present are the hypervisor *guest* BSPs (`...bsp.hypervisor_guest_arm`
+  / `_x86`). So `qnx/latch_rpi4.build` exists and is documented, but the Pi 4B
+  image **cannot be built here**; the verified target is QEMU AArch64 `virt`.
+  Say so rather than implying the physical board was exercised.
 
 ---
 

@@ -44,10 +44,11 @@
 
 | Toolchain / Runtime Component | Exact Package / Identifier | Provenance |
 |:---|:---|:---|
-| **QNX SDP** | QNX Software Development Platform 8.0.0 (`com.qnx.qnx800 8.0.0.00141T202311271501L`) | BlackBerry QNX |
-| **QNX Target Utils** | Built from branch `qnx/8.0.0/8.0.5` | BlackBerry QNX |
-| **QNX Hypervisor** | `target.hypervisor.core 3.6.0.00802T202608071638L` (Aug 2026 build) | BlackBerry QNX |
-| **QNX Cross-Compiler** | QNX GCC 12.2.0 (`gcc_ntoaarch64le`, `gcc_ntox86_64`) via `qcc` | BlackBerry QNX |
+| **QNX SDP** | QNX Software Development Platform 8.0.0 (`com.qnx.qnx800 8.0.0.00141T202311271501L`) | BlackBerry QNX — QNX SDP 8.0 release notes; the installed-vs-current split (installed 8.0.0, current upstream 8.0.6) is stated in `docs/plan/03_RESEARCH_LINKS_AND_TECH_STACK.md` |
+| **QNX Host Tools (metapackage)** | `com.qnx.qnx800.host.linux.x86_64 0.0.1.02005T202411230033L` — the metapackage. Its `ResourceDescriptor.afd` **requires** the per-tool packages below; it does **not** require `mkifs`. | BlackBerry QNX — read from the QSC install manifest `~/qnx800/.packages/metadata/` |
+| **QNX Host Tools (per-tool)** | `com.qnx.qnx800.host.linux.x86_64.qcc 8.0.0.00121T202510081309L` (`qcc`) · `com.qnx.qnx800.host.linux.x86_64.secpol 0.5.0.00132T202605281115L` (`secpolcompile`) · `com.qnx.qnx800.host.linux.x86_64.qlicense 8.0.0.00114T202411221950L` (`qlicense`) · `com.qnx.qnx800.host.linux.x86_64.mkifs 1.2.2.00014T202605190942L` (`mkifs`) | BlackBerry QNX — read from the QSC install manifest |
+| **QNX Hypervisor** | `com.qnx.qnx800.target.hypervisor.group 3.6.0.00802T202608071638L` (Aug 2026 build) — this package version is the one published for **QNX Hypervisor 8.0.5**, so the installed hypervisor **is** 8.0.5 | BlackBerry QNX — QNX Hypervisor 8.0.5 Product Release Notes, "Date of this edition: August 21, 2026": `https://www.qnx.com/developers/docs/relnotes8.0/com.qnx.doc.release_notes/topic/qh8.0_prod_release_notes/hypervisor8.0.5_rn.html` |
+| **QNX Cross-Compiler** | QNX GCC 12.2.0 (`gcc_ntoaarch64le`, `gcc_ntox86_64`) via `qcc` — package `com.qnx.qnx800.host.linux.x86_64.gcc 12.2.0.00500T202604231841L` | BlackBerry QNX |
 | **Host Tooling** | GCC 16.2.1 / Clang 23.1.5 / QEMU 11.1.3 (AArch64 `virt`) | Fedora Linux |
 
 ---

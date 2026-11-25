@@ -610,16 +610,35 @@ def summarise_console(text):
 
 
 def scenario_history(args):
-    """Archive every raw console log from the bring-up, with its signature."""
+    """Archive every raw console log from the bring-up, with its signature.
+
+    The raw logs lived in an ephemeral directory (/tmp) and are gone on any
+    fresh machine, so the ARCHIVED copies are the durable record: a missing
+    temp file must never rewrite them and must never drop them from the
+    index. The index is then derived from the archive itself -- see
+    write_run_index.
+    """
     raw_dir = args.raw_dir
     out = os.path.join(args.out, "on-target")
     os.makedirs(out, exist_ok=True)
 
-    index_rows = []
     for src_name, dst_name, story in HISTORY:
         src = os.path.join(raw_dir, src_name)
+        dst = os.path.join(out, dst_name)
         if not os.path.isfile(src):
-            print("[HISTORY] SKIP %s (not found in %s)" % (src_name, raw_dir))
+            # The raw log is gone (it lived in an ephemeral directory), so
+            # the ARCHIVED copy is the durable record. But "the archived
+            # copy is kept" is only true if there IS one: if it is missing
+            # too, the bring-up history has a hole and the index would
+            # silently lose a row. That is a hard error, not a skip.
+            if not os.path.isfile(dst):
+                raise RuntimeError(
+                    "history file %s is missing: its raw log (%s) is gone and "
+                    "there is no archived copy under %s. The bring-up history "
+                    "must not lose a row -- restore the archived file."
+                    % (dst_name, src_name, out))
+            print("[HISTORY] %-42s -> archived copy kept (raw log %s is gone)"
+                  % (dst_name, src_name))
             continue
         with io.open(src, encoding="utf-8", errors="replace") as f:
             text = f.read()
@@ -650,10 +669,47 @@ def scenario_history(args):
                 "  (ALL 5 INVARIANTS PASS)" if s["all_pass"] else ""),
             "",
         ])
-        write(os.path.join(out, dst_name), header + text)
+        write(dst, header + text)
+        print("[HISTORY] %-42s -> %s" % (src_name, os.path.relpath(dst, REPO_ROOT)))
+
+    write_run_index(args)
+    return 0
+
+
+def write_run_index(args):
+    """Derive the bring-up index from the ARCHIVE.
+
+    The index is a view of what is committed under docs/evidence/on-target/,
+    not of the ephemeral raw logs it was first built from. Deriving it from
+    the archive makes it regenerable on any machine -- and keeps it naming
+    the family that is actually committed, which is exactly the family a
+    fresh capture prunes.
+    """
+    out = os.path.join(args.out, "on-target")
+    index_rows = []
+    missing = []
+    for _src_name, dst_name, story in HISTORY:
+        dst = os.path.join(out, dst_name)
+        if not os.path.isfile(dst):
+            missing.append(dst_name)
+            continue
+        with io.open(dst, encoding="utf-8", errors="replace") as f:
+            s = summarise_console(f.read())
         index_rows.append((dst_name, s, story))
-        print("[HISTORY] %-42s -> %s" % (src_name, os.path.relpath(
-            os.path.join(out, dst_name), REPO_ROOT)))
+    if missing:
+        # FAIL CLOSED. A missing history file used to be skipped with a
+        # message, so the index quietly lost a row -- and the index is the
+        # archive's table of contents: a row that disappears is a run the
+        # judge is never told about.
+        raise RuntimeError(
+            "%d history file(s) are missing from %s: %s. The run index must "
+            "describe the whole bring-up; restore the archived file(s) "
+            "instead of writing an index with holes."
+            % (len(missing), out, ", ".join(missing)))
+    if not index_rows:
+        raise RuntimeError(
+            "no history rows could be derived from %s -- refusing to write an "
+            "empty run index." % out)
 
     # The CURRENT canonical capture, if there is one. It is the run that
     # produced the archive's quotable numbers, so it must be in the index --
@@ -744,7 +800,7 @@ def scenario_history(args):
         L.append("    %-42s %s" % (dst_name, story))
     L.append("")
     write(os.path.join(args.out, "derived", "on-target-run-index.txt"), "\n".join(L))
-    print("[HISTORY] index -> %s" % os.path.relpath(
+    print("[INDEX] index -> %s" % os.path.relpath(
         os.path.join(args.out, "derived", "on-target-run-index.txt"), REPO_ROOT))
     return 0
 
@@ -2409,6 +2465,11 @@ def main():
             rc |= scenario_tape(args)
         if scenario == "history" or (run_all and scenario is None):
             rc |= scenario_history(args)
+            # The evidence README EMBEDS the run index, so refreshing the
+            # index must refresh the README with it. Leaving the embedded
+            # copy behind is how the archive's table of contents and the
+            # index it embeds came to disagree.
+            rc |= scenario_index(args)
         if scenario == "resolution" or (run_all and scenario is None):
             rc |= scenario_resolution(args)
         if scenario == "governor" or (run_all and scenario is None):
@@ -2418,8 +2479,10 @@ def main():
         if scenario == "on-target":
             rc |= scenario_on_target(args)
             # A fresh on-target capture changes the quotable numbers, so the
-            # index is regenerated from it rather than left pointing at the
-            # previous run's values.
+            # run index (which names the canonical family) and the evidence
+            # README (which embeds that index) are regenerated from it rather
+            # than left pointing at the family the capture just pruned.
+            rc |= write_run_index(args)
             rc |= scenario_index(args)
         if scenario == "rederive-on-target":
             rc |= scenario_rederive_on_target(args)

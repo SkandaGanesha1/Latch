@@ -1,0 +1,29 @@
+latchctl status
+
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 23120 ticks
+Current Mode         : HOLD (High Assurance 1)
+Actuator Angle       : 0 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : -180 mrad (seq=80)
+Decision Latency     : last = 64 cyc (1024 ns) | max = 40323 cyc (645168 ns)
+Proposals Received   : 84
+Wire Faults Caught   : 12
+Envelope Vetoes      : 7
+Ring Drops / WCET    : 0 drops | 3 overruns
+Proposal Backlog     : peak 44 frames | 0 over limit
+EPERM Rejections     : 0
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0100 (WATCHDOG)
+Latched Fault Bits   : 0x01AE (CRC|SEQ|NAN|KEEPOUT|RATE|WATCHDOG)
+Clean Streak         : 0 frames
+GOVERNOR             : disabled | rung=HP (0)
+V2 Session / Lease   : inactive | 0 ticks left | lease age 0 ticks
+Warm-up / Agent      : 0 heartbeats | state 0
+Recovery Clean       : 0 accepted commands
+Deadline Misses      : 0 overruns
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+Rate / Shrink        : 0 tokens | active=0 v_max=0 scale_q8=255
+Coherence            : unset | counter=0
+Manifest SHA-256     : 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+# latch_verify -m /proc/boot/

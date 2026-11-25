@@ -1,15 +1,15 @@
 ==============================================================================
-LATCH on-target tape analysis -- 20261113-001157
+LATCH on-target tape analysis -- 20261125-090128
 ==============================================================================
 Source       : on-target tape dump
-Tape rows    : 128 total (ticks 45851..45978)
-Suite window : ticks 45851..45851 (1 ticks of actual frame traffic)
+Tape rows    : 128 total (ticks 37993..38120)
+Suite window : ticks 37993..37993 (1 ticks of actual frame traffic)
 Post-suite   : 127 ticks of the guest's DESIGNED silence (phase 9)
 Keep-out     : [250, 650] mrad
 
 Scope          : TAPE-WINDOW ANALYSIS -- every number below is computed
                 ONLY from the 128 captured tape rows listed above
-                (ticks 45851..45978). These are NOT the supervisor's
+                (ticks 37993..38120). These are NOT the supervisor's
                 whole-session counters. The whole-session counters
                 (Proposals Received / Wire Faults / Envelope Vetoes /
                 Ring Drops / WCET Overruns / EPERM Rejects) come from
@@ -29,8 +29,8 @@ Scope          : TAPE-WINDOW ANALYSIS -- every number below is computed
 
 Provenance    :
                 DERIVED FILE -- THIS IS ANALYSIS, NOT A CAPTURE.
-                Derived from  : on-target/20261113-001157-tape-dump.txt
-                Input SHA-256 : 29d97bb2c0af176a6047cc8c8b48a0fd458a53cb5038e9b25f06c9724145997d
+                Derived from  : on-target/20261125-090128-tape-dump.txt
+                Input SHA-256 : 0197e32165f045dc7e309d2234f6a2c0589129e898a7f9e320b9a4e9804ea1a1
                 The input is a slice of the raw QEMU serial console of
                 ONE continuous QNX boot -- that raw capture is the
                 evidence. This file is a deterministic ANALYSIS of it:
@@ -49,12 +49,12 @@ Fault-bit histogram -- over the whole captured tape (the post-suite tail is the 
   (none)
 
 Mode timeline (first 12 transitions)
-  tick 45851    HOLD
+  tick 37993    HOLD
 
 Keep-out breaches  : 0 rows with theta_applied inside [250, 650]
 Max accepted seq   : 115  (highest sequence applied with no fault latched)
 Max seq observed   : 115
-Max latency (cycles): 2258
+Max latency (cycles): 307
 
 Starvation stalls (runs of supervisor ticks with NO new frame consumed)
   These are the transport defect's signature: the supervisor's

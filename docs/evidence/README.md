@@ -15,17 +15,17 @@ summary written for you.
 
 | Claim | Value | Source file |
 |---|---|---|
-| Guest suite frames delivered | `84` | `on-target/20261113-001157-console.txt` |
-| Wire faults caught | `12` | `on-target/20261113-001157-console.txt` |
-| Envelope vetoes | `7` | `on-target/20261113-001157-console.txt` |
-| Ring drops | `0` | `on-target/20261113-001157-console.txt` |
-| Last accepted proposal | `-180 mrad (seq=80)` | `on-target/20261113-001157-console.txt` |
-| Latched fault bits | `0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `on-target/20261113-001157-console.txt` |
-| Decision latency | `last = 212 cyc (3392 ns) \| max = 40374 cyc (645984 ns)` | `on-target/20261113-001157-console.txt` |
-| Proposal backlog | `peak 14 frames \| 0 over limit` | `on-target/20261113-001157-console.txt` |
-| Manifest digest (attestation) | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` | `on-target/20261113-001157-console.txt` |
-| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` | `on-target/20261113-001157-console.txt` |
-| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `on-target/20261113-001157-console.txt` (the `pidin -p qvm threads` section) |
+| Guest suite frames delivered | `84` | `on-target/20261125-090128-console.txt` |
+| Wire faults caught | `12` | `on-target/20261125-090128-console.txt` |
+| Envelope vetoes | `7` | `on-target/20261125-090128-console.txt` |
+| Ring drops | `0` | `on-target/20261125-090128-console.txt` |
+| Last accepted proposal | `-180 mrad (seq=80)` | `on-target/20261125-090128-console.txt` |
+| Latched fault bits | `0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `on-target/20261125-090128-console.txt` |
+| Decision latency | `last = 64 cyc (1024 ns) \| max = 40323 cyc (645168 ns)` | `on-target/20261125-090128-console.txt` |
+| Proposal backlog | `peak 44 frames \| 0 over limit` | `on-target/20261125-090128-console.txt` |
+| Manifest digest (attestation) | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` | `on-target/20261125-090128-console.txt` |
+| Verification | `[1/5]`…`[5c/5]` all PASS, `VERIFY_RC=0` | `on-target/20261125-090128-console.txt` |
+| Static vCPU pin | `cy-guest-qemu-virt/0` and `/1` | `on-target/20261125-090128-console.txt` (the `pidin -p qvm threads` section) |
 | Host-sim signature | `wire=12 · envelope=7 · last_seq=80` | `derived/host-sim-signature.txt` |
 | Keep-out breaches | `0` | `tape/latch_tape6-metrics.txt` |
 | HA-HOME retraction | `17` rows, monotonic | `tape/latch_tape6-metrics.txt` |
@@ -83,12 +83,12 @@ docs/evidence/
       07-run7-verify-all-pass.txt
       08-rejected-2nd-virtio-console.txt
       09-canonical-session.txt
-      20261113-001157-console.txt
-      20261113-001157-guest-console.txt
-      20261113-001157-status.txt
-      20261113-001157-tape-dump.txt
-      20261113-001157-threads.txt
-      20261113-001157-verify.txt
+      20261125-090128-console.txt
+      20261125-090128-guest-console.txt
+      20261125-090128-status.txt
+      20261125-090128-tape-dump.txt
+      20261125-090128-threads.txt
+      20261125-090128-verify.txt
       CURRENT-SESSION.txt
   quarantine/
       REJECTED-linux-baseline/
@@ -199,7 +199,7 @@ counters form a monotone story. Every number below is parsed out of
 the archived console next to it.
 
   CURRENT canonical session (the run the quotable numbers come from):
-    20261113-001157-console.txt                     84     12      7      0     80  0
+    20261125-090128-console.txt                     84     12      7      0     80  0
 
   file                                        frames   wire    env  drops    seq  VERIFY_RC
   --------------------------------------------------------------------------------------------

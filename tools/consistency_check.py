@@ -667,6 +667,643 @@ def verify_evidence_archive():
         pass_check("The committed evidence tape carries the exact signature "
                    "(wire=12, envelope=7, last_seq=80, %d HA-HOME rows)" % thome)
 
+    # --- 6i. THE RUN INDEX MUST NAME THE FAMILY THAT IS COMMITTED -------
+    #
+    # A fresh capture PRUNES the previous family and writes a new one. The
+    # run index names the canonical session, and the evidence README embeds
+    # that index. If the index is not refreshed with the capture, it points
+    # at a file the capture just deleted: the archive's own table of
+    # contents then cites a session that no longer exists, and a judge who
+    # follows the pointer finds nothing.
+    #
+    # The rule is in four parts:
+    #   1. the index's CURRENT canonical session must be the live family;
+    #   2. every file the index names must exist in the archive;
+    #   3. every EXPECTED history row must be present -- an index that has
+    #      quietly lost a row is an archive that has quietly lost a run;
+    #   4. the CURRENT row's counters must be the raw capture's counters,
+    #      and the evidence README must embed the index as it stands.
+    live_family = current_families[-1]
+    with io.open(os.path.join(ev, "derived", "on-target-run-index.txt"),
+                 encoding="utf-8", errors="replace") as f:
+        run_index = f.read()
+    m_cur = re.search(r"CURRENT canonical session[^\n]*\n\s*(\S+)-console\.txt", run_index)
+    if not m_cur:
+        fail("docs/evidence/derived/on-target-run-index.txt does not name a CURRENT "
+             "canonical session. Re-run `python3 tools/capture_evidence.py history`.")
+    else:
+        idx_family = m_cur.group(1)
+        if idx_family != live_family:
+            fail("docs/evidence/derived/on-target-run-index.txt names %s as the CURRENT "
+                 "canonical session, but the archive's live family is %s. The index points "
+                 "at a session the capture pruned. Re-run "
+                 "`python3 tools/capture_evidence.py history`."
+                 % (idx_family, live_family))
+        else:
+            pass_check("The run index's CURRENT canonical session is the live family (%s)"
+                       % live_family)
+    dangling = []
+    for ref in sorted(set(re.findall(r"(\S+\.txt)", run_index))):
+        if not os.path.isfile(os.path.join(on_target_dir, ref)):
+            dangling.append(ref)
+    if dangling:
+        fail("docs/evidence/derived/on-target-run-index.txt references %d file(s) "
+             "that are not in the archive: %s. The index must describe the archive, not a "
+             "pruned session." % (len(dangling), ", ".join(dangling)))
+    else:
+        pass_check("Every file named by the run index exists in the archive")
+
+    # (3) Every EXPECTED history row must be present. The expected list is
+    # the generator's own -- one source of truth for what the bring-up is.
+    expected_history = []
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        import capture_evidence as _cap
+        expected_history = [dst for _src, dst, _story in _cap.HISTORY]
+    except Exception as exc:       # the generator is not importable
+        fail("tools/capture_evidence.py could not be imported (%s), so the expected "
+             "history rows cannot be checked. The run index must list the whole "
+             "bring-up." % exc)
+    absent_rows = [dst for dst in expected_history
+                   if not re.search(r"^\s*%s\s" % re.escape(dst), run_index, re.M)]
+    if absent_rows:
+        fail("docs/evidence/derived/on-target-run-index.txt is missing %d expected "
+             "history row(s): %s. The index is the archive's table of contents -- a "
+             "row that disappears is a run the judge is never told about. Re-run "
+             "`python3 tools/capture_evidence.py history`."
+             % (len(absent_rows), ", ".join(absent_rows)))
+    else:
+        pass_check("The run index lists all %d expected history rows"
+                   % len(expected_history))
+
+    # (4) The CURRENT row's counters must be the RAW capture's counters.
+    m_row = re.search(r"^\s*%s-console\.txt\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$"
+                      % re.escape(live_family), run_index, re.M)
+    raw_status_path = os.path.join(on_target_dir, "%s-status.txt" % live_family)
+    raw_verify_path = os.path.join(on_target_dir, "%s-verify.txt" % live_family)
+    if not m_row:
+        fail("docs/evidence/derived/on-target-run-index.txt has no counters row for the "
+             "CURRENT session (%s-console.txt). Re-run "
+             "`python3 tools/capture_evidence.py history`." % live_family)
+    else:
+        raw_counters = {}
+        for label, pat, path in (
+                ("frames", r"Proposals Received\s*:\s*(\d+)", raw_status_path),
+                ("wire", r"Wire Faults Caught\s*:\s*(\d+)", raw_status_path),
+                ("vetoes", r"Envelope Vetoes\s*:\s*(\d+)", raw_status_path),
+                ("drops", r"Ring Drops / WCET\s*:\s*(\d+) drops", raw_status_path),
+                ("seq", r"Last Proposed Angle\s*:\s*-?\d+ mrad \(seq=(\d+)\)", raw_status_path),
+                ("rc", r"VERIFY_RC=(\d+)", raw_verify_path)):
+            if not os.path.isfile(path):
+                fail("the raw capture %s is missing -- the index's counters cannot be "
+                     "checked against it." % os.path.relpath(path, REPO_ROOT))
+            with io.open(path, encoding="utf-8", errors="replace") as f:
+                m_raw = re.search(pat, f.read())
+            if not m_raw:
+                fail("the raw capture %s does not report %s -- the index's counters "
+                     "cannot be checked against it."
+                     % (os.path.relpath(path, REPO_ROOT), label))
+            raw_counters[label] = m_raw.group(1)
+        idx_counters = dict(zip(("frames", "wire", "vetoes", "drops", "seq", "rc"),
+                                m_row.groups()))
+        wrong = [("%s: index says %s, raw capture says %s" % (k, idx_counters[k],
+                                                             raw_counters[k]))
+                 for k in raw_counters if idx_counters[k] != raw_counters[k]]
+        if wrong:
+            fail("docs/evidence/derived/on-target-run-index.txt disagrees with the raw "
+                 "capture it summarises -- %s. The index must be derived from the "
+                 "archive; re-run `python3 tools/capture_evidence.py history`."
+                 % "; ".join(wrong))
+        else:
+            pass_check("The run index's CURRENT row agrees with the raw capture "
+                       "(%s frames / %s wire / %s vetoes / %s drops / seq %s / "
+                       "VERIFY_RC=%s)" % (raw_counters["frames"], raw_counters["wire"],
+                                          raw_counters["vetoes"], raw_counters["drops"],
+                                          raw_counters["seq"], raw_counters["rc"]))
+
+    with io.open(os.path.join(ev, "README.md"), encoding="utf-8", errors="replace") as f:
+        ev_readme = f.read()
+    if "%s-console.txt" % live_family not in ev_readme:
+        fail("docs/evidence/README.md does not name the live capture family (%s-console.txt). "
+             "The evidence index a judge reads first must point at the committed session."
+             % live_family)
+    else:
+        pass_check("The evidence README names the live capture family (%s)" % live_family)
+
+    # The README's reproducibility card cites the archive by file name.
+    # `CURRENT-SESSION.txt` is only a POINTER -- it names the session's
+    # files, it does not contain the status block or the verification
+    # transcript -- so a citation to it is a citation to nothing. The card
+    # must cite the live family's raw files, or the citation dangles the
+    # moment the next capture prunes the family.
+    for suffix, what in (("-status.txt", "the supervisor status block"),
+                          ("-verify.txt", "the verification transcript")):
+        cite = "docs/evidence/on-target/%s%s" % (live_family, suffix)
+        if cite not in readme_txt:
+            fail("README.md's reproducibility card does not cite %s (%s). "
+                 "CURRENT-SESSION.txt only POINTS at the session's files, so a "
+                 "citation to it is a citation to nothing -- cite %s."
+                 % (cite, what, cite))
+    pass_check("README.md's reproducibility card cites the live capture's raw files "
+               "(%s-status.txt, %s-verify.txt)" % (live_family, live_family))
+
+    # The evidence README EMBEDS the run index. The embedded copy is what
+    # a judge reads, so it must be the index as it stands -- a refreshed
+    # index with a stale embedded copy is the archive contradicting
+    # itself on its own front page.
+    index_lines = [ln for ln in run_index.splitlines()
+                   if ln.strip() and not ln.strip().startswith("=")]
+    stale_embed = [ln for ln in index_lines if ln not in ev_readme]
+    if stale_embed:
+        fail("docs/evidence/README.md embeds an out-of-date copy of the run index: "
+             "%d line(s) of docs/evidence/derived/on-target-run-index.txt are not in "
+             "it (first: %r). The embedded table must be the index as it stands -- "
+             "re-run `python3 tools/capture_evidence.py index`."
+             % (len(stale_embed), stale_embed[0][:80]))
+    else:
+        pass_check("The evidence README embeds the run index as it stands (%d line(s))"
+                   % len(index_lines))
+
+    # --- 6j. THE DOCS' DECISION LATENCY MUST EQUAL THE ARCHIVE'S ---------
+    #
+    # The README's reproducibility card and the implementation doc quote the
+    # measured decision latency. That number moves with every capture (the
+    # "last" is the last decision before the status snapshot; the "max" is
+    # the worst cycle delta the run happened to see), so a hand-written
+    # quote drifts from the archive it cites -- and a judge who follows the
+    # citation finds a different number, or none.
+    #
+    # The AUTHORITY is the raw capture, not the derived convenience file:
+    # `derived/on-target-numbers.txt` is generated FROM the capture, so
+    # trusting it alone would let a doctored derived file and doctored
+    # documents agree with each other while both contradict the console.
+    # The rule is therefore in three parts:
+    #   1. the derived numbers file must agree with the raw status capture;
+    #   2. each document must quote the raw numbers, with the figure bound
+    #      to its label ("last" / "max") as a WHOLE token -- so "164
+    #      cycles" cannot satisfy "64 cycles", and a swapped pair is
+    #      caught;
+    #   3. the host-sim's latency is load dependent, so it must NOT be
+    #      quoted at all -- see the branch below.
+    live_family = current_families[-1]
+    raw_status = os.path.join(on_target_dir, "%s-status.txt" % live_family)
+    if not os.path.isfile(raw_status):
+        fail("docs/evidence/on-target/%s-status.txt is missing -- the raw capture the "
+             "quotable numbers come from is gone." % live_family)
+    with io.open(raw_status, encoding="utf-8", errors="replace") as f:
+        raw_status_txt = f.read()
+    m_raw = re.search(r"Decision Latency\s*:\s*last\s*=\s*(\d+)\s*cyc\s*\((\d+)\s*ns\)"
+                      r"\s*\|\s*max\s*=\s*(\d+)\s*cyc\s*\((\d+)\s*ns\)", raw_status_txt)
+    if not m_raw:
+        fail("docs/evidence/on-target/%s-status.txt has no parsable decision latency -- "
+             "the raw capture cannot support a quoted latency." % live_family)
+    last_cyc, last_ns, max_cyc, max_ns = m_raw.groups()
+
+    with io.open(os.path.join(ev, "derived", "on-target-numbers.txt"),
+                 encoding="utf-8", errors="replace") as f:
+        nums_txt = f.read()
+    m_lat = re.search(r"Decision latency:\s*last\s*=\s*(\d+)\s*cyc\s*\((\d+)\s*ns\)"
+                      r"\s*\|\s*max\s*=\s*(\d+)\s*cyc\s*\((\d+)\s*ns\)", nums_txt)
+    if not m_lat:
+        fail("docs/evidence/derived/on-target-numbers.txt has no parsable decision "
+             "latency. Re-run `make -C qnx evidence-on-target`.")
+    elif m_lat.groups() != (last_cyc, last_ns, max_cyc, max_ns):
+        fail("docs/evidence/derived/on-target-numbers.txt reports the decision latency "
+             "as %s, but the raw capture %s-status.txt reports %s. The derived file has "
+             "drifted from the capture it was derived from -- re-run "
+             "`make -C qnx evidence-on-target`."
+             % (" / ".join(m_lat.groups()), live_family,
+                " / ".join((last_cyc, last_ns, max_cyc, max_ns))))
+    else:
+        pass_check("The derived on-target numbers agree with the raw capture they were "
+                   "derived from (%s-status.txt)" % live_family)
+
+    with io.open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8") as f:
+        readme_body = f.read()
+    with io.open(os.path.join(REPO_ROOT, "docs", "LATCH-implementation.md"),
+                 encoding="utf-8", errors="replace") as f:
+        impl_body = f.read()
+
+    def _flat(doc):
+        """The document with thousands separators removed.
+
+        ONLY a comma between digits is removed -- "40,323" becomes "40323"
+        -- because a comma is also the separator between two claims
+        ("... (1024 ns), **40323 cycles ..."), and dropping that one would
+        make the two figures adjacent and destroy the word order the
+        binding depends on.
+        """
+        return re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", doc)
+
+    def _latency_pairs(doc):
+        """Every "<cycles> cycles (<ns> ns)" claim in a document.
+
+        The numbers must be WHOLE tokens: `(?<![\\d.])` refuses to match a
+        digit run that is part of a longer number, so "164 cycles" cannot
+        satisfy a claim for "64 cycles" and "11,024 ns" cannot satisfy
+        "1,024 ns". The thousands separator is the only formatting
+        difference allowed, so it is normalised away first.
+        """
+        flat = _flat(doc)
+        return [(m.start(), m.end(), m.group(1), m.group(2)) for m in re.finditer(
+            r"(?<![\d.])(\d+)\s*(?:cyc|cycles?)\b\s*\(\s*(?<![\d.])(\d+)\s*ns\b",
+            flat, re.IGNORECASE)]
+
+    def _binds(doc, label, cyc, ns):
+        """True if <label> ("last"/"max") is bound to the <cyc>/<ns> pair.
+
+        The binding is the NEAREST latency claim in the same sentence, on
+        either side of the label, so the document may write either
+        "last = 64 cycles (1024 ns)" or "64 cycles (1024 ns) last" -- but
+        it may not attach the "last" label to the max figure. The NEAREST
+        claim is what is compared, not merely the closest one that happens
+        to match: otherwise a document that swapped the two labels would
+        still find its expected pair somewhere in the sentence.
+        """
+        flat = _flat(doc)
+        pairs = _latency_pairs(flat)
+        for lm in re.finditer(r"\b%s\b" % re.escape(label), flat, re.IGNORECASE):
+            best = None
+            for start, end, c, n in pairs:
+                lo, hi = min(start, lm.start()), max(end, lm.end())
+                segment = flat[lo:hi]
+                if "." in segment or "\n" in segment:
+                    continue          # a different sentence: not a binding
+                # The distance is the GAP between the label and the claim,
+                # not the distance to the claim's first character: a claim
+                # that ends just before the label is nearer than one that
+                # merely starts a few characters after it.
+                gap = max(0, start - lm.end(), lm.start() - end)
+                if best is None or gap < best[0]:
+                    best = (gap, c, n)
+            if best is not None and best[1] == cyc and best[2] == ns:
+                return True
+        return False
+
+    for doc_name, doc in (("README.md", readme_body),
+                          ("docs/LATCH-implementation.md", impl_body)):
+        for label, cyc, ns in (("last", last_cyc, last_ns),
+                               ("max", max_cyc, max_ns)):
+            if not _binds(doc, label, cyc, ns):
+                fail("%s does not quote the %s on-target decision latency as %s cycles "
+                     "(%s ns) bound to the label \"%s\". The raw capture %s-status.txt "
+                     "reports that pair. A document that quotes a latency the evidence "
+                     "does not support -- or attaches it to the wrong label -- is the one "
+                     "failure this project cannot have."
+                     % (doc_name, label, cyc, ns, label, live_family))
+    pass_check("README.md and docs/LATCH-implementation.md quote the archived on-target "
+               "decision latency, each figure bound to its label (last %s cyc / %s ns, "
+               "max %s cyc / %s ns)" % (last_cyc, last_ns, max_cyc, max_ns))
+
+    # --- THE HOST-SIM LATENCY IS LOAD DEPENDENT: POINT, DO NOT QUOTE ----
+    #
+    # The Linux host-sim's max decision latency moves with the machine's
+    # load -- 1,413 ns in one archived capture, 2,154 ns in the next -- and
+    # `make evidence` refreshes that archive routinely. A hand-written
+    # quote of it therefore goes stale the moment the archive is refreshed,
+    # and the refresh is what archives the gate's own output: a
+    # quote-and-check rule would make the archive chase its own tail.
+    #
+    # The rule is therefore: the docs POINT at the archive; they do not
+    # copy its number. Concretely:
+    #   (a) each document names `docs/evidence/host-sim/`;
+    #   (b) no fragment that mentions the host-sim carries a measured
+    #       latency figure (the signed manifest's own timing parameters
+    #       are data, not measurements, and are exempt);
+    #   (c) no archived host-sim latency figure is quoted anywhere.
+    hs_dir = os.path.join(ev, "host-sim")
+    hs_families = sorted(f for f in os.listdir(hs_dir)
+                          if re.match(r"^\d{8}-\d{6}-host-sim\.txt$", f)) \
+        if os.path.isdir(hs_dir) else []
+    if not hs_families:
+        fail("docs/evidence/host-sim/ has no archived host-sim capture. Run "
+             "`make -C qnx evidence-host-sim`.")
+    else:
+        hs_ns_values = set()
+        for fam in hs_families:
+            with io.open(os.path.join(hs_dir, fam), encoding="utf-8",
+                         errors="replace") as f:
+                m_hs = re.search(r"max_latency=(\d+)\s*ns", f.read())
+            if not m_hs:
+                fail("the archived host-sim capture (%s) reports no max_latency." % fam)
+            hs_ns_values.add(int(m_hs.group(1)))
+
+        # The signed manifests' timing parameters are DATA, not
+        # measurements: a document may cite the budget it is checked
+        # against. Every microsecond-valued parameter of every signed
+        # contract is exempt.
+        manifest_exempt_ns = set()
+        manifest_paths = [os.path.join(REPO_ROOT, "qnx", "latch.manifest")]
+        contracts_dir = os.path.join(REPO_ROOT, "qnx", "contracts")
+        if os.path.isdir(contracts_dir):
+            manifest_paths += [os.path.join(contracts_dir, fn)
+                               for fn in sorted(os.listdir(contracts_dir))
+                               if fn.endswith(".manifest")]
+        for mpath in manifest_paths:
+            if not os.path.isfile(mpath):
+                continue
+            try:
+                with io.open(mpath, encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except (ValueError, OSError):
+                continue
+
+            def _walk(node):
+                if isinstance(node, dict):
+                    for key, value in node.items():
+                        if (key.endswith("_us") and isinstance(value, int)
+                                and not isinstance(value, bool)):
+                            manifest_exempt_ns.add(value * 1000)
+                        else:
+                            _walk(value)
+                elif isinstance(node, list):
+                    for item in node:
+                        _walk(item)
+            _walk(manifest)
+
+        TIME_FIGURE = re.compile(
+            r"(?<![\d.])(\d+(?:[.,]\d+)?)\s*(ns|[µμ]s|us|ms)\b")
+
+        def _time_figures_ns(text):
+            out = []
+            for m in TIME_FIGURE.finditer(text):
+                value = float(m.group(1).replace(",", ""))
+                unit = m.group(2)
+                if unit == "ns":
+                    scale = 1
+                elif unit == "ms":
+                    scale = 1000000
+                else:
+                    scale = 1000
+                out.append((m.group(0), int(round(value * scale))))
+            return out
+
+        def _fragments(doc):
+            """The claims a reader sees separately: table cells, <br>
+            breaks and sentences. A figure belongs to the claim it sits
+            in, so the fragments are what the rules below are about."""
+            out = []
+            for line in doc.splitlines():
+                for cell in line.split("|"):
+                    for brk in re.split(r"<br\s*/?>", cell):
+                        for sent in re.split(r"(?<=\S)\.\s+", brk):
+                            s = sent.strip()
+                            if s:
+                                out.append(s)
+            return out
+
+        for doc_name, doc in (("README.md", readme_body),
+                              ("docs/LATCH-implementation.md", impl_body)):
+            if "docs/evidence/host-sim/" not in doc:
+                fail("%s does not point at the host-sim evidence archive "
+                     "(docs/evidence/host-sim/). The host-sim's decision latency is "
+                     "host-load dependent, so the document must cite the archive, not "
+                     "quote a number that the next capture will invalidate."
+                     % doc_name)
+            for frag in _fragments(doc):
+                if "host-sim" not in frag.lower():
+                    continue
+                quoted = [(t, v) for t, v in _time_figures_ns(frag)
+                          if v not in manifest_exempt_ns]
+                if quoted:
+                    fail("%s states a measured latency for the host-sim (%s). The "
+                         "host-sim's decision latency is host-load dependent -- the "
+                         "archived captures show %s ns -- so the document must point "
+                         "at docs/evidence/host-sim/ instead of quoting a number."
+                         % (doc_name, ", ".join(t for t, _ in quoted),
+                            " / ".join(str(v) for v in sorted(hs_ns_values))))
+            # No archived host-sim figure may be quoted anywhere in the
+            # document, whatever sentence it sits in.
+            for text, value in _time_figures_ns(doc):
+                if value in hs_ns_values and value not in (int(last_ns),
+                                                           int(max_ns)):
+                    fail("%s quotes %s -- the max decision latency of an archived "
+                         "host-sim capture. That figure is host-load dependent and "
+                         "is re-measured on every capture; the document must point "
+                         "at docs/evidence/host-sim/ instead."
+                         % (doc_name, text))
+        pass_check("README.md and docs/LATCH-implementation.md point at "
+                   "docs/evidence/host-sim/ instead of quoting its load-dependent "
+                   "latency (%s ns across %d archived capture(s))"
+                   % (" / ".join(str(v) for v in sorted(hs_ns_values)), len(hs_families)))
+
+    # --- 6k. THE README'S QNX BUILD STRINGS MUST MATCH THE SBOM ---------
+    #
+    # The hackathon rules require the build instructions to name the QNX
+    # version, and a judge with a different QSC install diffs those strings
+    # first. The SBOM is the authority for what is actually installed (it
+    # carries the QSC package ids and versions); the README's
+    # reproducibility card repeats them for the judge. If the two drift, the
+    # judge is handed a build string that does not match the machine.
+    #
+    # The rule: every (package id, package version) pair the SBOM's
+    # DECLARATION TABLE declares must appear together in the README -- and,
+    # where the QSC install manifest is readable, each pair must be a
+    # package that is actually installed. The table is the declaration:
+    # a package id mentioned in prose is not a declared build string.
+    with io.open(os.path.join(REPO_ROOT, "docs", "SBOM.md"),
+                 encoding="utf-8", errors="replace") as f:
+        sbom = f.read()
+    with io.open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8") as f:
+        readme_lines = f.read().splitlines()
+    sbom_table = "\n".join(ln for ln in sbom.splitlines() if ln.strip().startswith("|"))
+    pairs = []
+    for m in re.finditer(r"(com\.qnx\.[A-Za-z0-9_.]+)\s+"
+                         r"(\d+\.\d+\.\d+\.\d{5}T\d{12}L)", sbom_table):
+        pair = (m.group(1), m.group(2))
+        if pair not in pairs:
+            pairs.append(pair)
+    if not pairs:
+        fail("docs/SBOM.md declares no QSC package id + version pair -- the "
+             "installed-build record a judge diffs is missing.")
+    missing = []
+    for pkg_id, pkg_ver in pairs:
+        hit = any(pkg_id in line and pkg_ver in line for line in readme_lines)
+        if not hit:
+            missing.append("%s %s" % (pkg_id, pkg_ver))
+    if missing:
+        fail("README.md's reproducibility card does not name the installed QNX "
+             "package(s) the SBOM declares: %s. The README and the SBOM must agree "
+             "on the exact build string a judge diffs against their own install."
+             % ", ".join(missing))
+    else:
+        pass_check("README.md's reproducibility card names every QSC package id + "
+                   "version the SBOM declares (%d package(s))" % len(pairs))
+
+    # TRUTH: where the QSC install manifest is readable, a declared pair
+    # must be a package that is actually installed at that version. CI has
+    # no QNX licence, so the check is skipped when the manifest is absent
+    # -- but on the build workstation it closes the gap between "the README
+    # and the SBOM agree" and "the README and the SBOM are right".
+    qsc_manifest = os.path.expanduser("~/qnx800/.packages/metadata")
+    if os.path.isdir(qsc_manifest):
+        not_installed = []
+        for pkg_id, pkg_ver in pairs:
+            if not os.path.isdir(os.path.join(qsc_manifest, pkg_id, pkg_ver)):
+                not_installed.append("%s %s" % (pkg_id, pkg_ver))
+        if not_installed:
+            fail("the SBOM declares package(s) that are NOT installed on this "
+                 "workstation: %s. The QSC install manifest at %s is the "
+                 "authority for what is installed."
+                 % (", ".join(not_installed), qsc_manifest))
+        else:
+            pass_check("Every QSC package id + version the SBOM declares is installed "
+                       "on this workstation (checked against %s)" % qsc_manifest)
+    else:
+        pass_check("The QSC install manifest is not present here, so the declared "
+                   "package versions could not be checked against it (skipped)")
+
+    # --- 6l. THE DEMO SCRIPT MAY ONLY QUOTE TERMINAL OUTPUT THAT EXISTS -
+    #
+    # The demo video is filmed from docs/DEMO_VIDEO_SCRIPT.md, and the script
+    # tells the operator what the terminal is about to print. If the script
+    # quotes a line the tool never prints -- or quotes a number the tool
+    # contradicts -- the video shows the operator a line that is not there,
+    # and a judge who checks the repo finds the mismatch. This has already
+    # happened once: the script said "150 heartbeats" while the attack sends
+    # 15, and it paraphrased the medical scenario's PASS line into a
+    # sentence the tool never prints.
+    #
+    # The rule: every backtick-quoted span in the script that LOOKS like a
+    # tool output line must occur in the source that produces it. A number
+    # inside such a line is allowed to be interpolated by the tool (an
+    # f-string), so digit runs match any number.
+    script_path = os.path.join(REPO_ROOT, "docs", "DEMO_VIDEO_SCRIPT.md")
+    if not os.path.isfile(script_path):
+        fail("docs/DEMO_VIDEO_SCRIPT.md is missing -- the video has no script.")
+    else:
+        with io.open(script_path, encoding="utf-8", errors="replace") as f:
+            script = f.read()
+        src_text = []
+        for sub in ("tools", "qnx", "guest", "host"):
+            for dirpath, dirnames, filenames in os.walk(os.path.join(REPO_ROOT, sub)):
+                dirnames[:] = [d for d in dirnames
+                               if d not in (".git", "build", "__pycache__", ".agents")]
+                for fn in filenames:
+                    if fn.endswith((".py", ".c", ".h", ".sh")):
+                        try:
+                            with io.open(os.path.join(dirpath, fn), encoding="utf-8",
+                                         errors="replace") as f:
+                                src_text.append(f.read())
+                        except OSError:
+                            pass
+        src_all = "\n".join(src_text)
+        # A tool may interpolate a value into the line it prints (an
+        # f-string), so the SOURCE is matched in two forms: as written, and
+        # with every `{...}` placeholder collapsed to a number. That is what
+        # lets a script quote "[SUITE VERDICT] ALL 7 ADVERSARIAL ATTACKS
+        # PASSED" against a source that prints
+        # f"[SUITE VERDICT] ALL {len(attack_suite)} ADVERSARIAL ATTACKS PASSED".
+        src_variants = [
+            src_all,
+            re.sub(r"\{[^{}]*\}", "0", src_all),
+        ]
+        OUTPUT_MARKERS = ("PASS", "FAIL", "VERDICT", "SCENARIO_", "ALL TESTS",
+                          "TAMPER DETECTED")
+        quoted = [s for s in re.findall(r"`([^`\n]+)`", script)
+                  if any(m in s for m in OUTPUT_MARKERS)]
+        missing = []
+        for q in quoted:
+            # A digit run in the quoted line may be interpolated by the tool.
+            pattern = re.escape(q)
+            pattern = re.sub(r"(?<!\\)\d+", r"\\d+", pattern)
+            if not any(re.search(pattern, v) for v in src_variants):
+                missing.append(q)
+        if missing:
+            fail("docs/DEMO_VIDEO_SCRIPT.md quotes terminal output that no tool "
+                 "produces: %s. The video script is filmed from; a quoted line that "
+                 "is not in the source is a line the operator cannot show."
+                 % "; ".join("'%s'" % m for m in missing))
+        else:
+            pass_check("Every terminal-output line quoted by the demo script exists "
+                       "in the source that produces it (%d quoted line(s))" % len(quoted))
+
+        # The COUNTS the script claims must be the counts the code has. A
+        # count is interpolated into the printed line, so the text match
+        # above cannot see it -- it is checked against the source instead.
+        count_claims = []
+
+        suite_path = os.path.join(REPO_ROOT, "tools", "attacks", "run_attacks.py")
+        if os.path.isfile(suite_path):
+            with io.open(suite_path, encoding="utf-8", errors="replace") as f:
+                suite_src = f.read()
+            m_suite = re.search(r"attack_suite\s*=\s*\[(.*?)\n\s*\]", suite_src, re.S)
+            n_attacks = len(re.findall(r"\(\s*\"A\d+\"", m_suite.group(1))) if m_suite else 0
+            for m in re.finditer(r"ALL (\d+) ADVERSARIAL ATTACKS", script):
+                if n_attacks and int(m.group(1)) != n_attacks:
+                    count_claims.append("the script claims %s adversarial attacks; "
+                                        "run_attacks.py defines %d"
+                                        % (m.group(1), n_attacks))
+        replay_path = os.path.join(REPO_ROOT, "tools", "gov_replay.py")
+        if os.path.isfile(replay_path):
+            with io.open(replay_path, encoding="utf-8", errors="replace") as f:
+                replay_src = f.read()
+            sub_tests = [int(n) for n in re.findall(r"Sub-test (\d+)", replay_src)]
+            n_sub = max(sub_tests) if sub_tests else 0
+            for m in re.finditer(r"(\d+) sub-tests?", script):
+                if n_sub and int(m.group(1)) != n_sub:
+                    count_claims.append("the script claims %s sub-tests; gov_replay.py "
+                                        "runs %d" % (m.group(1), n_sub))
+        if count_claims:
+            fail("docs/DEMO_VIDEO_SCRIPT.md states a count the code does not have: %s. "
+                 "The operator reads the count on screen while the narration says "
+                 "another number." % "; ".join(count_claims))
+        else:
+            pass_check("Every count the demo script states matches the code "
+                       "(attack suite and replay sub-tests)")
+
+        # --- THE NARRATION MUST FIT THE SUBMISSION'S HARD LIMIT -----------
+        #
+        # The Devpost rules cap the video at "under three (3) minutes". The
+        # script is the thing the operator films from, so its narration must
+        # fit -- at the SLOWEST pace the script itself names, because that is
+        # the pace a tired narrator will actually use. The storyboard's own
+        # time-coded segments must also fit inside the cap, and the script's
+        # stated word count and duration must match the script's content:
+        # a script that says "~365 words" while carrying 405 is a script
+        # nobody can time against.
+        rows = [ln for ln in script.splitlines() if ln.startswith("| **")]
+        seg_words = 0
+        seg_seconds = 0
+        for ln in rows:
+            ts = re.match(r"\| \*\*(\d+):(\d+) . (\d+):(\d+)\*\*<br>\*\(\d+ sec\)\*", ln)
+            if not ts:
+                continue
+            m0, s0, m1, s1 = (int(ts.group(i)) for i in (1, 2, 3, 4))
+            seg_seconds += (m1 * 60 + s1) - (m0 * 60 + s0)
+            seg_words += sum(len(n.split()) for n in re.findall(r'\*"(.+?)"\*', ln))
+        m_wpm = re.search(r"(\d+)\s*[–-]\s*(\d+)\s*words per minute", script)
+        if not m_wpm:
+            fail("docs/DEMO_VIDEO_SCRIPT.md does not state the narration pace (words "
+                 "per minute), so the runtime cannot be checked against the 3-minute limit.")
+        else:
+            slow_wpm = int(m_wpm.group(1))
+            spoken = seg_words / slow_wpm * 60.0
+            if seg_seconds >= 180:
+                fail("the demo storyboard is %d s long -- the submission rules cap the "
+                     "video at under three (3) minutes (180 s)." % seg_seconds)
+            if spoken >= 180:
+                fail("the demo narration is %d words, which is %.0f s at the %d wpm "
+                     "the script itself names -- over the 180 s cap. Trim the narration "
+                     "or speed the delivery." % (seg_words, spoken, slow_wpm))
+            m_words = re.search(r"~(\d+)\s+narration words", script)
+            if m_words and abs(int(m_words.group(1)) - seg_words) > 15:
+                fail("docs/DEMO_VIDEO_SCRIPT.md says ~%s narration words but carries %d. "
+                     "The operator times the read against the stated count."
+                     % (m_words.group(1), seg_words))
+            m_dur = re.search(r"(\d+) minutes? (\d+) seconds", script)
+            if m_dur:
+                stated = int(m_dur.group(1)) * 60 + int(m_dur.group(2))
+                if abs(stated - seg_seconds) > 2:
+                    fail("docs/DEMO_VIDEO_SCRIPT.md states a target duration of %d:%02d "
+                         "but its time-coded segments total %d s. One of the two is "
+                         "wrong, and the video is cut to the segments."
+                         % (int(m_dur.group(1)), int(m_dur.group(2)), seg_seconds))
+            if seg_seconds < 180 and spoken < 180:
+                pass_check("The demo narration fits the submission's hard limit: %d "
+                           "words = %.0f s at %d wpm, inside the 180 s cap (storyboard "
+                           "%d s)" % (seg_words, spoken, slow_wpm, seg_seconds))
+
     pass_check("Evidence archive complete and self-consistent; exactly one canonical "
                "on-target family, the derived numbers agree with the session they name, "
                "and nothing in the archive is git-ignored")

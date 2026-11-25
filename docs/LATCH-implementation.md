@@ -69,7 +69,7 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 
 ### Key Architectural Invariants
 1. **Startup-Only Manifest Allocation & Zero Tick Heap Activity**: All ring buffers, state structs, and evidence tapes reside in pre-allocated `.bss` memory. `malloc` is used strictly once at process initialization inside `latch_manifest_load()` and freed before entering the tick loop; zero heap allocations occur during runtime decision ticks.
-2. **Manifest Latency Budget (measured max, not a WCET)**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). Every decision tick measures its own latency and compares it against the manifest's `timing.wcet_budget_us` (100 µs in `latch.manifest`); an exceedance increments the reported `wcet_overruns` counter instead of being hidden. Measured maxima: `~1.1 µs` host-sim, `~101.3 µs` in an x86_64 QNX QEMU VM run — slightly *over* the monitoring budget (counted as an overrun) yet far inside the 1.0 ms decision period. These are measured maxima on emulated hosts, never worst-case execution-time bounds; see the latency note in §7.1.
+2. **Manifest Latency Budget (measured max, not a WCET)**: Pulse delivery directly unblocks the decision thread via microkernel pulse event handling (`_NTO_CHO_CUSTOM_EVENT`). Every decision tick measures its own latency and compares it against the manifest's `timing.wcet_budget_us` (100 µs in `latch.manifest`); an exceedance increments the reported `wcet_overruns` counter instead of being hidden. The measured maxima are archived per capture: the Linux host-sim's figures are in `docs/evidence/host-sim/`, and the demonstrated QEMU AArch64 `virt` session's are in `docs/evidence/derived/on-target-numbers.txt`. These are measured maxima on emulated hosts, never worst-case execution-time bounds; see the latency note in §7.1.
 3. **Seqlock Consistency**: Telemetry snapshots use an atomic generation sequence guard (`snapshot_gen`). Readers (such as verification inspectors and telemetry reporters) execute optimistic lock-free retry loops without blocking the safety-critical decision loop.
 
 ---
@@ -162,7 +162,7 @@ Under the new lifecycle:
 - Envelope vetoes: **7** (exactly the 7 keep-out frames #26..#32)
 - Unexpected rate faults: **0**
 - Watchdog trips during streaming: **0**
-- Max decision latency: **1,413 ns** (archived run `docs/evidence/host-sim/20261113-181136-host-sim.txt`; varies with host load)
+- Max decision latency: host-load dependent — recorded per capture in `docs/evidence/host-sim/` rather than quoted here
 
 ---
 
@@ -394,7 +394,7 @@ Validation across host simulation and QNX target environments:
 - **Safety Invariant 2 (NIST SHA-256 Attestation)**: Sidecar validation confirms exact manifest match. Modifying 1 byte or supplying a stripped manifest triggers immediate fail-closed abort (`EXIT_FAILURE`).
 - **Safety Invariant 3 (DT-CBF Boundary Invariance)**: Ingesting 200 verification frames results in 0 keep-out breaches ($[250, 650]$). 12 corrupted frames rejected cleanly.
 - **Safety Invariant 4 (Decoupled Session Handshake & EOF)**: Zero premature watchdog trips (`7` keep-out vetoes); writer disconnect completes controlled `WATCHDOG -> HOLD -> HA-HOME` retraction before freezing the tape.
-- **Safety Invariant 5 (Decision Timing)**: Host-sim observed max latency ~1.1 µs; QEMU VM observed within `1.0 ms` period (`101.3 µs` peak measured cycle delta in target VM run).
+- **Safety Invariant 5 (Decision Timing)**: Every decision tick measures its own latency and reports it; a measured maximum is archived per capture, and it is a measurement on an emulated host, never a worst-case execution-time bound. The archived figures are `docs/evidence/host-sim/` (the Linux host-sim) and `docs/evidence/derived/on-target-numbers.txt` (the demonstrated QEMU AArch64 `virt` session, §7.3).
 
 ### 7.2 ARM64 Raspberry Pi 4 Model B (`latch_rpi4.build`)
 - **Kernel**: `procnto-smp-instr` aarch64le
@@ -419,4 +419,4 @@ This is the target the submission demonstrates on, and the only one with a commi
 
 The full on-target evidence is archived in `docs/evidence/`, indexed by `docs/evidence/README.md`. The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`; the defect record is in `docs/evidence/resolution/SUMMARY.md`.
 
-**Note on the latency figures.** Section 7.1's numbers are from an x86_64 QNX VM. The AArch64 `virt` figures are measured under **TCG** — software emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The project reports the **last** and the **max** decision latency, in cycles and in nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the machine. See `docs/evidence/derived/on-target-numbers.txt`.
+**Note on the latency figures.** The archived timing evidence is from the QEMU AArch64 `virt` session of §7.3 (the Linux host-sim's figures are in `docs/evidence/host-sim/`). The AArch64 `virt` figures are measured under **TCG** — software emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The project reports the **last** and the **max** decision latency, in cycles and in nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the machine. On the archived AArch64 `virt` session the **last** decision latency was **64 cycles (1,024 ns)** and the **max** was **40,323 cycles (645,168 ns)**; the authoritative copy is `docs/evidence/derived/on-target-numbers.txt`, which names the session it was derived from.

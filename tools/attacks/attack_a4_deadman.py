@@ -9,10 +9,15 @@ Scenario:
   2. Heartbeat delay (> lease_ticks) forces deadman lease expiry, asserting
      LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) and demoting rung from HP -> ADVISE.
   3. 1 command renews the lease.
-  4. 150 heartbeat-only frames prove heartbeat traffic alone CANNOT recover the rung
+  4. 15 heartbeat-only frames prove heartbeat traffic alone CANNOT recover the rung
      (clean_command_streak remains 0, plant unmoved, rung remains ADVISE).
   5. 25 consecutive clean commands earn recovery credit and promote rung ADVISE -> HP.
   6. Final silence (> lease_ticks) expires lease repeatedly, cascading down to LATCH.
+
+Note on the lease: this scenario overrides `deadman.lease_ticks` to 4 so the
+host-sim run is deterministic (in the host-sim pipe one tick is one proposal).
+The shipped `governor_servo.manifest` lease is 100 ticks = 100 ms at the 1 kHz
+decision rate -- the two must not be quoted interchangeably.
 
 Safety Assertions:
   1. Deadman lease expiry trips LATCH_FAULT_HEARTBEAT and demotes supervisory ladder.
