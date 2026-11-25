@@ -102,6 +102,21 @@ make ifs-qemu-aarch64 GUEST_IMAGE=/abs/path/to/linux-6.12/arch/arm64/boot/Image
 **installed** SDP sysroot, the static vCPU pin form, the guest burst fitting
 the ring, and the secpol grammar). It is the cheapest way to catch drift.
 
+**Run the whole CI job locally before you push:**
+
+```bash
+python3 tools/run_ci_locally.py     # every `run:` step of .github/workflows/ci.yml
+```
+
+This executes each workflow step locally with the same shell and working
+directory GitHub Actions uses. It exists because this job had **three
+independent faults** that each hid the next, and the job had been red for its
+entire history (18/18 runs): a gcc-13-only `-Werror=stringop-overflow`, a
+case-sensitive path prefix in the anchor checker, and a double-escaped regex
+in the harness step. A failing step is found locally in seconds instead of
+after a push and a CI cycle. Use `--only <substring>` to run one step and
+`--keep-going` to see every failure at once.
+
 `tools/verify_qemu_aarch64.py` boots the built IFS under QEMU and asserts the
 on-target signature. It is the only thing that proves the on-target numbers.
 
@@ -292,6 +307,32 @@ wrong.
   / `_x86`). So `qnx/latch_rpi4.build` exists and is documented, but the Pi 4B
   image **cannot be built here**; the verified target is QEMU AArch64 `virt`.
   Say so rather than implying the physical board was exercised.
+- **`_FORTIFY_SOURCE` is a DISTRO default, not a compiler default.** Ubuntu
+  24.04's gcc (13.3, the CI compiler) enables `_FORTIFY_SOURCE=3` by itself;
+  Fedora 45's gcc (16.2, this workstation) enables **nothing**. That single
+  difference is what let a bounds defect compile cleanly here and fail in CI
+  under `-Werror=stringop-overflow`. The host-sim target now requests
+  `-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3` **explicitly**, so the bounds
+  analysis is the same on every toolchain. `-U` comes first so a distro that
+  already defines the macro at another level cannot trip `-Werror` with a
+  redefinition warning.
+- **A `read()` length computed as `len - offset` is not provably bounded for
+  the compiler.** gcc 13's value-range analysis cannot see through
+  `total += (size_t)n` (where `n` is an `ssize_t` it cannot bound) and
+  concludes the count may be astronomically large, so
+  `-Werror=stringop-overflow` fires even though the code is correct. The
+  portable shape is a **monotonically decreasing `remaining` counter** plus
+  `want = min(remaining, room-left-in-buffer)`: `remaining` never wraps, and
+  the count can never exceed the destination's room. Verified: the old code
+  fails on gcc 13.3 (exit 2) and the new code passes (exit 0), at every
+  optimisation level from `-O0` to `-Os`.
+- **The CI runner checks the repo out into a directory named after the
+  GitHub repository (`Latch`), but the documentation uses the lowercase
+  `latch/` prefix.** Any tool that resolves a documented path against the
+  repo root must match that prefix **case-insensitively**, or it resolves
+  locally (where the checkout directory happens to be `latch`) and fails in
+  CI. This silently broke `tools/update_api_index.py --check` for 17
+  references.
 
 ---
 
