@@ -30,9 +30,9 @@ MECHANISM
 
 FIX
   qnx/latchd.c, latch_io_open():
-    - The reset is armed only on the 0 -> 1 WRITER TRANSITION. A
-      second writer JOINS the live session: it does not reset it
-      and it does not discard the queued frames.
+    - The historical fix armed reset only on the first writer.
+      Current source rejects a second writer with EBUSY; this
+      newer behavior requires fresh on-target verification.
     - The discarded frames (on a genuine new session) are COUNTED
       as ring drops instead of vanishing silently.
     - The writer count is rolled back if the OCB cannot be

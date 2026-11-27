@@ -1,6 +1,6 @@
 ================================================================================
 LATCH HOMEOSTAT — ULTRSTABILITY OUTER LOOP RUNTIME PROOF
-Date: 20261126-071632
+Date: 20261128-022205
 Host: Linux fedora 7.3.4-300.fc45.x86_64
 Compiler: gcc (host)
 Contract: qnx/contracts/homeostat_servo.manifest (schema 3, homeostat enabled)
@@ -12,7 +12,7 @@ Contract: qnx/contracts/homeostat_servo.manifest (schema 3, homeostat enabled)
 
 --- 2. SUPERVISOR FEEDBACK FRAME UNIT TEST (latch_feedback_test.c) ---
 
-[LATCH_FEEDBACK] PASS: exact-size, CRC, reserved flags, sequence correlation and explicit timeout
+[LATCH_FEEDBACK] PASS: 28-byte frame, session epoch, CRC, reserved flags, sequence+epoch correlation, zero-epoch rejection, explicit timeout, version-1 rejection
 
 --- 3. HOMEOSTAT RUNTIME PROOF (homeostat_e2e.py) ---
 

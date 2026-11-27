@@ -25,7 +25,7 @@ The summary table
 | 3 | `on -C`/`-R` cannot express "CPUs 2+3" | `Invalid cluster runmask specified` | start `qvm` with an **unconstrained** runmask; the qvmconf pins do the isolating | boot refused -> **boots** |
 | 4 | The transport starved the supervisor | 51 envelope vetoes, last seq 25 | vdev `sched 60`; no artificial pacing in the bridge; the guest produces 4 frames / 200 us in 128-byte writes; the guest's markers go to `/dev/kmsg` | 51 -> 27 -> **7** vetoes, seq 25 -> 35 -> 57 -> **80** |
 | 5 | A second `vdev virtio-console` for the guest's markers | **REJECTED**: it corrupted the frame channel | the single-virtio-console design was restored; the markers go to `/dev/kmsg` | 26 of 84 frames -> **84 of 84** |
-| 6 | Opening the proposal node reset the supervisor | 15 envelope vetoes, last_seq frozen at 4, `VERIFY_RC=1` | a session reset is a SESSION event, not an OPEN event; the harness joins the session instead of resetting it | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / `VERIFY_RC=0`** |
+| 6 | Opening the proposal node reset the supervisor | 15 envelope vetoes, last_seq frozen at 4, `VERIFY_RC=1` | a session reset is a historical fix made reset a session event; the current code rejects a second writer with `EBUSY` (target validation pending) | 15 vetoes / `VERIFY_RC=1` -> **7 vetoes / `VERIFY_RC=0`** |
 
 The measured progression
 ------------------------

@@ -658,6 +658,14 @@ MUTATIONS = [
      "docs/evidence/README.md",
      [("archive is the target proof. It is raw console output, not a",
        "archive is a nice proof. It is raw console output, not a")]),
+
+    ("the evidence index's GENERATOR is changed (the committed index is no "
+     "longer what the generator produces, so the next `make evidence` would "
+     "silently rewrite it -- the generator has to be mutation-covered in its "
+     "own direction, not only the committed file)",
+     "tools/capture_evidence.py",
+     [('L.append("# LATCH — Evidence Archive")',
+       'L.append("# LATCH — Evidence Archive (MUTATED)")')]),
 ]
 
 

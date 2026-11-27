@@ -3,7 +3,7 @@
  Execution: host-sim build (qnx/build/host-sim/latchd) of the QNX SDP 8.0
            supervisor sources, run on the x86_64 build host.
            On-target proof: governor-qemu-verify.txt / governor-qemu-console.txt.
- Test Date: 2026-11-26
+ Test Date: 2026-11-28
 ================================================================================
 
 EXECUTIVE SUMMARY:
@@ -91,4 +91,4 @@ UNIVERSAL CRITERIA ATTESTATION:
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 ================================================================================
 [CONCLUSION] All 132 adversarial ticks verified fail-closed in the host-sim build of the GOVERNOR
-             (same C sources as the on-target binary; suite wall time 0.118 s).
+             (same C sources as the on-target binary; suite wall time 0.112 s).

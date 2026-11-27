@@ -89,14 +89,48 @@ def sdp_env():
             "QNX SDP not found.\n"
             "  Source it first:  . %s\n"
             "  Or set QNX_SDP_ENV=/path/to/qnxsdp-env.sh" % DEFAULT_SDP_ENV)
-    out = sh(". %s >/dev/null 2>&1 && env" % DEFAULT_SDP_ENV).stdout
+    # THE SDP ENV SCRIPT IS A BASH SCRIPT, AND IT SAYS SO.
+    #
+    # `qnxsdp-env.sh` starts with `test "$BASH_SOURCE" = "" && ... && return`,
+    # so sourcing it from a POSIX shell leaves the environment UNCHANGED --
+    # silently, because the shell's stderr was being discarded.  The capture
+    # then died with "mkifs not on PATH after sourcing ..." on a workstation
+    # where the SDP was installed and the script was right there.  So the
+    # script is sourced by BASH, explicitly, and the script is passed as
+    # "$1" so that a path with a space in it cannot break the quoting.
+    out = sh('bash -c \'source "$1" >/dev/null 2>&1; env\' -- "%s"'
+             % DEFAULT_SDP_ENV).stdout
     e = dict(os.environ)
+    # ONLY WELL-FORMED ENVIRONMENT ENTRIES ARE COPIED.
+    #
+    # `env` also prints EXPORTED SHELL FUNCTIONS, and bash exports them as
+    # `BASH_FUNC_name%%=() { ... }` -- with the function BODY spread over
+    # several lines.  Copying those into the child's environment makes every
+    # child shell IMPORT them, and a function body written for one shell is
+    # not necessarily valid in another: the capture died with a wall of
+    # "/bin/sh: module: line 1: syntax error" from a zsh module helper that
+    # the workstation's shell had exported.  A POSIX environment entry has a
+    # name of [A-Za-z_][A-Za-z0-9_]*, and `BASH_FUNC_x%%` is not one, so the
+    # strict pattern drops the functions and keeps the variables.
     for line in out.splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            e[k] = v
-    if not shutil.which("mkifs"):
-        raise RuntimeError("mkifs not on PATH after sourcing %s" % DEFAULT_SDP_ENV)
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
+            continue
+        e[k] = v
+    # THE PROBE MUST USE THE PATH THIS FUNCTION JUST COMPUTED.
+    #
+    # `shutil.which` reads the PROCESS's PATH, not the dictionary's, so on a
+    # workstation where the SDP had not already been sourced into the calling
+    # shell the probe failed even though the sourcing had worked -- and the
+    # capture aborted before it wrote anything.  The environment this function
+    # returns IS the environment the commands run in (`sh()` merges it into
+    # the child's environment), so the probe has to look at the same PATH.
+    if not shutil.which("mkifs", path=e.get("PATH")):
+        raise RuntimeError(
+            "mkifs not on PATH after sourcing %s (PATH=%s)"
+            % (DEFAULT_SDP_ENV, e.get("PATH")))
     return e
 
 
@@ -1429,7 +1463,7 @@ def scenario_index(args):
     on_target_dir = os.path.join(out, "on-target")
     fams = sorted({m.group(1) for m in
                    (re.match(r"^(\d{8}-\d{6})-", fn) for fn in os.listdir(on_target_dir))
-                   if m})
+                   if m}) if os.path.isdir(on_target_dir) else []
     if fams:
         fam = fams[-1]
         ptr = ["=" * 78,
@@ -2306,6 +2340,30 @@ def scenario_host_sim(args):
     write(os.path.join(args.out, "derived", "host-sim-signature.txt"), "\n".join(sig))
     print("[HOST-SIM] %s" % os.path.relpath(os.path.join(out, "%s-host-sim.txt" % ts), REPO_ROOT))
 
+    # THE STALE HOST-SIM FAMILY IS PRUNED BEFORE THE GATE RUNS.
+    #
+    # The archive holds exactly one file per kind, and this tool is the only
+    # thing that writes them.  Pruning after the gate meant that the gate
+    # saw BOTH the new file and the one it replaced.
+    for stale in prune_stale(out, "-host-sim.txt"):
+        print("[HOST-SIM] pruned stale %s" % stale)
+
+    # THE INDEX IS REGENERATED BEFORE THE GATE RUNS.
+    #
+    # `tools/consistency_check.py` fails the build when a file in the archive
+    # is not named in the archive's own file tree -- an un-indexed file is an
+    # ORPHAN, and an orphan in the evidence archive is a silent lie.  The
+    # index is GENERATED (`tools/capture_evidence.py index`), so a capture
+    # that has just written a new timestamped file has to regenerate the
+    # index BEFORE the gate runs: otherwise the gate sees the capture's OWN
+    # fresh output as an orphan and fails.
+    #
+    # This is not a cosmetic ordering.  It is why `make -C qnx evidence`
+    # aborted with "[HOST-SIM] consistency gate exit=1" on every run that
+    # renamed the family -- which is every run -- and why the archive could
+    # not be refreshed at all.
+    scenario_index(args)
+
     # The consistency gate is a host-sim gate too.
     cons = sh("python3 tools/consistency_check.py", cwd=REPO_ROOT)
     write(os.path.join(out, "%s-consistency.txt" % ts),
@@ -2314,8 +2372,14 @@ def scenario_host_sim(args):
                   "", "exit status: %d" % cons.returncode]) + "\n" + (cons.stdout or ""))
     print("[HOST-SIM] consistency gate exit=%d" % cons.returncode)
 
-    for stale in prune_stale(out, "-host-sim.txt") + prune_stale(out, "-consistency.txt"):
+    # The PREVIOUS consistency transcript is pruned only now, and the index
+    # is regenerated again afterwards, because the transcript was written
+    # after the index that the gate checked.  Both orderings matter: an
+    # un-indexed file fails the gate, and a stale transcript in the archive
+    # is exactly the rot the archive is supposed to be free of.
+    for stale in prune_stale(out, "-consistency.txt"):
         print("[HOST-SIM] pruned stale %s" % stale)
+    scenario_index(args)
     return 0 if ok and cons.returncode == 0 else 1
 
 

@@ -1,0 +1,104 @@
+==============================================================================
+LATCH cross-file consistency gate
+==============================================================================
+$ python3 tools/consistency_check.py
+
+exit status: 0
+
+=== LATCH Architectural Consistency & Invariant Verification ===
+[CONSISTENCY PASS] Default Plant (latch.manifest) sidecar SHA-256 match verified: 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+[CONSISTENCY PASS] Medical Syringe Plant sidecar SHA-256 match verified: a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract sidecar SHA-256 match verified: 7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract sidecar SHA-256 match verified: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+[CONSISTENCY PASS] HOMEOSTAT schema-3 servo contract sidecar SHA-256 match verified: 4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30
+[CONSISTENCY PASS] guest suite (84 frames, flush granularity 4) fits the manifest ingest.queue_depth (256) and timing.max_backlog_ticks (256) <= ring capacity (256)
+[CONSISTENCY PASS] GOVERNOR guest suite (235 frames) fits its enabled schema-3 queue/backlog contract
+[CONSISTENCY PASS] GOVERNOR A4 delay, recovery, and final silence are consistent with contract lease ticks
+[CONSISTENCY PASS] the scripted GOVERNOR profile lets the console drain for 1700 ms before the session opens (measured plan cost 1660 ms)
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Manifest schema version 2 valid
+[CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
+[CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
+[CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
+[CONSISTENCY PASS] qnx/latch_qemu.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
+[CONSISTENCY PASS] qnx/latch_qemu_governor.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd
+[CONSISTENCY PASS] qnx/latch_qemu_infer.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] Experimental in-guest inference profile: same signed contract, read-only asset disk, typed guest launch, heartbeat below the deadman lease
+[CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] Feedback-transport probe (W4): read-only verdict file on virtio-blk, the sink is its only writer and writes on a dedicated thread, the probe reads with pread64 before the session opens, one console report, the production LFBK frame format, experiment's policy additions kept out of the deployment
+[CONSISTENCY PASS] LFBK feedback frame (W5): 28 bytes, session epoch beside the sequence number, CRC over the first 24, sequence+epoch correlation, zero epoch rejected
+[CONSISTENCY PASS] W5 verdict vocabulary: closed on both sides, the two implementations agree on the numbers, an unknown verdict is -EBADMSG, and the timeout verdict and the timeout flag must agree in both directions
+[CONSISTENCY PASS] W5 publisher: OFF by default, guarded by the enable flag, and a failed publish cannot take the safety core down
+[CONSISTENCY PASS] W5 publisher thread: SCHED_FIFO 40 (below the safety core, above the actuator worker), O_WRONLY|O_NOCTTY|O_NONBLOCK, and a bounded 50 x 20 ms EAGAIN retry
+[CONSISTENCY PASS] W5 verdict scope: one verdict per v2 motion proposal from the session owner with a bound epoch, ACCEPT only when accepted AND still in HP, silence for everything else
+[CONSISTENCY PASS] W5 guest decoder: self-contained (freestanding), and exercised by the host-side latch-fb-decode-check target
+[CONSISTENCY PASS] W5 transport: shared by both profiles, the freshness rule is a MACRO (the W4 initrd SHA-256 is the witness), and it drops the cached pages before every buffered read
+[CONSISTENCY PASS] W5 correlation state: exactly one writer, and the outstanding predicate is DERIVED rather than stored
+[CONSISTENCY PASS] W5 sequence publication: the sequence number and the command sequence number are published BEFORE the frame goes on the wire
+[CONSISTENCY PASS] W5 fold order: read -> note_cmd -> note_sent -> correlate
+[CONSISTENCY PASS] W5 verdict publication: one volatile 64-bit word
+[CONSISTENCY PASS] W5 correlation: only a changed sequence number is correlated
+[CONSISTENCY PASS] W5 wait: bounded keepalive heartbeats while the guest waits for a verdict
+[CONSISTENCY PASS] W5 profile: a separate compile flag, run_governor_demo() excluded, and the W4 profile's flag never defined alongside it
+[CONSISTENCY PASS] W5 image: the W4 qvmconf reused verbatim, no synthetic pump, and the supervisor's own publisher enabled
+[CONSISTENCY PASS] W5 harness: requires the end=1 completeness sentinel and asserts the rejection and the stop reason
+[CONSISTENCY PASS] W5 console discipline: no marker between the warm-up flush and the final silence, the report ends with end=1, and the drain wait covers the plan's own console cost
+[CONSISTENCY PASS] W5 watcher thread: the clone child's stack pointer leaves a 4 KiB margin ABOVE itself inside the mapped array (the shared frame's spill slots are at POSITIVE offsets from SP)
+[CONSISTENCY PASS] U-4 image: the GOVERNOR contract, sidecar, security policy and qvmconf reused verbatim, with no evidence logger and no feedback publisher
+[CONSISTENCY PASS] U-4 build: the soak's knobs are overridable and agree with the guest source (900 Hz for 2100000 ms)
+[CONSISTENCY PASS] U-4 pacer: the lag allowance is 4 periods -- above the guest's measured ~1.02-period normal lateness, and small enough to bound the catch-up inside the proposal ring
+[CONSISTENCY PASS] U-4 pacer: the rate is KEPT and the catch-up is BOUNDED (a little late keeps the grid, a long way late drops the missed deadlines), the decision lives in a shared host-testable header, and the host test is in the regression suite
+[CONSISTENCY PASS] U-4 workload: the console is quiet after the warm-up flush, the drain covers the plan's own cost, and the plant is walked to 100 mrad on a 5 mrad staircase (jerk <= 10 <= j_max 20)
+[CONSISTENCY PASS] U-4 harness: the liveness observable is the lease age, the workload is checked, the sample floor is enforced, and the guest's abort is recognised
+[CONSISTENCY PASS] U-4 rate: the harness CHECKS the achieved rate over the streaming window, and the check accepts the measured 897.6/s while rejecting the two measured regressions (646/s and 610/s)
+[CONSISTENCY PASS] U-4 rate: the archive states the achieved producer rate (895.2/s against the 900 Hz target)
+[CONSISTENCY PASS] U-4 report: the archived LATENCY.md states N >= 10^6, the machine, p50/p99/max, the TCG caveat, and disclaims the WCET reading
+[CONSISTENCY PASS] U-4 report: the archived LATENCY.md is byte-for-byte what the generator produces from the raw target report it carries (the summary cannot drift away from the measurement)
+[CONSISTENCY PASS] U-4 plan: the row is VERIFIED and quotes the archive's own sample count (2128376), so the plan cannot claim a measurement the evidence does not carry
+[CONSISTENCY PASS] qnx/latch_rpi4.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] RPi4 buildfile el1-host, BCM2711 I2C IRQ 149, secpolpush, qvm unconstrained runmask, pipe/slogger2, guest image/initrd verified
+[CONSISTENCY PASS] Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified
+[CONSISTENCY PASS] Guest-lifecycle privilege boundary verified: latch_guestd_t owns only spawn + settypeid:qvm_host_t, the guest-control channel is its own type, and the operator shell still cannot actuate
+[CONSISTENCY PASS] Security-policy generation audit reviewed: the delta is dispositioned, the superset/unused/workload caveats are stated, and no generated rule is accepted
+[CONSISTENCY PASS] Hypervisor qvmconf split, static vCPU pins, initrd/rdinit/console cmdline & Makefile verified
+[CONSISTENCY PASS] HOMEOSTAT outer loop is wired into latchd, the gate and the manifest parser; the loop is default-off for every other signed contract
+[CONSISTENCY PASS] Manifest parser has a wired C unit test: strict homeostat parsing, range fail-closed, default-off, schema-3-only and sidecar enforcement
+[CONSISTENCY PASS] No phantom manifest keys: every manifest key named in a source comment exists in a signed contract
+[CONSISTENCY PASS] Physical-target claims have an implementing buildfile: the tech-stack doc claims Raspberry Pi 4, and the repository can build Raspberry Pi 4
+[CONSISTENCY PASS] Doc-claimed scheduling mechanisms exist in the source: every mechanism a document names as in use is actually implemented
+[CONSISTENCY PASS] No document credits `mlockall` as a determinism technique (it is a no-op on SDP 8.0)
+[CONSISTENCY PASS] No document asserts a bounded WCET; the accepted latency statement is a TCG observation labelled 'not a WCET'
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced
+[CONSISTENCY PASS] Every file in the evidence archive is named in the archive index's file tree (no orphans)
+[CONSISTENCY PASS] The evidence index and the run-output manifest are byte-identical to what tools/capture_evidence.py generates (no hand-edits to generated files)
+[CONSISTENCY PASS] The LFBK feedback-transport family is present and carries both verifiers' PASS lines, the guest's own clean correlation census (foreign/stale/dup = 0) and its 'what this does not prove' section
+[CONSISTENCY PASS] README.md's reproducibility card still quotes the archived on-target signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)
+[CONSISTENCY PASS] On-target tape metrics carry an explicit scope label AND a verified provenance chain: a fresh derivation from the archived raw QEMU console dump is byte-identical to the archived derived file
+[CONSISTENCY PASS] Canonical GOVERNOR numbers verified: 132 adversarial ticks, 0 breaches across the full 8-attack suite
+[CONSISTENCY PASS] HOMEOSTAT runtime proof archived: contraction, recovery, contracting-only, default-off, fail-closed parameter validation and the manifest-parser admission test
+[CONSISTENCY PASS] The committed evidence tape carries the exact signature (wire=12, envelope=7, last_seq=80, 17 HA-HOME rows)
+[CONSISTENCY PASS] The run index's CURRENT canonical session is the live family (20261125-090128)
+[CONSISTENCY PASS] Every file named by the run index exists in the archive
+[CONSISTENCY PASS] The run index lists all 9 expected history rows
+[CONSISTENCY PASS] The run index's CURRENT row agrees with the raw capture (84 frames / 12 wire / 7 vetoes / 0 drops / seq 80 / VERIFY_RC=0)
+[CONSISTENCY PASS] The evidence README names the live capture family (20261125-090128)
+[CONSISTENCY PASS] README.md's reproducibility card cites the live capture's raw files (20261125-090128-status.txt, 20261125-090128-verify.txt)
+[CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
+[CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (1933 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
+[CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
+[CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)
+[CONSISTENCY PASS] The Linux baseline is a GENERATED synthetic Python-loop measurement that names its workload, sample count, environment and reproduce command -- and says what it is NOT
+[CONSISTENCY PASS] Every figure from the withdrawn benchmark family that appears outside the quarantine does so only in a sentence that declares it invalid (11 figure(s) checked)
+[CONSISTENCY PASS] No document describes the Linux baseline as a 'Linux GPOS' measurement -- the label belonged to the withdrawn artefact
+[CONSISTENCY PASS] Every terminal-output line quoted by the demo script exists in the source that produces it (8 quoted line(s))
+[CONSISTENCY PASS] Every count the demo script states matches the code (attack suite and replay sub-tests)
+[CONSISTENCY PASS] The demo narration fits the submission's hard limit: 359 words = 166 s at 130 wpm, inside the 180 s cap (storyboard 155 s)
+[CONSISTENCY PASS] Evidence archive complete and self-consistent; exactly one canonical on-target family, the derived numbers agree with the session they name, and nothing in the archive is git-ignored
+
+[SUCCESS] All architectural consistency checks PASSED with 0 errors.
