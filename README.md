@@ -472,11 +472,11 @@ the signed envelope?** The answer, measured on target, is **no**.
   │   freestanding, no libc      │            │  process that may      │
   │   THE ONLY WRITER on         │  32-byte   │  write the actuator)   │
   │   /dev/hvc0                  │ ─────────► │                        │
-  │        │                     │ wire v2    │                        │
-  │        │ reads a pipe        │            │  signed envelope,      │
-  │        ▼                     │            │  lease, ladder,        │
-  │ latch_infer  (static C++)    │            │  keep-out              │
-  │   llama.cpp + a 135M GGUF    │            └────────────────────────┘
+  │        │                     │ wire v2    │  signed envelope,      │
+  │        │ reads a pipe        │            │  lease, ladder,        │
+  │        ▼                     │            │  keep-out              │
+  │ latch_infer  (static C++)    │            └────────────────────────┘
+  │   llama.cpp + a 135M GGUF    │
   │   GBNF grammar + independent │
   │   JSON re-validation         │
   └──────────────────────────────┘
@@ -601,4 +601,129 @@ cannot rebuild the IFS, so every console log of every run is committed.
 | **`docs/evidence/on-target/`** | The raw QNX console of every QEMU boot, numbered by the story it tells |
 | **`docs/evidence/tape/`** | The windowed evidence tapes and their analysis |
 | **`docs/evidence/resolution/`** | The four defects, each with its mechanism and its proof |
-| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived on-target runtime report (the A4 deadman sample table, the recovery ladder and the final state) plus its raw serial transcript, live status transitions, the merged at
+| **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived on-target runtime report (the A4 deadman sample table, the recovery ladder and the final state) plus its raw serial transcript, live status transitions, the merged attack tape (the full adversarial suite), metrics, manifest attestations, the EXPERIMENTAL in-guest language-model captures, and the **security-policy generation audit** |
+| **`docs/secpol-audit-review.md`** | **The audit's written review** — every delta entry dispositioned, **0 accepted**; the authority on what the raw `secpolgenerate` observation is worth |
+| **`docs/evidence/host-sim/`, `build/`, `derived/`** | The workstation pipeline, what is inside the bootable image, and the machine-readable summaries |
+
+Regenerate it all with one command:
+
+```bash
+make -C qnx evidence               # everything except the QEMU boot (~20 s)
+make -C qnx evidence-on-target     # a fresh QEMU AArch64 `virt` capture (~5 min)
+make -C qnx evidence-governor-qemu # the scripted GOVERNOR's on-target capture (~8 min)
+make -C qnx evidence-secpol-audit  # the security-policy generation audit (~8 min)
+make -C qnx evidence-check         # the anti-rot gate: has the code drifted from the archive?
+```
+
+Nothing in the legacy archive is hand-edited: `tools/capture_evidence.py`
+writes every file, and `make -C qnx evidence-check` re-runs the capture and
+compares the signature against the archived one — so the legacy evidence cannot
+silently drift away from the code it describes. The **GOVERNOR** captures under
+`docs/evidence/governor/` are raw outputs of their named tools: the on-target
+runs are produced by `make -C qnx evidence-governor-qemu`, the security-policy
+generation audit by `make -C qnx evidence-secpol-audit` (its raw observation
+lives in `docs/evidence/governor/secpol-audit.txt`, and its **written
+disposition** in `docs/secpol-audit-review.md` — the audit accepted **no**
+generated rule and `qnx/latch.secpol` is untouched), and the attack
+scorecard is regenerated with `python3 tools/governor_metrics.py` — **requires
+host-sim binaries: `CCACHE_DISABLE=1 make -C qnx host-sim`**. Every capture is
+written **only when its run passes**: a failed run exits non-zero **without**
+touching `docs/evidence/`, so a broken build can never replace good evidence
+with a partial transcript.
+
+---
+
+## 6. Target Hardware & Trace Reproducibility Card
+
+| Parameter | Audited Value | Ground Truth Source |
+|---|---|---|
+| **QNX SDP (installed)** | `com.qnx.qnx800` **8.0.0.00141T202311271501L** — the SDP the IFS in this archive was built against (current upstream release is 8.0.6; every build here is evidence for **8.0.0**) | `~/qnx800/.packages/metadata/` (QSC install manifest) · `docs/SBOM.md` §2 |
+| **QNX Hypervisor (installed)** | `com.qnx.qnx800.target.hypervisor.group` **3.6.0.00802T202608071638L** — the package version published for **QNX Hypervisor 8.0.5**, so the installed hypervisor **is** 8.0.5 | QNX Hypervisor 8.0.5 Product Release Notes (edition Aug 21 2026) · `docs/SBOM.md` §2 |
+| **QNX Host Tools (installed)** | `com.qnx.qnx800.host.linux.x86_64` **0.0.1.02005T202411230033L** (the metapackage — it *requires* the per-tool packages below, but not `mkifs`)<br>`com.qnx.qnx800.host.linux.x86_64.qcc` **8.0.0.00121T202510081309L** (`qcc`)<br>`com.qnx.qnx800.host.linux.x86_64.secpol` **0.5.0.00132T202605281115L** (`secpolcompile`)<br>`com.qnx.qnx800.host.linux.x86_64.qlicense` **8.0.0.00114T202411221950L** (`qlicense`)<br>`com.qnx.qnx800.host.linux.x86_64.mkifs` **1.2.2.00014T202605190942L** (`mkifs`) | `~/qnx800/.packages/metadata/` (QSC install manifest) · `docs/SBOM.md` §2 |
+| **QNX Cross-Compiler (installed)** | `com.qnx.qnx800.host.linux.x86_64.gcc` **12.2.0.00500T202604231841L** (QNX GCC 12.2.0) | `~/qnx800/.packages/metadata/` (QSC install manifest) · `docs/SBOM.md` §2 |
+| **Target OS & Hypervisor** | QNX Neutrino RTOS 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0 (`qvm`) | `syspage::hypinfo::flags=0x00000001` (EL2 VHE) |
+| **Verified VM Target** | QEMU AArch64 `virt` (`4x Cortex-A76`, GICv2 `0x08000000`/`0x08010000`, `62,500,000 Hz` timer) | `tools/verify_qemu_aarch64.py` (`qemu-system-aarch64`) |
+| **Toolchain** | `qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -D_QNX_SOURCE` | `qnx/Makefile` (`TARGET=aarch64`) |
+| **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms pulse) | `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
+| **Measured Decision Latency** | **64 cycles (1,024 ns)** last, **40,323 cycles (645,168 ns)** max on QEMU **TCG** — *not* a WCET. The Linux host-sim's max decision latency is host-load dependent, so it is recorded per capture in `docs/evidence/host-sim/` rather than quoted here. | `docs/evidence/on-target/20261125-090128-status.txt` (the `latchctl status` block) & `docs/evidence/host-sim/` |
+| **Guest Suite (on target)** | `Proposals Received: 84` · `Wire Faults Caught: 12` · `Envelope Vetoes: 7` · `Ring Drops: 0` · `Last Proposed: -180 mrad (seq=80)` · `Latched: 0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `docs/evidence/on-target/20261125-090128-status.txt` — live Linux 6.12 `/init` → `virtio-console` → `latch-ingest` → `latchd` |
+| **Evidence Tape (on target)** | 17 `HA-HOME` rows retracting `-170 → -10 mrad`, monotonic; **0** rows with `theta_applied` inside `[250, 650]` mrad | `docs/evidence/tape/latch_tape6-metrics.txt` (from `/dev/shmem/latch_tape.csv`) |
+| **Attestation Hashes** | Servo: `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823`<br>Syringe: `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e`<br>GOVERNOR Servo: `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b`<br>GOVERNOR Syringe: `7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd`<br>GOVERNOR Homeostat: `4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30` | True NIST FIPS 180-2 SHA-256 (`sha256sum` sidecars) |
+| **Security Isolation** | Custom ability `latch/actuator` (flags 0) | `iofunc_client_info_able()` default-deny for root & non-root |
+| **Verification Suite** | Exit code 0 (`VERIFY_RC=0`) only upon all 5 microkernel invariants passing | `docs/evidence/on-target/20261125-090128-verify.txt` — the `[1/5]`…`[5c/5]` section |
+
+> **The on-target evidence is committed — and every number above is traceable to
+> a file.** Start at **`docs/evidence/README.md`**: it maps each claim to the
+> archive file that proves it, lists the exact commands to regenerate every
+> file, and states plainly what is **not** proven.
+>
+> The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`
+> — the raw QNX host console of **one continuous boot** of the QEMU AArch64
+> `virt` image: the EL2-VHE hypervisor banner, `pidin -p latchd threads` (the
+> decision loop on CPU 0 at SCHED_FIFO 63), `pidin -p qvm threads` (the guest
+> vCPU threads named `cy-guest-qemu-virt/0` and `/1` — the static pins), the
+> supervisor's counters, the five verification steps, and `VERIFY_RC=0`. A judge
+> without QNX SDP cannot rebuild the IFS, so this file is the target proof.
+>
+> `docs/evidence/derived/RUN-OUTPUT-MANIFEST.md` lists **what each kind of run
+> produces**. `docs/evidence/derived/on-target-run-index.txt` shows the whole
+> bring-up in one table: each run differs from the one before it by exactly
+> one fix, and the envelope-veto count falls `51 → 48 → 27 → 7` as a result.
+> `docs/evidence/resolution/SUMMARY.md` explains each of the four defects.
+>
+> **The archive cannot rot.** `make -C qnx evidence-check` re-runs the host-sim
+> capture and compares the signature against the archived one; CI runs it on
+> every push.
+
+> **The on-target signature is the same story as the host-sim tape**
+> (`rx=200 | wire=12 | env=7 | eperm=1` in CI; `84 | 12 | 7 | 0` on the target).
+> The guest policy and the CI suite are the same suite; only the frame count
+> differs, because the on-target guest stops after its nine fault phases instead
+> of padding to 200 ticks. After `latch_verify` has run the supervisor has
+> received 97 frames in total — the guest's 84 plus the harness's own 13 —
+> which is why the post-verify telemetry reads `97`, not 200.
+
+> **QEMU target = mock I²C.** The QEMU AArch64 `virt` image runs `latchd -n`, so **no
+> PCA9685 is present and the horn does not move** in that take. The Raspberry Pi 4B
+> image is the same `latchd` binary with the real `i2c-bcm2711` bus and the PCA9685
+> attached; that is the take that moves the horn. Do not mix the two sentences.
+
+### 6a. Latency Cards — what was measured, and what it is *not*
+
+Every latency figure this project publishes is a **decision-cycle observation
+under QEMU TCG** — pure software emulation of AArch64 on an x86_64 host.
+TCG timing is *not* the target's timing, and **none of these numbers is a
+WCET**. The repository enforces this: `tools/consistency_check.py` fails the
+build if any document asserts a worst-case execution time in microseconds.
+
+| Card | Profile | Last | Max | Source file | What it is |
+|---|---|---|---|---|---|
+| **L-1** | Legacy supervisor, on target (QEMU AArch64 `virt`) | 64 cyc (1,024 ns) | 40,323 cyc (645,168 ns) | `docs/evidence/on-target/20261125-090128-status.txt` | A **TCG observation** of the 1 kHz decision tick. The `last` value is the pre-verification snapshot; the `*-console.txt` transcript contains earlier polls that read `0 cyc` because they were taken before the guest booted. |
+| **L-2** | GOVERNOR supervisor, on target (QEMU AArch64 `virt`) | — | 80,911 cyc (1,294,576 ns ≈ 1.29 ms) | `docs/evidence/governor/governor-status-transition.txt` | A **TCG observation**, and it is **above the 1 ms tick period**. The cause is visible in the transcript: the host QNX, the guest Linux and `latchd` (SCHED_FIFO 63) all contend for the same physical cores. This is an emulation-stall observation, not a safety-logic failure — the watchdog **fails closed** on a late tick. |
+| **L-3** | Host-sim (Linux, POSIX pipe) | — | host-load dependent | `docs/evidence/host-sim/` (per capture) | **Not quoted here on purpose.** The same code has produced archived `max_latency` values in the low-single-digit-microsecond range on different runs — the number moves with the machine's load, and `make evidence` re-measures it on every capture. The docs point at the archive so the figure cannot go stale. |
+| **L-4** | The rejected comparison | — | — | `docs/evidence/quarantine/REJECTED-governor-LATENCY.md` | **WITHDRAWN.** The old "QNX vs Linux" WCET row came from a generator that inserted fixed values, and no reproducible source samples exist for the Linux side. The withdrawn figures are **not repeated here** — a rejected number that keeps getting copied is a rejected number that comes back. The withdrawn copies live only in the quarantine directory. |
+| **L-5** | The rejected Linux baseline | — | — | `docs/evidence/quarantine/REJECTED-linux-baseline/` | **WITHDRAWN.** Same reason: no reproducible source samples. A fresh, honestly-labelled baseline is open as **U-5**; until it exists, this repository makes **no** QNX-vs-Linux latency comparison at all. |
+| **L-6** | The U-4 decision-latency **distribution** (GOVERNOR supervisor, on target, QEMU AArch64 `virt`) | — | — | `docs/evidence/governor/LATENCY.md` | A **distribution**, not a pair: the supervisor's own per-tick decision latency, sampled **once per tick** for more than a million ticks and aggregated in a histogram **on the target**. **Not quoted here on purpose** — the archive is regenerated by `make -C qnx evidence-governor-latency`, and a figure copied into this file would rot silently the next time it is. It is a **TCG observation, NOT a WCET**: under TCG the supervisor shares host cores with the guest and with QEMU, so its maxima are the host's scheduling noise. Its percentiles are **bucket ranges**, not exact values, and its workload is **one** workload (a HOLD at 100 mrad). The archive also carries the **achieved** producer rate over the streaming window: the rate is a **result** the harness checks against the workload's declared rate, not an input copied out of the build. |
+
+Three rules that follow from these cards, and that the repository holds itself to:
+
+1. **Report `last` and `max`, in cycles *and* in nanoseconds**, and name the
+   profile the number came from. A bare number with no profile is not evidence.
+2. **Quote the file, not the summary.** L-1 is read from the `-status.txt`
+   snapshot; L-2 is read from the GOVERNOR status-transition transcript. The
+   GOVERNOR *verify* transcript (`governor-qemu-verify.txt`) proves the 235-frame
+   scenario and the ladder transitions — it carries **no** latency line, and
+   pointing a judge at it for a latency number sends them to a file that does
+   not contain one.
+3. **The manifest's `timing.wcet_budget_us` is a monitored budget, not a
+   claim.** The supervisor counts overruns against it (`Ring Drops / WCET` in
+   `latchctl status`) and fails closed when the deadline is missed. Counting
+   overruns is not the same as proving a bound.
+4. **A distribution is not a bound either.** L-6 is the honest version of
+   the latency claim: a measured distribution of the supervisor's own
+   decision time, on one emulated target, under one workload, with the
+   emulation caveat stated in the same breath as the numbers. It replaces
+   a **withdrawn claim** (the "61 µs WCET", whose generator inserted fixed
+   values) with a **measurement** — and it is still not a worst-case
+   execution time, because a 35-minute TCG run cannot bound one.
+
