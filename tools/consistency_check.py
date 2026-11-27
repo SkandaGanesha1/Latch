@@ -1009,6 +1009,65 @@ def verify_evidence_archive():
     pass_check("README.md's reproducibility card still quotes the archived on-target "
                "signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)")
 
+    # --- The README's POST-VERIFY FRAME TOTAL must be the archive's ------
+    #
+    # The README explains why the post-verify telemetry reads a different
+    # number from the card above: the verification harness sends its own
+    # frames, so the total is the guest's frames PLUS the harness's.  Every
+    # term of that sentence is a number the ARCHIVE carries -- the guest's
+    # count is the pre-verify report's `Proposals Received`, and the total
+    # is the post-verify report's -- so the whole sentence is checkable.
+    #
+    # It was not, and it was wrong.  The README said "97 frames ... the
+    # guest's 84 plus the harness's own 13" while the archive's own
+    # post-verify report says 122, and 84 + 38 = 122.  The card above was
+    # checked and the narrative below it was not, so a judge who read the
+    # README and then opened the archived telemetry found two different
+    # totals and had no way to tell which one the project believed.
+    #
+    # Nothing here is a hard-coded number: the three numbers are read out
+    # of the archive and out of the README, and the README's own
+    # arithmetic has to add up.
+    def _read_text(path):
+        with io.open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    post_path = os.path.join(ev, "on-target", "%s-verify.txt" % current_families[-1])
+    pre_path = os.path.join(ev, "on-target", "%s-status.txt" % current_families[-1])
+    for p in (post_path, pre_path):
+        if not os.path.isfile(p):
+            fail("the archived on-target session is missing %s -- the post-verify "
+                 "frame total cannot be checked" % os.path.basename(p))
+    m_post = re.search(r"Proposals Received\s*:\s*(\d+)", _read_text(post_path))
+    m_pre = re.search(r"Proposals Received\s*:\s*(\d+)", _read_text(pre_path))
+    if not m_post or not m_pre:
+        fail("the archived on-target session no longer carries a 'Proposals Received' "
+             "count in both its pre-verify and its post-verify report")
+    post_total = int(m_post.group(1))
+    guest_total = int(m_pre.group(1))
+
+    m_claim = re.search(r"post-verify telemetry reads `(\d+)`", readme_txt)
+    m_split = re.search(r"the guest's (\d+) plus the harness's own (\d+)", readme_txt)
+    if not m_claim or not m_split:
+        fail("README.md no longer explains the post-verify frame total. The archived "
+             "pre-verify report says %d frames and the archived post-verify report "
+             "says %d, so the README must say so." % (guest_total, post_total))
+    claimed = int(m_claim.group(1))
+    claimed_guest = int(m_split.group(1))
+    claimed_harness = int(m_split.group(2))
+    if claimed != post_total:
+        fail("README.md says the post-verify telemetry reads %d frames, but the "
+             "archived post-verify report says %d." % (claimed, post_total))
+    if claimed_guest != guest_total:
+        fail("README.md attributes %d frames to the guest, but the archived "
+             "pre-verify report says %d." % (claimed_guest, guest_total))
+    if claimed_guest + claimed_harness != post_total:
+        fail("README.md's own arithmetic does not add up: %d + %d != %d."
+             % (claimed_guest, claimed_harness, post_total))
+    pass_check("README.md's post-verify frame total is the ARCHIVE's own: "
+               "%d = the guest's %d + the harness's %d"
+               % (post_total, guest_total, post_total - guest_total))
+
     # --- The derived files must agree with the session they name ---------
     with io.open(os.path.join(ev, "derived", "on-target-numbers.txt"),
                  encoding="utf-8", errors="replace") as f:

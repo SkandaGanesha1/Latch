@@ -724,6 +724,25 @@ MUTATIONS = [
      "docs/LATCH-implementation.md",
      [(lambda t: "| `homeostat_servo.manifest` | servo-horn-1d | 3 | `%s` |\n"
                  % _sidecar_digest("qnx/contracts/homeostat_servo.manifest"), "")]),
+
+    # ===================== THE POST-VERIFY FRAME TOTAL ====================
+    #
+    # The README's card was checked against the archive and the narrative
+    # BELOW it was not, so it said "97 frames ... the guest's 84 plus the
+    # harness's own 13" while the archive's own post-verify report says
+    # 122, and 84 + 38 = 122.  Two different totals, one of them wrong,
+    # and a judge who opened both had no way to tell which the project
+    # believed.
+    ("FRAMES: the README's post-verify frame total is not the archive's "
+     "(the defect that shipped: the README said 97 where the archive says "
+     "122)",
+     "README.md",
+     [("post-verify telemetry reads `122`", "post-verify telemetry reads `97`")]),
+
+    ("FRAMES: the README's split of the post-verify total does not add up",
+     "README.md",
+     [("the guest's 84 plus the harness's own 38",
+       "the guest's 84 plus the harness's own 13")]),
 ]
 
 

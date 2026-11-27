@@ -680,8 +680,12 @@ with a partial transcript.
 > The guest policy and the CI suite are the same suite; only the frame count
 > differs, because the on-target guest stops after its nine fault phases instead
 > of padding to 200 ticks. After `latch_verify` has run the supervisor has
-> received 97 frames in total — the guest's 84 plus the harness's own 13 —
-> which is why the post-verify telemetry reads `97`, not 200.
+> received 122 frames in total — the guest's 84 plus the harness's own 38 —
+> which is why the post-verify telemetry reads `122`, not 200. The harness
+> sends its own five fault phases (keep-out, CRC, sequence replay and the
+> three ability probes), so it adds 38 frames of its own; the archived
+> post-verify report is the authority
+> (`docs/evidence/on-target/20261125-090128-verify.txt`).
 
 > **QEMU target = mock I²C.** The QEMU AArch64 `virt` image runs `latchd -n`, so **no
 > PCA9685 is present and the horn does not move** in that take. The Raspberry Pi 4B

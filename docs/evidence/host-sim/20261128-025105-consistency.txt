@@ -76,6 +76,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence index and the run-output manifest are byte-identical to what tools/capture_evidence.py generates (no hand-edits to generated files)
 [CONSISTENCY PASS] The LFBK feedback-transport family is present and carries both verifiers' PASS lines, the guest's own clean correlation census (foreign/stale/dup = 0) and its 'what this does not prove' section
 [CONSISTENCY PASS] README.md's reproducibility card still quotes the archived on-target signature (84 / 12 / 7 / 0, seq 80, latched 0x01AE)
+[CONSISTENCY PASS] README.md's post-verify frame total is the ARCHIVE's own: 122 = the guest's 84 + the harness's 38
 [CONSISTENCY PASS] On-target tape metrics carry an explicit scope label AND a verified provenance chain: a fresh derivation from the archived raw QEMU console dump is byte-identical to the archived derived file
 [CONSISTENCY PASS] Canonical GOVERNOR numbers verified: 132 adversarial ticks, 0 breaches across the full 8-attack suite
 [CONSISTENCY PASS] HOMEOSTAT runtime proof archived: contraction, recovery, contracting-only, default-off, fail-closed parameter validation and the manifest-parser admission test
@@ -89,7 +90,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2335 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2094 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)
