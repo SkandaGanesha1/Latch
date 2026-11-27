@@ -384,6 +384,407 @@ def verify_attestation_digests():
                "the repository has" % len(contracts))
 
 
+# ---------------------------------------------------------------------------
+# THE FIRST-READER DECISION (C-1)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS MEASURED, NOT THEORETICAL.
+#
+# The feedback sink's READ node must hand its FIRST reader a FRESH frame: a
+# verdict published before the reader was ready is STALE, and the guest
+# would act on a decision that was made for an earlier proposal.  The
+# transport therefore discards the backlog when a reader arrives.
+#
+# The old trigger was "the first OPEN of the READ node that asked for READ
+# access", decided by a counter of OPENS.  Two things broke it, and both
+# were measured on the QEMU AArch64 target:
+#
+# 1. QNX's `waitfor` probes a path by OPENING it with the access bits
+#    CLEARED -- the measured ioflag was 0x8880, no read bit and no write
+#    bit -- and that probe is the FIRST open the read node ever sees.  So
+#    the counter was already 2 when the real reader arrived, the condition
+#    `read_opens == 1` was FALSE for it, and the backlog was NEVER
+#    discarded.  The measured `dropped_on_open` stayed at 0 across a whole
+#    run in which 120 frames had been published: the guest's first read
+#    was a stale verdict.
+#
+# 2. An open that asks for READ *and* WRITE on the read-only node is
+#    REFUSED with EACCES.  A refused open is not a reader, and counting it
+#    would steal the slot from the real reader for the same reason.
+#
+# THE FIX IS A SHARED, HOST-TESTABLE DECISION.
+#
+# `qnx/latch_fb_sink.c` is a QNX resource manager: it needs resmgr, the
+# iofunc library and a QNX sysroot, so it CANNOT be built or run on the
+# build host.  A decision that only lives there is a decision with no
+# test.  The decision therefore lives in `qnx/latch_fb_reader.h`, the
+# resource manager and a HOST test call the SAME function, and the gate
+# below proves that the resource manager really calls it.
+#
+# THE GATE HAS TWO HALVES, AND BOTH MATTER:
+#
+#   - the STRUCTURAL half: the sink calls the shared decision, the old
+#     broken rule is gone, the decision and the backlog discard are in ONE
+#     critical section, and the host test is in the regression suite;
+#   - the BEHAVIOURAL half: the shipped header is COMPILED and RUN
+#     against a probe, so the gate binds to the header's BEHAVIOUR and
+#     not to the shape of its source.  A header whose guard was weakened
+#     still "looks right"; it does not still BEHAVE right.
+#
+# The behavioural half is skipped (with a note) when no C compiler is
+# available, so the checker stays usable on a machine that has only
+# Python.  The structural half never skips.
+# ---------------------------------------------------------------------------
+
+# The generated probe.  Each bit names ONE property, so a failure says
+# which property broke instead of just "the test failed".
+FIRST_READER_PROBE = r"""
+#include <stdio.h>
+#include <string.h>
+
+#include "latch_fb_reader.h"
+
+int main(void)
+{
+    latch_fb_reader_t st;
+    int fail = 0;
+
+    memset(&st, 0, sizeof(st));
+
+    /* 1, 2: a PROBE -- QNX's `waitfor` opens the node with the access
+     * bits CLEARED (the measured ioflag was 0x8880) -- is not a reader,
+     * and it must not consume the first-reader slot. */
+    if (latch_fb_reader_account(&st, 0u, 0u) != 0) fail |= 1;
+    if (st.opens != 0u) fail |= 2;
+
+    /* 4, 8: a REFUSED open -- read AND write on the read-only node -- is
+     * not a reader either, and must not consume the slot. */
+    if (latch_fb_reader_account(&st, 1u, 1u) != 0) fail |= 4;
+    if (st.opens != 0u) fail |= 8;
+
+    /* 16, 32: after a probe and a refusal, the first GRANTED reader is
+     * still the first reader, and it is counted once. */
+    if (latch_fb_reader_account(&st, 1u, 0u) != 1) fail |= 16;
+    if (st.opens != 1u) fail |= 32;
+
+    /* 64, 128: the SECOND reader is not the first reader, and both
+     * readers are counted. */
+    if (latch_fb_reader_account(&st, 1u, 0u) != 0) fail |= 64;
+    if (st.opens != 2u) fail |= 128;
+
+    if (fail != 0) {
+        fprintf(stderr, "first-reader probe mask=0x%x\n", fail);
+    }
+    return (fail == 0) ? 0 : 1;
+}
+"""
+
+
+def _c_compiler():
+    """The C compiler to use, or None.
+
+    `CC` wins if it is set -- the same convention every Makefile uses --
+    and the usual names are tried in order after it.
+    """
+    cc = os.environ.get("CC")
+    if cc:
+        found = shutil.which(cc) if os.path.basename(cc) == cc else cc
+        if found:
+            return found
+    for name in ("cc", "gcc", "clang"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def verify_first_reader_decision():
+    """The first-reader decision is shared, host-tested, and atomic.
+
+    See the block comment above for the measured defect this closes.
+    """
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hdr_path = os.path.join(qnx_dir, "latch_fb_reader.h")
+    test_path = os.path.join(qnx_dir, "latch_fb_reader_test.c")
+    sink_path = os.path.join(qnx_dir, "latch_fb_sink.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hdr_path, test_path, sink_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hdr_path, encoding="utf-8", errors="replace") as f:
+        hdr = f.read()
+    with io.open(sink_path, encoding="utf-8", errors="replace") as f:
+        sink = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hdr_code = strip_c_comments(hdr)
+    sink_code = strip_c_comments(sink)
+
+    # --- THE HEADER MUST BE HOST-COMPILEABLE ----------------------------
+    #
+    # The whole point of the shared header is that a HOST test can call
+    # the shipped decision.  A QNX header would defeat that, so the
+    # includes are restricted to the freestanding ones -- the same rule
+    # the guest's shared headers obey.
+    includes = re.findall(r"#\s*include\s*[<\"]([^>\"]+)[>\"]", hdr_code)
+    for inc in includes:
+        if inc not in ("stdint.h", "stddef.h"):
+            fail("qnx/latch_fb_reader.h includes %r: the first-reader decision "
+                 "must be compilable by a HOST test (the resource manager "
+                 "cannot be), so the header may include nothing but the "
+                 "freestanding headers" % inc)
+    if "latch_fb_reader_account" not in hdr_code:
+        fail("qnx/latch_fb_reader.h must define latch_fb_reader_account(): that "
+             "is the first-reader decision the resource manager and the host "
+             "test both call")
+
+    # --- THE DECISION'S OWN SHAPE ---------------------------------------
+    #
+    # The decision is a pure function of (read access bit, write access
+    # bit, readers so far).  Three properties, and the header has to
+    # express all three:
+    #
+    #   1. an open with NO read access is not a reader (the `waitfor`
+    #      probe);
+    #   2. an open with read AND write access is not a reader either (the
+    #      refused open);
+    #   3. the decision is made from the count of READERS, not from the
+    #      count of opens -- that is the whole defect.
+    m_fn = re.search(r"(?m)^[ \t]*static[ \t]+inline[ \t]+"
+                     r"[A-Za-z_][A-Za-z0-9_]*[ \t\*]+"
+                     r"latch_fb_reader_account[ \t]*\(", hdr_code)
+    fn_body = None
+    fn_inner = None
+    if m_fn:
+        i = hdr_code.index("{", m_fn.start())
+        depth = 0
+        j = i
+        while j < len(hdr_code):
+            if hdr_code[j] == "{":
+                depth += 1
+            elif hdr_code[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    fn_body = hdr_code[m_fn.start():j + 1]
+                    # The INNER body -- the braces' contents, WITHOUT the
+                    # signature.  The signature names the parameters, so a
+                    # check that only looked at the whole function would
+                    # "find" `rd` and `wr` in a body that never USES
+                    # them.  That is exactly what a weakened guard looks
+                    # like, and it is why the check reads the inner body.
+                    fn_inner = hdr_code[i + 1:j]
+                    break
+            j += 1
+    if not fn_body:
+        fail("qnx/latch_fb_reader.h: latch_fb_reader_account() was not found, or "
+             "it is not a `static inline` function: the decision has to be "
+             "INLINED into both the resource manager and the host test, or the "
+             "two could disagree about it")
+    else:
+        if not re.search(r"\brd\b", fn_inner) or not re.search(r"\bwr\b", fn_inner):
+            fail("qnx/latch_fb_reader.h: latch_fb_reader_account() must USE "
+                 "both the read access bit and the write access bit. A probe "
+                 "(`waitfor`, measured ioflag 0x8880) asks for no access at all, "
+                 "and a REFUSED open asks for read AND write; neither is a "
+                 "reader, and neither may consume the first-reader slot")
+        if not re.search(r"(?:->|\.)\s*opens\s*==\s*0", fn_inner):
+            fail("qnx/latch_fb_reader.h: latch_fb_reader_account() must decide "
+                 "'is this the first reader' from the count of READERS "
+                 "(`opens == 0`), not from the count of opens. The count of "
+                 "opens is what the defect was: QNX's `waitfor` probe is the "
+                 "first open the read node sees (measured ioflag 0x8880), so "
+                 "the old `read_opens == 1` condition was FALSE for the real "
+                 "reader and the backlog was never discarded")
+        if not re.search(r"(?:->|\.)\s*opens\s*\+\+", fn_inner):
+            fail("qnx/latch_fb_reader.h: latch_fb_reader_account() must COUNT the "
+                 "reader it accepted: without the count, every open would look "
+                 "like the first one")
+
+    # --- THE RESOURCE MANAGER MUST CALL THE SHARED DECISION --------------
+    #
+    # A decision that lives in a header and is not called by the code that
+    # ships is a decision that proves nothing: the host test would be
+    # testing a function the resource manager does not use.
+    if not re.search(r"#\s*include\s*\"latch_fb_reader\.h\"", sink_code):
+        fail("qnx/latch_fb_sink.c must include \"latch_fb_reader.h\": the "
+             "first-reader decision belongs in the shared, host-tested header, "
+             "so the resource manager and the host test cannot disagree about it")
+    if "latch_fb_reader_account(" not in sink_code:
+        fail("qnx/latch_fb_sink.c must CALL latch_fb_reader_account(): the "
+             "first-reader decision must be the shared one, or the host test "
+             "proves a function the resource manager does not use")
+
+    # --- THE OLD, BROKEN RULE MUST BE GONE ------------------------------
+    #
+    # The old condition was `rd != 0u && g_fb.read_opens == 1u`.  It is
+    # named here so that it cannot come back, and so that a reader of the
+    # gate knows what the defect was.
+    if re.search(r"read_opens\s*==\s*1", sink_code):
+        fail("qnx/latch_fb_sink.c still contains the old first-reader rule "
+             "(`read_opens == 1`): that condition was FALSE for the real "
+             "reader, because QNX's `waitfor` probe had already opened the "
+             "read node (measured ioflag 0x8880), so the backlog was never "
+             "discarded and the guest's first read was a stale verdict")
+
+    # --- THE DECISION AND THE DISCARD MUST BE ONE ATOMIC STEP -----------
+    #
+    # The channel runs TWO dispatch threads with `DISPATCH_FLAG_NOLOCK`, so
+    # two opens can be in flight at the same time.  If the increment and
+    # the check were separate critical sections, BOTH opens could see "no
+    # readers yet" and both would believe they were the first -- and
+    # neither would discard the backlog.
+    open_body = c_func_body(sink_code, "fb_io_open")
+    if not open_body:
+        fail("qnx/latch_fb_sink.c: fb_io_open() was not found")
+    else:
+        i_dec = open_body.find("latch_fb_reader_account(")
+        i_disc = open_body.find("g_fb.count = 0u")
+        if i_dec < 0 or i_disc < 0:
+            fail("qnx/latch_fb_sink.c: fb_io_open() must make the first-reader "
+                 "decision (latch_fb_reader_account) and discard the backlog "
+                 "(g_fb.count = 0)")
+        else:
+            if i_disc < i_dec:
+                fail("qnx/latch_fb_sink.c: fb_io_open() must DISCARD the backlog "
+                     "AFTER the first-reader decision, not before it: the "
+                     "decision says whether this open is the first reader, and "
+                     "the discard is what that decision triggers")
+            # The critical section that contains the decision must also
+            # contain the discard: the nearest lock before the decision,
+            # and the nearest unlock after the discard.
+            lock_before = open_body.rfind("pthread_mutex_lock(&g_fb.lock)",
+                                          0, i_dec)
+            unlock_after = open_body.find("pthread_mutex_unlock(&g_fb.lock)",
+                                          i_disc)
+            if lock_before < 0 or unlock_after < 0:
+                fail("qnx/latch_fb_sink.c: fb_io_open() must hold g_fb.lock "
+                     "across the first-reader decision and the backlog discard: "
+                     "the channel runs TWO dispatch threads with "
+                     "DISPATCH_FLAG_NOLOCK, so two opens can be in flight at "
+                     "once, and a decision made outside the lock could see "
+                     "'no readers yet' twice")
+            # An unlock BETWEEN the decision and the discard would split
+            # the critical section in two, which is exactly the bug.
+            between = open_body[i_dec:unlock_after]
+            if "pthread_mutex_unlock(&g_fb.lock)" in between:
+                fail("qnx/latch_fb_sink.c: fb_io_open() must NOT release "
+                     "g_fb.lock between the first-reader decision and the "
+                     "backlog discard: the two have to be ONE atomic step, or "
+                     "two concurrent opens can both believe they were the "
+                     "first reader")
+
+    # --- THE HOST TEST AND THE REGRESSION SUITE --------------------------
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    if "latch_fb_reader.h" not in test_src:
+        fail("qnx/latch_fb_reader_test.c must include the shipped header: a "
+             "test that reimplements the decision proves nothing about the "
+             "code that ships")
+    if "latch_fb_reader_account(" not in test_src:
+        fail("qnx/latch_fb_reader_test.c must call latch_fb_reader_account(): "
+             "the host test must exercise the shipped decision")
+
+    if "latch-fb-reader-check" not in makefile_text:
+        fail("qnx/Makefile must provide the latch-fb-reader-check target: the "
+             "first-reader decision is only proved if the host test is "
+             "BUILDABLE")
+    if not re.search(r"(?m)^latch-fb-reader-check:[^\n]*latch_fb_reader_test",
+                     makefile_text):
+        fail("qnx/Makefile's latch-fb-reader-check target must depend on the "
+             "latch_fb_reader_test binary: a target that builds nothing proves "
+             "nothing")
+    # The HEADER must be a prerequisite of the test's build rule.  Without
+    # it, `make` would not rebuild the test when the decision changes, and
+    # the test would be proving a STALE decision.
+    if not re.search(r"(?m)^[^\n:]*latch_fb_reader_test[^\n:]*:[^\n]*"
+                     r"latch_fb_reader\.h", makefile_text):
+        fail("qnx/Makefile's rule for the latch_fb_reader_test binary must "
+             "depend on latch_fb_reader.h: without the dependency, `make` "
+             "would not rebuild the test when the decision changes, and the "
+             "test would prove a STALE decision")
+
+    def _recipe(text, target):
+        """The RECIPE of one Makefile target -- its tab-indented lines."""
+        lines = text.splitlines()
+        out = []
+        in_target = False
+        for ln in lines:
+            m = re.match(r"^([A-Za-z0-9_.\-/]+):", ln)
+            if m:
+                in_target = (m.group(1) == target)
+                continue
+            if not in_target:
+                continue
+            if ln.startswith("\t"):
+                out.append(ln)
+            elif ln.strip() == "":
+                continue
+            else:
+                break
+        return "\n".join(out)
+
+    # The RECIPE, not the whole file: a target DEFINITION somewhere else in
+    # the Makefile is not the same thing as the regression suite RUNNING it.
+    if "latch-fb-reader-check" not in _recipe(makefile_text, "check-governor"):
+        fail("qnx/Makefile's check-governor target must RUN latch-fb-reader-check, "
+             "or the first-reader decision's host test is not part of the "
+             "regression suite")
+    if not _recipe(makefile_text, "latch-fb-reader-check"):
+        fail("qnx/Makefile's latch-fb-reader-check target has no recipe: a "
+             "target that builds nothing proves nothing")
+
+    # --- THE BEHAVIOURAL HALF: COMPILE AND RUN THE SHIPPED HEADER -------
+    #
+    # The structural checks above read the SOURCE.  This one runs the
+    # CODE.  A header whose guard was weakened still reads correctly --
+    # it does not still BEHAVE correctly -- so the gate compiles the
+    # shipped header against a probe and runs it.
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("C-1 first reader: the decision is shared, host-tested and "
+                   "atomic (the BEHAVIOURAL probe was SKIPPED -- no C compiler "
+                   "on PATH -- so only the structural half of the gate ran)")
+        return
+
+    tmp = tempfile.mkdtemp(prefix="latch_fbreader_")
+    try:
+        probe_c = os.path.join(tmp, "probe.c")
+        probe_bin = os.path.join(tmp, "probe")
+        with io.open(probe_c, "w", encoding="utf-8") as f:
+            f.write(FIRST_READER_PROBE)
+        comp = subprocess.run(
+            [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+             "-I", qnx_dir, probe_c, "-o", probe_bin],
+            capture_output=True, text=True, timeout=120)
+        if comp.returncode != 0:
+            fail("the shipped qnx/latch_fb_reader.h does not compile against "
+                 "the first-reader probe: %s. The decision has to be usable by "
+                 "a HOST test, or the property it encodes cannot be proved "
+                 "off-target." % (comp.stderr.strip() or comp.stdout.strip()))
+        run = subprocess.run([probe_bin], capture_output=True, text=True,
+                             timeout=60)
+        if run.returncode != 0:
+            detail = (run.stderr.strip() or run.stdout.strip() or
+                      "exit status %d" % run.returncode)
+            fail("the shipped qnx/latch_fb_reader.h does NOT BEHAVE correctly: "
+                 "%s. The backlog must be discarded for the first open that was "
+                 "GRANTED read access, and for no other open: a `waitfor` probe "
+                 "(no access bits) and a refused read+write open are not "
+                 "readers, and neither may consume the first-reader slot."
+                 % detail)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    pass_check("C-1 first reader: the decision is shared, host-tested and "
+               "atomic -- a probe and a refused open do not consume the "
+               "first-reader slot, the first GRANTED reader is the first "
+               "reader, and the decision and the backlog discard are one "
+               "critical section")
+
+
 def check_sdp_payloads(build_text: str, label: str):
     """Verify every vdev / shared library the buildfile ships exists in the SDP.
 
@@ -3308,18 +3709,52 @@ def main():
              "BEFORE it registers its nodes (resmgr_attach): the buildfile's "
              "`waitfor /dev/latch/feedback` is the proof that the file exists at "
              "its final size, and the hypervisor opens that file at qvm start")
-    # THE DROP-ON-OPEN RULE MUST BE KEYED ON THE READ BIT.
+    # THE DROP-ON-OPEN RULE MUST BE THE SHARED FIRST-READER DECISION.
     #
-    # MEASURED on the target: the `waitfor` probe opens the READ node with
-    # access bits 0 (ioflag 0x8880), and that open USED to consume the
-    # "first reader" slot, so the mailbox dropped its backlog.  The rule
-    # therefore keys on `rd != 0` -- a reader that actually asked to READ.
-    if not re.search(r"rd\s*!=\s*0u\s*&&\s*g_fb\.read_opens\s*==\s*1u", fb_sink_code):
-        fail("qnx/latch_fb_sink.c must drop the backlog only when a client that "
-             "actually asked to READ arrives (rd != 0u && g_fb.read_opens == 1u): "
-             "measured on the target, the buildfile's `waitfor` probe opens the read "
-             "node with access bits 0 (ioflag 0x8880), and counting that open as a "
-             "reader made the mailbox drop frames it should have kept")
+    # THE OLD RULE WAS WRONG, AND THIS GATE ENFORCED IT.
+    #
+    # MEASURED on the target.  The archived transcript
+    # `docs/evidence/governor/feedback-transport-console.txt` carries the
+    # two opens of the READ node, in the order they happened:
+    #
+    #     latch_fb_sink: open READ ioflag=0x8880 (----)   <- the `waitfor` probe
+    #     latch_fb_sink: open WRITE ioflag=0x8882 (--WR)
+    #     latch_fb_sink: open READ ioflag=0x8881 (RD--)   <- the REAL reader
+    #
+    # The `waitfor` probe opens the READ node with the access bits CLEARED
+    # (0x8880 -- no read bit, no write bit), and it is the FIRST open the
+    # read node ever sees.  The old rule was
+    #
+    #     rd != 0u && g_fb.read_opens == 1u
+    #
+    # and `read_opens` counts EVERY open of the READ node -- including the
+    # probe.  So when the real reader arrived, `read_opens` was already 2,
+    # the condition was FALSE, and **the backlog was never discarded**.  The
+    # guest's first read was a stale verdict: a decision that had been made
+    # for an earlier proposal.
+    #
+    # Keying on `rd != 0` was therefore NECESSARY BUT NOT SUFFICIENT: it
+    # stopped the probe from being treated as a reader, but the counter it
+    # was compared against still counted the probe.  The counter has to
+    # count READERS.
+    #
+    # The gate below used to REQUIRE the broken expression, so it held the
+    # defect in place.  The rule now lives in the shared, host-tested
+    # decision (`qnx/latch_fb_reader.h`), and
+    # `verify_first_reader_decision()` proves it -- structurally AND
+    # behaviourally, by compiling and running the shipped header.
+    if re.search(r"read_opens\s*==\s*1", fb_sink_code):
+        fail("qnx/latch_fb_sink.c still decides the first reader from the count "
+             "of OPENS (`read_opens == 1`): the `waitfor` probe opens the READ "
+             "node with the access bits cleared (measured ioflag 0x8880, "
+             "archived in docs/evidence/governor/feedback-transport-console.txt) "
+             "and it is the FIRST open, so the real reader saw `read_opens == 2` "
+             "and the backlog was NEVER discarded. The decision must count "
+             "READERS, which is what latch_fb_reader_account() does")
+    if "latch_fb_reader_account(" not in fb_sink_code:
+        fail("qnx/latch_fb_sink.c must decide the first reader with "
+             "latch_fb_reader_account() from the shared, host-tested header: "
+             "see verify_first_reader_decision()")
     # THE STATUS LINE MUST REPORT THE FILE'S WRITES.
     #
     # A transport that silently stops writing is indistinguishable from a
@@ -3379,6 +3814,15 @@ def main():
         fail("qnx/latch_fb_sink.c must carry the static assertion "
              "`(FB_RING_BYTES % FB_FRAME_SIZE) == 0`: the frame copy writes one "
              "frame at the tail, so the tail must always be on a frame boundary")
+
+    # --- THE FIRST-READER DECISION (C-1) -------------------------------
+    #
+    # The sink's READ node must hand its FIRST reader a FRESH frame.  The
+    # old trigger counted OPENS, and QNX's `waitfor` probe is the first
+    # open the read node ever sees (measured ioflag 0x8880), so the
+    # backlog was NEVER discarded and the guest's first read was a stale
+    # verdict.  See `verify_first_reader_decision()`.
+    verify_first_reader_decision()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #

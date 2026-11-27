@@ -743,6 +743,73 @@ MUTATIONS = [
      "README.md",
      [("the guest's 84 plus the harness's own 38",
        "the guest's 84 plus the harness's own 13")]),
+
+    # ===================== THE FIRST-READER DECISION ====================
+    #
+    # C-1, and it is a LIVE defect: the archived transcript
+    # `docs/evidence/governor/feedback-transport-console.txt` carries the
+    # two opens of the READ node in the order they happened --
+    #
+    #     latch_fb_sink: open READ ioflag=0x8880 (----)   <- the `waitfor` probe
+    #     latch_fb_sink: open READ ioflag=0x8881 (RD--)   <- the REAL reader
+    #
+    # The `waitfor` probe opens the READ node with the access bits CLEARED
+    # and it is the FIRST open, so the old rule
+    # `rd != 0u && g_fb.read_opens == 1u` was FALSE for the real reader
+    # (`read_opens` was already 2) and the backlog was NEVER discarded: the
+    # guest's first read was a stale verdict.
+    #
+    # WORTH NOTING: the consistency gate USED TO REQUIRE the broken
+    # expression, so it held the defect in place.  A gate that enforces a
+    # bug is worse than no gate, because it makes the bug look like a
+    # requirement.
+    ("C-1: the resource manager stops calling the shared first-reader "
+     "decision (it reimplements it inline, so the host test would prove a "
+     "function the shipped code does not use)",
+     "qnx/latch_fb_sink.c",
+     [("        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);",
+       "        first_reader = (rd != 0u && wr == 0u && g_fb.reader.opens == 0u);")]),
+
+    ("C-1: the first-reader decision stops rejecting non-readers (the "
+     "`waitfor` probe and the refused read+write open would both consume the "
+     "first-reader slot, and the real reader would get a stale verdict)",
+     "qnx/latch_fb_reader.h",
+     [("    if (rd == 0u || wr != 0u) {\n        return 0;\n    }",
+       "    if (0) {\n        return 0;\n    }")]),
+
+    ("C-1: the first-reader decision and the backlog discard are split into "
+     "TWO critical sections (the channel runs two dispatch threads with "
+     "DISPATCH_FLAG_NOLOCK, so two concurrent opens could both believe they "
+     "were the first reader and neither would discard the backlog)",
+     "qnx/latch_fb_sink.c",
+     [("        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);\n"
+       "        if (first_reader) {",
+       "        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);\n"
+       "        pthread_mutex_unlock(&g_fb.lock);\n"
+       "        pthread_mutex_lock(&g_fb.lock);\n"
+       "        if (first_reader) {")]),
+
+    ("C-1: the host test is dropped from the regression suite (the "
+     "first-reader decision would have no proof at all)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-fb-reader-check\n", "")]),
+
+    ("C-1: the shipped header is no longer a prerequisite of the host test's "
+     "build rule (`make` would not rebuild the test when the decision "
+     "changes, so the test would prove a STALE decision)",
+     "qnx/Makefile",
+     [("$(BUILD_DIR)/host-sim/latch_fb_reader_test: latch_fb_reader.h "
+       "latch_fb_reader_test.c | dirs",
+       "$(BUILD_DIR)/host-sim/latch_fb_reader_test: latch_fb_reader_test.c "
+       "| dirs")]),
+
+    ("C-1: the old, broken first-reader rule comes back (it decides the "
+     "first reader from the count of OPENS, and the `waitfor` probe is the "
+     "first open, so the real reader's condition was false and the backlog "
+     "was never discarded)",
+     "qnx/latch_fb_sink.c",
+     [("        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);",
+       "        first_reader = (rd != 0u && g_fb.read_opens == 1u);")]),
 ]
 
 

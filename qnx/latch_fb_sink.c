@@ -135,6 +135,12 @@
 #include <string.h>
 #include <unistd.h>
 
+/* THE FIRST-READER DECISION.  It is in a header of its own so a HOST
+ * test can prove it: this resource manager needs resmgr, the iofunc
+ * library and a QNX sysroot, so it cannot be built on the build host,
+ * and a decision that cannot be built there is a decision with no test. */
+#include "latch_fb_reader.h"
+
 /* The fixed frame size of the LFBK wire format (qnx/latch_feedback.h).
  * The mailbox is FRAME-ORIENTED: a write is either exactly one frame or
  * it is refused with EINVAL.  A transport that could deliver half a frame
@@ -257,6 +263,7 @@ static struct {
     uint64_t         dropped;    /* frames the MAILBOX mirror could not take */
     uint64_t         delivered;  /* frames handed to the reader */
     uint64_t         read_opens; /* opens of the READ node */
+    latch_fb_reader_t reader;    /* opens of the READ node that were GRANTED read access */
     uint64_t         pub_opens;  /* opens of the WRITE node */
     uint64_t         read_calls; /* readcond()/read() calls served */
     uint64_t         write_calls;/* write() calls served */
@@ -700,6 +707,8 @@ static int fb_io_open(resmgr_context_t *ctp,
     fb_node_t *node = (fb_node_t *)handle;
     unsigned rd = (msg->connect.ioflag & _IO_FLAG_RD) ? 1u : 0u;
     unsigned wr = (msg->connect.ioflag & _IO_FLAG_WR) ? 1u : 0u;
+    int first_reader = 0;
+    uint64_t dropped_frames = 0;
 
     if (node == NULL) {
         return EIO;
@@ -708,6 +717,32 @@ static int fb_io_open(resmgr_context_t *ctp,
     if (node->kind == FB_NODE_READ) {
         g_fb.read_opens++;
         g_fb.last_read_ioflag = msg->connect.ioflag;
+        /* THE FIRST-READER DECISION, AND THE BACKLOG DISCARD, ARE ONE
+         * ATOMIC STEP.
+         *
+         * The decision lives in `latch_fb_reader.h` because it is a
+         * property that a HOST test can prove and this resource manager
+         * cannot be built on the build host.  Two things have to happen
+         * together here, and both of them have to be inside this ONE
+         * critical section:
+         *
+         *   - the reader accounting is incremented, and
+         *   - the backlog is discarded.
+         *
+         * The channel runs TWO dispatch threads with
+         * `DISPATCH_FLAG_NOLOCK`, so two opens can be in flight at the
+         * same time.  If the increment and the check were separate
+         * critical sections, BOTH opens could see "no readers yet" and
+         * both would believe they were the first -- and neither would
+         * discard the backlog. */
+        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);
+        if (first_reader) {
+            dropped_frames = (uint64_t)(g_fb.count / FB_FRAME_SIZE);
+            g_fb.dropped_on_open += dropped_frames;
+            g_fb.count = 0u;
+            g_fb.head = 0u;
+            g_fb.tail = 0u;
+        }
     } else if (node->kind == FB_NODE_PUB) {
         g_fb.pub_opens++;
         g_fb.last_pub_ioflag = msg->connect.ioflag;
@@ -743,7 +778,8 @@ static int fb_io_open(resmgr_context_t *ctp,
          * was ready.  The discard is counted and logged: it is a fact
          * about the run, not a detail.
          *
-         * THE TRIGGER IS THE READ ACCESS BIT, NOT "THE FIRST OPEN".
+         * THE TRIGGER IS "AN OPEN THAT WAS GRANTED READ ACCESS", NOT
+         * "THE FIRST OPEN" AND NOT "ANY OPEN".
          *
          * MEASURED on the QEMU AArch64 target (2026-11-26): QNX's `waitfor`
          * probes a path by OPENING it with the access bits CLEARED (the
@@ -753,23 +789,26 @@ static int fb_io_open(resmgr_context_t *ctp,
          * probe consume the first-reader slot, and the real reader's
          * backlog was never dropped (the measured `dropped_on_open` stayed
          * at 0 across a whole run in which 120 frames had been published).
-         * The rule is now the one the intent states: the backlog is dropped
-         * when a READER arrives, and a reader is an open that asks for READ
-         * access. */
-        int first_reader = 0;
-        pthread_mutex_lock(&g_fb.lock);
-        if (rd != 0u && g_fb.read_opens == 1u) {
-            first_reader = 1;
-            g_fb.dropped_on_open += (uint64_t)(g_fb.count / FB_FRAME_SIZE);
-            g_fb.count = 0u;
-            g_fb.head = 0u;
-            g_fb.tail = 0u;
-        }
-        pthread_mutex_unlock(&g_fb.lock);
+         *
+         * The counter that decided this was `read_opens`, which counts
+         * EVERY open of the READ node -- including the probe.  So the
+         * condition `read_opens == 1` was FALSE for the real reader
+         * (the probe had already made it 2), and the backlog was never
+         * discarded.  The fix is a counter of READERS, not of opens.
+         *
+         * A REFUSED open is not a reader either: an open that asks for
+         * READ *and* WRITE on this read-only node is refused with EACCES,
+         * and it must not consume the slot for the same reason the probe
+         * must not.
+         *
+         * The decision is `latch_fb_reader_account()` in
+         * `qnx/latch_fb_reader.h`, and `qnx/latch_fb_reader_test.c` proves
+         * it on the host -- this resource manager cannot be built there. */
         if (first_reader) {
             printf("latch_fb_sink: the read node was opened: the backlog was "
-                   "discarded, the first delivered frame is the first frame "
-                   "published from now on\n");
+                   "discarded (%llu frame(s)), the first delivered frame is the "
+                   "first frame published from now on\n",
+                   (unsigned long long)dropped_frames);
             fflush(stdout);
         }
         if (wr != 0u) {
@@ -940,6 +979,7 @@ int main(int argc, char **argv)
     for (;;) {
         uint64_t published, delivered, dropped;
         uint64_t read_opens, pub_opens, read_calls, write_calls;
+        uint64_t reader_opens;
         uint64_t read_refused, pub_refused, out_opens, out_bytes;
         uint64_t dropped_on_open, notify_calls, triggers;
         uint64_t block_writes, block_errors;
@@ -959,6 +999,7 @@ int main(int argc, char **argv)
         dropped = g_fb.dropped;
         queued = g_fb.count;
         read_opens = g_fb.read_opens;
+        reader_opens = g_fb.reader.opens;
         pub_opens = g_fb.pub_opens;
         read_calls = g_fb.read_calls;
         write_calls = g_fb.write_calls;
@@ -978,7 +1019,7 @@ int main(int argc, char **argv)
         pthread_mutex_unlock(&g_fb.lock);
 
         printf("latch_fb_sink: published=%llu delivered=%llu dropped=%llu queued=%u bytes "
-               "| read_opens=%llu pub_opens=%llu read_calls=%llu write_calls=%llu "
+               "| read_opens=%llu reader_opens=%llu pub_opens=%llu read_calls=%llu write_calls=%llu "
                "| read_refused=%llu pub_refused=%llu last_read_ioflag=0x%x "
                "last_pub_ioflag=0x%x | out_opens=%llu out_bytes=%llu "
                "dropped_on_open=%llu "
@@ -990,6 +1031,7 @@ int main(int argc, char **argv)
                (unsigned long long)dropped,
                queued,
                (unsigned long long)read_opens,
+               (unsigned long long)reader_opens,
                (unsigned long long)pub_opens,
                (unsigned long long)read_calls,
                (unsigned long long)write_calls,
