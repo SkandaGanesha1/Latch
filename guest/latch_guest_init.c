@@ -1615,6 +1615,12 @@ static void run_governor_demo(int hvc_fd) {
  * plant's velocity stays zero, and an empty queue is harmless.
  * ========================================================================= */
 
+/* The pacing decision lives in a shared, host-testable header: see
+ * guest/latch_soak_pace.h for the defect it prevents (a rate limiter that
+ * accumulates credit bursts to catch up after a host stall, and the burst
+ * overflows the supervisor's proposal ring). */
+#include "latch_soak_pace.h"
+
 /* The target frame rate, in frames per second.  See the note above: it has
  * to sit below the supervisor's 1 kHz consumption rate so the ring never
  * fills, and high enough that the decision path is the dominant workload. */
@@ -1670,13 +1676,40 @@ static void run_governor_demo(int hvc_fd) {
  * The sleep is rounded UP to a whole microsecond, so the pacer never
  * undersleeps and the rate cannot creep upward.
  */
+/*
+ * THE PACER.  See guest/latch_soak_pace.h for why the decision lives in a
+ * shared, host-testable header.
+ *
+ * THE RULE, IN ONE LINE: the producer may fall at most the LAG ALLOWANCE
+ * behind its own schedule, and it keeps its grid.
+ *
+ * A rate limiter has to do two things at once, and every failure mode
+ * here was MEASURED on the QEMU AArch64 `virt` target (2026-11-27):
+ *
+ *   * "keep the grid, catch up without limit" sustained the target rate
+ *     (901/s) but a ~0.5 s host stall made it pay the whole debt back at
+ *     once -- 255 frames into the supervisor's 256-frame proposal ring,
+ *     186 of them DROPPED;
+ *   * "drop the credit on ANY lateness" removed the burst (2 frames) but
+ *     COST THE RATE: the guest's own sleep overshoots by more than a
+ *     period under TCG, so the guest is ~1.02 periods late by
+ *     construction, every late frame cost a full period, and the measured
+ *     rate fell to 610/s.  The workload then was not the one the plan
+ *     describes.
+ *
+ * The decision is `latch_soak_next_deadline()`, which keeps the grid
+ * inside the allowance (ordinary jitter), drops the missed deadlines
+ * outside it (a host stall), and advances the grid by exactly one period
+ * when it is on schedule.
+ */
 static void soak_pace(uint64_t *deadline, uint64_t period_ns) {
-    *deadline += period_ns;
     const uint64_t now = guest_now_ns();
-    if (now < *deadline) {
-        const uint64_t remain_us = (*deadline - now + 999ULL) / 1000ULL;
+    const uint64_t next = latch_soak_next_deadline(*deadline, now, period_ns);
+    if (next > now) {
+        const uint64_t remain_us = latch_soak_sleep_us(next, now);
         sys_sleep_us((long)remain_us);
     }
+    *deadline = next;
 }
 
 static void run_governor_latency_soak(int hvc_fd) {

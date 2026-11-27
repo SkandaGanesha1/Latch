@@ -126,11 +126,11 @@ the ring, and the secpol grammar). It is the cheapest way to catch drift.
 
 **And there is a gate on THAT gate.** A gate that cannot fail is a gate
 that proves nothing, so `tools/mutation_check.py` mutates every property
-the consistency checker checks — 68 mutations, each written against a
+the consistency checker checks — 79 mutations, each written against a
 **real measured defect** — and requires the checker to fail on every one:
 
 ```bash
-make -C qnx mutation-check        # ~6 s, no QNX licence, no QEMU
+make -C qnx mutation-check        # no QNX licence, no QEMU
 python3 tools/mutation_check.py --list   # list the mutations, run none
 ```
 
@@ -1241,6 +1241,142 @@ the measurement.
   start a build, a test battery or a capture while it is in flight.**
   The calibration runs and the first full soak were both done with
   nothing else running, and both were clean.
+
+- **A RATE LIMITER MUST KEEP THE RATE *AND* BOUND THE CATCH-UP.**
+  Measured on the QEMU AArch64 `virt` target (2026-11-27): a soak with
+  the **same** code and the **same** image failed with **186 dropped
+  frames**, and the drop was **one abrupt event** — 0 drops, then 186 in
+  a single poll, then frozen for the rest of the run. The cause was not
+  host load (there was none): it was the soak's own **pacer**.
+
+  The pacer advanced its deadline by one period and then, if the guest
+  had been starved past that deadline, sent the next frame
+  **immediately** and left the deadline **behind** `now`. That is a rate
+  limiter that **accumulates credit**: every missed period became a frame
+  owed, and the producer paid the whole debt back in **one burst**. A
+  ~0.5 s host stall left the producer ~450 frames behind, and the
+  catch-up burst put **255 frames into the supervisor's 256-frame
+  proposal ring** and dropped **186** of them.
+
+  The stall was the **host's** — the supervisor's own WCET-overrun
+  counter jumped by **99** in the same window, against a background of
+  about **6** — but the **burst** was the **producer's own**, and it
+  broke the very workload the measurement is about. A host stall is the
+  host's problem; the producer must not convert it into a burst.
+
+  **The first fix was wrong in the other direction, and the measurement
+  caught it.** Dropping the credit on *any* lateness removes the burst
+  (2 frames) but **costs the rate**: the guest's own scheduling jitter
+  puts it late about half the time, every late frame then costs a full
+  period, and the measured rate fell from **901/s to 610/s** — a flat
+  32% loss, visible in the archive as a stream at 610 proposals/s under
+  a "900 Hz" workload line. The measurement still *passed* its own
+  criteria (0 drops, a peak backlog of 4), which is exactly why the
+  rate has to be read out of the report and not assumed from the
+  build's constants.
+
+  **WHY THE GUEST IS LATE ALL THE TIME.** The guest's per-frame cost is
+  ~550 µs, but its `nanosleep` **wake overshoots by more than a whole
+  period** under TCG (~1.7 ms), so the guest is ~1.02 periods behind its
+  own schedule *by construction*. It can only hold the target rate by
+  sending **two or three frames back-to-back** and then sleeping to the
+  grid — which is the OLD pacer's regular pattern, and the reason its
+  peak backlog was 72. A pacer that forbids back-to-back frames
+  therefore caps the rate at ~1/(550 µs + 1.1 ms) ≈ **600/s**, whatever
+  the target says.
+
+  **The rule, in one sentence: the producer may fall at most the LAG
+  ALLOWANCE behind its own schedule, and it keeps its grid.** Inside the
+  allowance (ordinary jitter) → **keep the grid**, and the frame that is
+  due goes out immediately. Outside it (a host stall) → **drop the
+  missed deadlines** and resume from *now*. The checkable form is
+  `now - latch_soak_next_deadline(...) <= LATCH_SOAK_MAX_LAG_PERIODS *
+  period` for every input.
+
+  The allowance is **4 periods**, and that is not a guess: the guest's
+  measured normal lateness is ~1.02 periods, so 4 is ~3× the ordinary
+  jitter, and the catch-up it permits is a handful of frames against a
+  **256-frame** ring. An allowance of **1** period is the first fix's
+  value and collapses the rate to 646/s.
+
+  All four pacers, measured on the same target with the same guest:
+
+  | pacer | rate during the stream | peak backlog | catch-up after a 0.5 s stall |
+  |---|---:|---:|---:|
+  | keep the grid, catch up without limit | 901/s | 72 | **~450 frames → 186 DROPPED** |
+  | drop the credit on any lateness | 610/s | 4 | 1 frame |
+  | allowance of 1 period | 646/s | 4 | 1 frame |
+  | **allowance of 4 periods** | **899/s** | **7** | **~8 frames** |
+
+  The pacing decision therefore lives in a shared, host-testable header
+  (`guest/latch_soak_pace.h`), the behavioural proof is
+  `qnx/latch_soak_pace_test.c` (15 checks, in `make check-governor` and
+  in CI), and it is proved **non-vacuous in EVERY direction**: the same
+  test fails 5 checks against the original pacer, 4 against the
+  rate-killing one, and 2 against a one-period allowance.
+
+  Three measurement rules fall out of this. A burst check has to count
+  the frames in a **sub-window** after the stall — the **total** frame
+  count does not discriminate, because a pacer that accumulates credit
+  catches up and delivers the same total, just in a burst. **The
+  achieved rate is a result, not an input**: the archive must carry it,
+  because a rate limiter that is "correct" on paper and 32% slow on the
+  target has changed the workload the measurement is about. And **the
+  rate has to be read over the STREAMING WINDOW**: a short calibration
+  averages the guest's rate over the whole harness window, including the
+  tail after the guest stops, and reports a number (749/s) that the
+  per-poll rates (898–899/s) contradict.
+
+- **A MEASUREMENT MUST CHECK THE RATE IT CLAIMED, OR IT MEASURED
+  SOMETHING ELSE.**
+  The third rule above was a *measurement* rule, and the lesson from it
+  is general enough to be its own: **the achieved rate is a RESULT, and a
+  result has to be CHECKED against the claim it is compared to.**
+
+  The soak's workload is "a 900 Hz producer". The harness checked that
+  the producer kept the supervisor fed (0 ring drops), that the backlog
+  stayed small, that the rung was HP throughout, that the plant stood
+  at 100 mrad with velocity 0, and that the sample floor was met. It
+  did **not** check the rate — and so a run that produced at **610/s**
+  under a "900 Hz" workload line passed **every** one of those criteria.
+  The archive would have carried a measurement of a 610 Hz workload
+  under a heading that said 900 Hz, and nothing in it would have looked
+  wrong.
+
+  The fix is the same shape as the rest of this repository's rules: the
+  decision is a **pure function** (`rate_verdict()` in
+  `tools/verify_latency_qemu.py`), the consistency checker **imports and
+  exercises it** against the rates that were measured on the target — the
+  two that must be accepted (897.6/s, 901/s) and the two regressions
+  that must be rejected (646/s, 610/s) — and the harness calls it on the
+  measured rate before it declares the run good. The band is **±5%**:
+  the measured rate is within 1% of the target, and the two
+  regressions are 28% and 32% out, so the band separates them
+  decisively while leaving the TCG host's jitter room. A gate that
+  cannot fail is a gate that proves nothing, so the band is capped at
+  **10%** by the consistency checker — a wider band would let a run at
+  two thirds of the declared rate pass, which is exactly what happened.
+
+  The rate is read over the **STREAMING WINDOW** — the samples whose
+  lease age says the producer was alive — and the report carries **two**
+  rates, because they are not the same number and confusing them is
+  how the bug hides:
+
+  | | a 60-second calibration | the 35-minute soak |
+  |---|---:|---:|
+  | `guest proposals/s` (the whole harness window) | 749/s | 887/s |
+  | `producer rate` (the streaming window) | 897/s | 895/s |
+
+  The whole-window rate is diluted by the tail after the guest stops, so
+  it is a figure about the HARNESS, not about the workload. The
+  streaming-window rate is the figure about the workload, and it is the
+  one the band is checked against.
+
+  The general shape: **when a measurement's own criterion is a NUMBER,
+  the number has to be measured and checked — not inferred from the
+  build's constants.** "The guest was built for 900 Hz" is a fact about
+  a macro; "the guest produced 898 proposals/s" is a fact about the
+  target. The first is what the plan says; the second is what happened.
 
 - **A FAILING CAPTURE MUST KEEP ITS OWN TRANSCRIPT.** The failed re-run
   printed *"the failing run's own transcript is at …"* — and the cleanup

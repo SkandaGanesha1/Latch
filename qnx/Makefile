@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -188,6 +188,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory governor-homeostat-check
 	$(MAKE) --no-print-directory latch-feedback-check
 	$(MAKE) --no-print-directory latch-fb-decode-check
+	$(MAKE) --no-print-directory latch-soak-pace-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
@@ -338,6 +339,22 @@ $(BUILD_DIR)/host-sim/latch_fb_decode_test: ../guest/latch_fb_decode.h latch_fee
 
 latch-fb-decode-check: $(BUILD_DIR)/host-sim/latch_fb_decode_test
 	./$(BUILD_DIR)/host-sim/latch_fb_decode_test
+
+# The SOAK'S DEADLINE PACER (U-4).  The pacing decision lives in
+# guest/latch_soak_pace.h because the guest policy is freestanding and
+# cannot include the QNX tree -- so the property that matters is reachable
+# from a host test.  A rate limiter has to do TWO things at once: KEEP THE
+# RATE and BOUND THE CATCH-UP.  The original pacer kept the rate but
+# accumulated credit, so a host stall became a burst that overflowed the
+# supervisor's proposal ring (186 frames dropped, measured on the target);
+# the first fix bounded the catch-up but cost a third of the rate (901/s
+# -> 610/s).  The test includes the SAME header the guest compiles, and it
+# is proved non-vacuous against both wrong pacers.
+$(BUILD_DIR)/host-sim/latch_soak_pace_test: ../guest/latch_soak_pace.h latch_soak_pace_test.c | dirs
+	$(CC) $(CFLAGS) latch_soak_pace_test.c -o $@ $(LDFLAGS)
+
+latch-soak-pace-check: $(BUILD_DIR)/host-sim/latch_soak_pace_test
+	./$(BUILD_DIR)/host-sim/latch_soak_pace_test
 
 # The HOST-SIDE FEEDBACK PUBLISHER (W5).  It is the thing that carries the
 # supervisor's verdict to the transport without ever letting the transport

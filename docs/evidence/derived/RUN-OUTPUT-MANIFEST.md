@@ -234,13 +234,43 @@ the failure can be diagnosed.
 
 ---
 
-## L. `make -C qnx evidence` — everything except the QEMU run
+## L. `make -C qnx evidence-governor-latency` — the U-4 decision-latency measurement
+
+Boots QEMU AArch64 `virt` **once** against the **measurement** image
+(`qnx/latch_qemu_latency.build` -- the GOVERNOR profile with NO evidence
+logger, so nothing perturbs the state being measured) and runs the
+**full 35-minute soak**: the guest streams in-envelope `CMD_V2` frames at
+900 Hz, the supervisor samples its own per-tick decision latency **once
+per tick**, and the histogram is aggregated **on the target** and read
+back through the output-only devctl `latchctl latency`.
+
+**Every figure in `LATENCY.md` is parsed out of the TARGET's own report**
+-- none of them is typed in by hand -- and the archive is written ONLY
+when the run passes: a failed run exits non-zero WITHOUT touching
+`docs/evidence/`, so a broken build can never replace a measurement with
+a partial transcript.
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/LATENCY.md` | The banner (the target machine, the emulation, the profile, the signed contract and the workload), **THE MEASUREMENT** (the sample counts, the p50/p99 **bucket ranges**, the **exact** min/max, the means, the over-budget and over-period counts, the mode ticks and the achieved rates), the **HOW TO READ THE PERCENTILES** section, the **RAW TARGET REPORT** verbatim, and a **WHAT THIS DOES NOT PROVE** section |
+| 2 | `governor/latency-console.txt` | The **raw** serial transcript of the measurement session, verbatim |
+
+**The figures are a TCG OBSERVATION, not a WCET.** Under TCG the
+supervisor shares host cores with the guest and with QEMU itself, so the
+distribution's maxima are the **host's** scheduling noise; its
+percentiles are **bucket ranges**, not exact values; and its workload is
+**one** workload -- a HOLD at 100 mrad. The file says all of this itself,
+and the consistency gate requires it to.
+
+---
+
+## M. `make -C qnx evidence` — everything except the QEMU run
 
 Runs B, C, D, E and F in sequence (~20 s).
 
 ---
 
-## M. `make -C qnx evidence-check` — the anti-rot gate
+## N. `make -C qnx evidence-check` — the anti-rot gate
 
 Re-runs the host-sim capture and compares the signature against
 `derived/host-sim-signature.txt`. A mismatch fails CI, so the archive

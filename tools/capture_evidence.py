@@ -1100,10 +1100,13 @@ def scenario_index(args):
     u4_p50 = re.search(r"Decision-path p50\s*:\s*(.+)", u4)
     u4_p99 = re.search(r"Decision-path p99\s*:\s*(.+)", u4)
     u4_minmax = re.search(r"Exact min / max \(decision path\)\s*:\s*(.+)", u4)
-    if u4_samples and u4_p50 and u4_p99 and u4_minmax:
-        L.append("| **U-4 decision-latency measurement** | The **trusted supervisor's own per-tick decision latency** — the time inside `latch_simplex_tick()` — sampled **once per tick**, aggregated in a histogram **on the target**, and read back through the output-only devctl `latchctl latency`. **%s supervisor ticks** sampled (every tick, including the pre-session idle path). Decision path: **p50 %s**, **p99 %s**; **exact** min / max %s. A percentile here is a **bucket range**, not an exact value. **This is a TCG OBSERVATION on the QEMU AArch64 `virt` target — NOT a WCET, and not a claim about physical hardware**: under TCG the supervisor shares host cores with the guest and with QEMU, so the maxima are the host's scheduling noise. The workload is a HOLD at 100 mrad | `governor/LATENCY.md` (regenerate with `make -C qnx evidence-governor-latency`) |"
+    u4_rate = re.search(r"producer rate\s*:\s*([\d.]+)/s over the streaming "
+                        r"window \(target (\d+) Hz\)", u4)
+    if u4_samples and u4_p50 and u4_p99 and u4_minmax and u4_rate:
+        L.append("| **U-4 decision-latency measurement** | The **trusted supervisor's own per-tick decision latency** — the time inside `latch_simplex_tick()` — sampled **once per tick**, aggregated in a histogram **on the target**, and read back through the output-only devctl `latchctl latency`. **%s supervisor ticks** sampled (every tick, including the pre-session idle path). Decision path: **p50 %s**, **p99 %s**; **exact** min / max %s. A percentile here is a **bucket range**, not an exact value. The producer's **achieved** rate over the streaming window was **%s/s against the %s Hz the workload declares** — the rate is a **result** the harness checks, not an input copied out of the build. **This is a TCG OBSERVATION on the QEMU AArch64 `virt` target — NOT a WCET, and not a claim about physical hardware**: under TCG the supervisor shares host cores with the guest and with QEMU, so the maxima are the host's scheduling noise. The workload is a HOLD at 100 mrad | `governor/LATENCY.md` (regenerate with `make -C qnx evidence-governor-latency`) |"
                  % (u4_samples.group(1), u4_p50.group(1).strip(),
-                    u4_p99.group(1).strip(), u4_minmax.group(1).strip()))
+                    u4_p99.group(1).strip(), u4_minmax.group(1).strip(),
+                    u4_rate.group(1), u4_rate.group(2)))
     else:
         L.append("| **U-4 decision-latency measurement** | **not yet measured** — `governor/LATENCY.md` carries no parsable measurement. Run `make -C qnx evidence-governor-latency`. Until then this archive makes **no** decision-latency claim | `governor/LATENCY.md` |")
     # The withdrawn benchmark stays visible as a REJECTION, so the index
@@ -2986,8 +2989,25 @@ def render_latency_report(report_text, date_stamp=None):
 
     ticks_per_s = _rate("supervisor ticks/s")
     proposals_per_s = _rate("guest proposals/s")
+    producer_rate = _rate("producer rate")
     peak_backlog = _rate("peak backlog")
     plan = _grab(r"Guest soak plan\s*:\s*(.+)")
+
+    # The ACHIEVED RATE is part of the workload, so it belongs in the
+    # summary.  It is the rate over the STREAMING WINDOW (the samples whose
+    # lease age says the producer was alive), which is the one the harness
+    # checks against the guest's declared rate.  The window-wide rate above
+    # is contaminated by the tail after the guest stops.
+    if not producer_rate or producer_rate == "n/a":
+        raise ValueError("the report carries no achieved producer rate over "
+                         "the streaming window: the measurement has to say "
+                         "the rate it achieved, not only the rate it aimed "
+                         "at")
+    m_prod = re.match(r"([0-9]+(?:\.[0-9]+)?)/s over the streaming window "
+                       r"\(target ([0-9]+) Hz\)", producer_rate)
+    if not m_prod:
+        raise ValueError("the report's producer rate is unreadable: %r"
+                         % producer_rate)
 
     body = [
         banner("LATCH -- ON-TARGET DECISION-LATENCY MEASUREMENT (U-4)", [
@@ -3042,7 +3062,14 @@ def render_latency_report(report_text, date_stamp=None):
         "--- the achieved rates, as the target reported them ---",
         "supervisor ticks/s : %s" % ticks_per_s,
         "guest proposals/s  : %s" % proposals_per_s,
+        "producer rate      : %s" % producer_rate,
         "peak backlog       : %s" % peak_backlog,
+        "",
+        "The `producer rate` is the rate over the STREAMING WINDOW -- the",
+        "samples whose lease age says the producer was alive -- and it is the",
+        "one the harness checks against the guest's declared %s.  The" % m_prod.group(2),
+        "`guest proposals/s` above is averaged over the WHOLE harness window,",
+        "so it is lower: it includes the tail after the guest stops.",
         "",
         "=" * 78,
         "HOW TO READ THE PERCENTILES",

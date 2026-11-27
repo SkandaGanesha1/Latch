@@ -24,6 +24,25 @@ jobs:
         run: |
           python3 tools/consistency_check.py
 
+      - name: Prove The Consistency Gates Still Have Teeth
+        run: |
+          # A gate that cannot fail is a gate that proves nothing, and a
+          # battery that is only run by hand is a battery that decays.
+          #
+          # The history of this repository says so: the previous battery
+          # went STALE after the feedback transport changed from a PTY
+          # pair to the polled verdict file -- nine of its twelve
+          # mutations stopped matching any source text, and it still
+          # printed "PASSED" for the three that were left.  A stale
+          # mutation is a hole in the proof, and this tool treats a
+          # SKIP as a FAILURE precisely so that a decayed battery
+          # cannot report success.
+          #
+          # It runs against a scratch COPY of the repository and proves
+          # at the end that the real tree is byte-identical to how it
+          # started.  It needs no QNX licence and no QEMU.
+          python3 tools/mutation_check.py
+
       - name: Verify Judge-Facing Source Anchors Have Not Drifted
         run: |
           # The README's "Evidence-of-QNX-Use" table quotes exact `file:line`

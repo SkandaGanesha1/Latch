@@ -471,6 +471,75 @@ MUTATIONS = [
      "tools/verify_latency_qemu.py",
      [('if "[LATENCY] ABORT" in guest_text:', 'if "[LATENCY] NEVER" in guest_text:')]),
 
+    ("U-4: the deadline pacer accumulates credit again (a host stall becomes a "
+     "catch-up burst that overflows the supervisor's proposal ring -- measured "
+     "on the target: 186 frames dropped)",
+     "guest/latch_soak_pace.h",
+     [("        return now;           /* too far behind: DROP the missed deadlines */",
+       "        return next;           /* too far behind: KEEP the credit and catch up */")]),
+
+    ("U-4: the deadline pacer drops the credit on ANY lateness (the burst is "
+     "gone, but the RATE collapses: measured on the target, 901/s -> 610/s, "
+     "so the workload stopped being the one the plan describes)",
+     "guest/latch_soak_pace.h",
+     [("    if ((now - next) > ((uint64_t)LATCH_SOAK_MAX_LAG_PERIODS * period_ns)) {",
+       "    if ((now - next) > 0u) {")]),
+
+    ("U-4: the deadline pacer's lag allowance is ONE period (the first fix's "
+     "value -- it drops the credit on ordinary jitter, and the measured rate "
+     "fell from 901/s to 610/s)",
+     "guest/latch_soak_pace.h",
+     [("#define LATCH_SOAK_MAX_LAG_PERIODS 4",
+       "#define LATCH_SOAK_MAX_LAG_PERIODS 1")]),
+
+    ("U-4: the deadline pacer loses the 'a little late' branch (the grid is "
+     "no longer kept, so ordinary jitter eats the target rate)",
+     "guest/latch_soak_pace.h",
+     [("    return next;               /* a little late: keep the grid, one frame now */",
+       "    return now;                /* a little late: lose the grid too */")]),
+
+    ("U-4: the guest stops using the shared pacing decision (the host test "
+     "then tests a copy the guest does not run)",
+     "guest/latch_guest_init.c",
+     [("    const uint64_t next = latch_soak_next_deadline(*deadline, now, period_ns);",
+       "    const uint64_t next = *deadline + period_ns;")]),
+
+    ("U-4: the pacer's host test is removed from the regression suite (the "
+     "property is then only asserted by a regex)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-soak-pace-check\n", "")]),
+
+    ("U-4: the harness's achieved-rate check accepts everything (the run that "
+     "produced at 610/s under a '900 Hz' workload line passed every other "
+     "criterion, and this is the criterion that would have caught it)",
+     "tools/verify_latency_qemu.py",
+     [("    if stream_rate < lo or stream_rate > hi:",
+       "    if False:")]),
+
+    ("U-4: the harness's rate tolerance is widened to a third (the band stops "
+     "discriminating: a run at two thirds of the declared rate would pass)",
+     "tools/verify_latency_qemu.py",
+     [("RATE_TOLERANCE_FRACTION = 0.05", "RATE_TOLERANCE_FRACTION = 0.30")]),
+
+    ("U-4: the harness stops calling the rate check (a pure function that "
+     "nothing calls is a function that proves nothing)",
+     "tools/verify_latency_qemu.py",
+     [("        rate_ok, rate_msg = rate_verdict(stream_rate, target_hz)",
+       "        rate_ok, rate_msg = True, \"\"")]),
+
+    ("U-4: the harness reads the achieved rate over the WHOLE window instead "
+     "of the streaming window (the tail after the guest stops dilutes the "
+     "figure: a 60-second calibration reads 749/s against a measured 898/s)",
+     "tools/verify_latency_qemu.py",
+     [("    live = [s for s in samples if s.get(\"live\")]",
+       "    live = list(samples)")]),
+
+    ("U-4: the archive's summary stops carrying the achieved rate (the rate "
+     "is a result, not an input -- and a summary that omits it cannot be "
+     "checked against the measurement it summarises)",
+     "tools/capture_evidence.py",
+     [('        "producer rate      : %s" % producer_rate,\n', "")]),
+
     ("U-4: the archived report loses its sample count",
      "docs/evidence/governor/LATENCY.md",
      [("Samples (every supervisor tick)", "Samples (ticks)")]),

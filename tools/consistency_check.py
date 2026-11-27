@@ -4004,6 +4004,204 @@ def main():
     pass_check(f"U-4 build: the soak's knobs are overridable and agree with the "
                f"guest source ({src_hz} Hz for {src_ms} ms)")
 
+    # ---- THE PACER MUST KEEP THE RATE AND BOUND THE CATCH-UP ------------
+    #
+    # Measured on the QEMU AArch64 `virt` target (2026-11-27), two pacers
+    # failed against the SAME guest, in OPPOSITE directions:
+    #
+    #   * "keep the grid, catch up without limit" sustained the target rate
+    #     (901/s) but a ~0.5 s host stall made it pay the whole debt back at
+    #     once -- 255 frames into the supervisor's 256-frame proposal ring,
+    #     186 of them DROPPED.  The stall was the host's; the burst was the
+    #     producer's own, and it broke the very workload the measurement is
+    #     about.
+    #
+    #   * "drop the credit on ANY lateness" removed the burst (2 frames)
+    #     but COST THE RATE: the guest's own sleep overshoots by more than
+    #     a whole period under TCG, so the guest is ~1.02 periods behind its
+    #     own schedule by construction, every late frame cost a full
+    #     period, and the measured rate fell from 901/s to 610/s.  The
+    #     workload then was not the one the plan describes, and the
+    #     archive's "900 Hz" would have contradicted its own numbers.
+    #
+    # A rate limiter has to do BOTH: keep the rate, and bound the
+    # catch-up.  The property is therefore:
+    #
+    #     the producer is NEVER more than the LAG ALLOWANCE behind its own
+    #     schedule, and it keeps its grid.
+    #
+    # The decision lives in guest/latch_soak_pace.h so a HOST test can
+    # exercise it (the guest policy is freestanding and cannot include the
+    # QNX tree).  This gate checks the shipped source; the behavioural
+    # proof is `make -C qnx latch-soak-pace-check`, which is in CI.
+    pace_header_path = os.path.join(REPO_ROOT, "guest", "latch_soak_pace.h")
+    if not os.path.isfile(pace_header_path):
+        fail("guest/latch_soak_pace.h is missing: the soak's pacing decision "
+             "must live in a shared, host-testable header, or the property "
+             "that keeps a host stall from becoming a ring overflow cannot "
+             "be tested off-target")
+    with io.open(pace_header_path, encoding="utf-8", errors="replace") as f:
+        pace_hdr = f.read()
+    pace_code = strip_c_comments(pace_hdr)
+    includes = re.findall(r"#\s*include\s*[<\"]([^>\"]+)[>\"]", pace_code)
+    for inc in includes:
+        if inc not in ("stdint.h", "stddef.h"):
+            fail("guest/latch_soak_pace.h includes %r: the guest policy is "
+                 "FREESTANDING, so the shared header may include nothing but "
+                 "the freestanding headers" % inc)
+    if "latch_soak_next_deadline" not in pace_code:
+        fail("guest/latch_soak_pace.h must define latch_soak_next_deadline(): "
+             "that is the pacing decision the host test exercises")
+    # The two branches, in the order the function computes them: on schedule
+    # -> advance by one period; late -> resume from NOW.
+    #
+    # c_func_body() anchors on a line that starts with `static`, which does
+    # not match `static inline`, so the body is located here.
+    pace_fn = None
+    m_pace = re.search(r"(?m)^[ \t]*static[ \t]+inline[ \t]+"
+                       r"[A-Za-z_][A-Za-z0-9_]*[ \t\*]+"
+                       r"latch_soak_next_deadline[ \t]*\(", pace_code)
+    if m_pace:
+        i = pace_code.index("{", m_pace.start())
+        depth = 0
+        j = i
+        while j < len(pace_code):
+            if pace_code[j] == "{":
+                depth += 1
+            elif pace_code[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    pace_fn = pace_code[m_pace.start():j + 1]
+                    break
+            j += 1
+    if not pace_fn:
+        fail("guest/latch_soak_pace.h: latch_soak_next_deadline() was not found")
+    else:
+        if not re.search(r"return\s+next\s*;", pace_fn):
+            fail("latch_soak_next_deadline() must return `next` when the "
+                 "producer is ON SCHEDULE (and when it is only a little "
+                 "late): the deadline advances by exactly one period, so the "
+                 "achieved rate is the intended rate")
+        if not re.search(r"return\s+now\s*;", pace_fn):
+            fail("latch_soak_next_deadline() must return `now` when the "
+                 "producer is A LONG WAY LATE: the missed deadlines are "
+                 "DROPPED, so a host stall cannot become a catch-up burst. "
+                 "Measured on the QEMU AArch64 target, 2026-11-27: the "
+                 "credit-accumulating pacer burst ~450 frames into a "
+                 "256-frame ring after a ~0.5 s host stall and dropped 186 "
+                 "of them.")
+        # The BOUNDED catch-up.  A pacer that drops the credit on ANY
+        # lateness also has a `return now;`, and it removes the burst --
+        # but it COSTS THE RATE: the guest is ~1.02 periods behind its own
+        # schedule by construction under TCG, every late frame then costs a
+        # full period, and the measured rate fell from 901/s to 610/s.  So
+        # the branch that decides "a little late" against "a long way
+        # late" must be present, and it must compare the lateness against
+        # the ALLOWANCE.
+        if not re.search(r"now\s*-\s*next", pace_fn):
+            fail("latch_soak_next_deadline() must compute the lateness as "
+                 "`now - next`, so it can tell 'a little late' from 'a long "
+                 "way late'")
+        if "LATCH_SOAK_MAX_LAG_PERIODS" not in pace_fn:
+            fail("latch_soak_next_deadline() must compare the lateness "
+                 "against the LAG ALLOWANCE (LATCH_SOAK_MAX_LAG_PERIODS), so "
+                 "ordinary jitter keeps the grid and only a producer that is "
+                 "FAR behind drops the missed deadlines. A pacer that drops "
+                 "the credit on any lateness keeps the burst away but "
+                 "COLLAPSES the rate: measured on the QEMU AArch64 target, "
+                 "2026-11-27, it fell from 901/s to 610/s, so the workload "
+                 "stopped being the one the plan describes.")
+        if len(re.findall(r"return\s+next\s*;", pace_fn)) < 2:
+            fail("latch_soak_next_deadline() must have a SEPARATE `return "
+                 "next;` for the 'a little late' case: the grid is kept "
+                 "there, which is what preserves the target rate while the "
+                 "catch-up stays bounded.")
+
+    # The ALLOWANCE ITSELF.  An allowance of ONE period is the first fix,
+    # and the first fix collapses the rate: the guest's own normal
+    # lateness under TCG is ~1.02 periods, so a one-period allowance drops
+    # the credit on ordinary jitter.  The allowance has to be comfortably
+    # above the measured normal lateness, and the catch-up it permits has
+    # to stay small against the supervisor's 256-frame proposal ring.
+    m_lag = re.search(r"#define\s+LATCH_SOAK_MAX_LAG_PERIODS\s+(\d+)",
+                       pace_code)
+    if not m_lag:
+        fail("guest/latch_soak_pace.h must define "
+             "LATCH_SOAK_MAX_LAG_PERIODS: the lag allowance is the pacer's "
+             "burst bound, and a magic number written into the comparison "
+             "would hide it")
+    else:
+        lag = int(m_lag.group(1))
+        if lag < 2:
+            fail("the lag allowance is %d period(s). It must be at least 2: "
+                 "the guest's MEASURED normal lateness on this target is "
+                 "~1.02 periods (its sleep's wake overshoots by more than a "
+                 "whole period under TCG), so an allowance of one period "
+                 "drops the credit on ordinary jitter. Measured on the "
+                 "QEMU AArch64 target, 2026-11-27: the one-period allowance "
+                 "held the burst at 1 frame but the rate fell from 901/s to "
+                 "610/s, so the workload stopped being the one the plan "
+                 "describes." % lag)
+        if lag > 16:
+            fail("the lag allowance is %d periods. It must be small: the "
+                 "allowance is the pacer's BURST BOUND, and the catch-up it "
+                 "permits must stay well inside the supervisor's 256-frame "
+                 "proposal ring." % lag)
+        pass_check("U-4 pacer: the lag allowance is %d periods -- above the "
+                   "guest's measured ~1.02-period normal lateness, and small "
+                   "enough to bound the catch-up inside the proposal ring"
+                   % lag)
+    soak_pace_body = c_func_body(guest_txt, "soak_pace")
+    if not soak_pace_body:
+        fail("guest/latch_guest_init.c: soak_pace() was not found")
+    elif "latch_soak_next_deadline" not in strip_c_comments(soak_pace_body):
+        fail("soak_pace() must call latch_soak_next_deadline(): the pacing "
+             "decision belongs in the shared, host-tested header, so the "
+             "guest and the test cannot disagree about it")
+    pace_test_path = os.path.join(REPO_ROOT, "qnx", "latch_soak_pace_test.c")
+    if not os.path.isfile(pace_test_path):
+        fail("qnx/latch_soak_pace_test.c is missing: the pacer's property "
+             "needs a HOST test, because it cannot be exercised without a "
+             "40-minute measurement")
+    if "latch-soak-pace-check" not in makefile_text:
+        fail("qnx/Makefile must provide the latch-soak-pace-check target: the "
+             "pacer's property is only proved if the test is BUILDABLE")
+
+    def _make_recipe(text, target):
+        """The RECIPE of one Makefile target -- its tab-indented lines."""
+        lines = text.splitlines()
+        out = []
+        in_target = False
+        for ln in lines:
+            m = re.match(r"^([A-Za-z0-9_.\-/]+):", ln)
+            if m:
+                in_target = (m.group(1) == target)
+                continue
+            if not in_target:
+                continue
+            if ln.startswith("\t"):
+                out.append(ln)
+            elif ln.strip() == "":
+                continue
+            else:
+                break
+        return "\n".join(out)
+
+    # The RECIPE, not the whole file: a target DEFINITION somewhere else in
+    # the Makefile is not the same thing as the regression suite RUNNING it.
+    if "latch-soak-pace-check" not in _make_recipe(makefile_text, "check-governor"):
+        fail("qnx/Makefile's check-governor target must RUN latch-soak-pace-check, "
+             "or the pacer's host test is not part of the regression suite")
+    if not _make_recipe(makefile_text, "latch-soak-pace-check"):
+        fail("qnx/Makefile's latch-soak-pace-check target has no recipe: a "
+             "target that builds nothing proves nothing")
+    pass_check("U-4 pacer: the rate is KEPT and the catch-up is BOUNDED (a "
+               "little late keeps the grid, a long way late drops the "
+               "missed deadlines), the decision lives in a shared "
+               "host-testable header, and the host test is in the regression "
+               "suite")
+
+
     # ---- THE WORKLOAD CANNOT TRIP THE SAFETY LOGIC IT MEASURES ---------
     soak_body = c_func_body(guest_txt, "run_governor_latency_soak")
     if not soak_body:
@@ -4105,6 +4303,130 @@ def main():
                "workload is checked, the sample floor is enforced, and the "
                "guest's abort is recognised")
 
+    # ---- THE ACHIEVED RATE MUST BE CHECKED, NOT ASSUMED ----------------
+    #
+    # Measured on the QEMU AArch64 `virt` target (2026-11-27): a pacer that
+    # dropped the credit on ANY lateness removed the catch-up burst but
+    # cost a third of the RATE -- 901/s became 610/s -- and that run PASSED
+    # every other criterion this file has (0 ring drops, a peak backlog of
+    # 4, HP throughout, the plant at rest).  A measurement with no criterion
+    # on the achieved rate cannot tell a 900 Hz workload from a 610 Hz one.
+    #
+    # So the harness has to CHECK the rate, and this gate proves the check
+    # has teeth by EXERCISING it against the rates that were measured on the
+    # target -- the two that must be accepted and the two regressions that
+    # must be rejected.  It is a BEHAVIOURAL gate, not a regex over the
+    # harness's source: a source-level gate would pass against a harness
+    # whose rate check had been quietly inverted.
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        import verify_latency_qemu as _vlat
+    except Exception as exc:
+        fail("tools/verify_latency_qemu.py could not be imported (%s), so the "
+             "achieved-rate check cannot be exercised." % exc)
+        _vlat = None
+    if _vlat is not None:
+        if not hasattr(_vlat, "rate_verdict"):
+            fail("tools/verify_latency_qemu.py must expose rate_verdict(): the "
+                 "decision whether the achieved rate is acceptable has to be a "
+                 "PURE function, so the consistency checker can exercise it "
+                 "against the rates that were measured on the target")
+        else:
+            # The rates, all measured on the QEMU AArch64 `virt` target
+            # (2026-11-27) against the 900 Hz target.
+            for _rate, _must_accept, _why in (
+                    (897.6, True, "the K=4 allowance pacer -- the archived "
+                                  "measurement"),
+                    (901.0, True, "the original pacer"),
+                    (646.0, False, "a one-period lag allowance -- 28% slow"),
+                    (610.0, False, "drop the credit on ANY lateness -- 32% slow"),
+                    (None, False, "a rate that could not be computed")):
+                _ok, _msg = _vlat.rate_verdict(_rate, 900)
+                if _ok != _must_accept:
+                    fail("the harness's achieved-rate check %s a rate of %r, but "
+                         "it must %s: %s. The measured rates on the QEMU "
+                         "AArch64 target are the ground truth here."
+                         % ("accepted" if _ok else "rejected", _rate,
+                            "accept" if _must_accept else "reject", _why))
+            # The band must not be widened into vacuity.  The measured rate
+            # is within 1% of the target, and the two regressions are 28%
+            # and 32% out, so a 10% band separates them decisively while
+            # leaving the TCG host's jitter room.
+            _tol = getattr(_vlat, "RATE_TOLERANCE_FRACTION", None)
+            if not isinstance(_tol, float) or not (0.0 < _tol <= 0.10):
+                fail("the harness's rate tolerance is %r: it must be a fraction "
+                     "in (0, 0.10]. The measured rate is within 1%% of the "
+                     "target and the two measured regressions are 28%% and 32%% "
+                     "out, so a 10%% band separates them decisively; a wider "
+                     "band would let a run that produced at two thirds of the "
+                     "declared rate pass -- which is exactly what happened on "
+                     "2026-11-27." % (_tol,))
+            # The harness's GATE PATH has to use the check.  A pure function
+            # that nothing calls is a function that proves nothing.
+            if not re.search(r"rate_ok\s*,\s*rate_msg\s*=\s*rate_verdict\s*\(",
+                             lat_harness):
+                fail("tools/verify_latency_qemu.py must CALL rate_verdict() on "
+                     "the measured rate: a pure function that nothing calls is "
+                     "a function that proves nothing")
+            if not re.search(r"if\s+not\s+rate_ok\s*:", lat_harness):
+                fail("tools/verify_latency_qemu.py must FAIL the run when "
+                     "rate_verdict() rejects the achieved rate")
+            # And the rate has to be read over the STREAMING WINDOW.  The
+            # window-wide rate is contaminated by the tail after the guest
+            # stops: a 60-second calibration reads 749/s window-wide against
+            # 898/s over the stream.  This is exercised BEHAVIOURALLY,
+            # against a synthetic sample set that carries a long DEAD TAIL
+            # -- a source-level regex would pass against a function that
+            # computed the right thing over the wrong samples.
+            if not hasattr(_vlat, "streaming_rate"):
+                fail("tools/verify_latency_qemu.py must expose "
+                     "streaming_rate(): the rate has to be read over the "
+                     "streaming window by a PURE function, so the consistency "
+                     "checker can prove that it is")
+            else:
+                # 1000 proposals in 1 second of live streaming, then a
+                # DEAD TAIL of one more second with no proposals at all.
+                _syn = [
+                    {"tick": 100, "proposals": 1000, "wall": 100.0, "live": True},
+                    {"tick": 1100, "proposals": 2000, "wall": 101.0, "live": True},
+                    {"tick": 2100, "proposals": 2000, "wall": 102.0, "live": False},
+                ]
+                _got = _vlat.streaming_rate(_syn)
+                if _got is None or abs(_got - 1000.0) > 1e-6:
+                    fail("the harness's streaming_rate() returned %r for a "
+                         "sample set whose live window carries 1000 "
+                         "proposals/s: it must read the LIVE samples only. "
+                         "A rate averaged over the whole harness window is "
+                         "contaminated by the tail after the guest stops -- "
+                         "it read 749/s against a measured 898/s in the "
+                         "60-second calibration." % (_got,))
+                if _vlat.streaming_rate(_syn[:1]) is not None:
+                    fail("the harness's streaming_rate() must return None when "
+                         "there are fewer than two live polls: a rate from a "
+                         "single sample is not a rate")
+                if _vlat.streaming_rate([]) is not None:
+                    fail("the harness's streaming_rate() must return None for "
+                         "an empty sample set")
+                _nowall = [{"proposals": 1, "live": True},
+                           {"proposals": 2, "live": True}]
+                if _vlat.streaming_rate(_nowall) is not None:
+                    fail("the harness's streaming_rate() must return None when "
+                         "the samples carry no wall clock: 'proposals per "
+                         "tick' is not 'proposals per second', and the "
+                         "workload's declared rate is in Hz")
+            pass_check("U-4 rate: the harness CHECKS the achieved rate over the "
+                       "streaming window, and the check accepts the measured "
+                       "897.6/s while rejecting the two measured regressions "
+                       "(646/s and 610/s)")
+
+    # ---- THE ARCHIVE MUST CARRY THE ACHIEVED RATE -----------------------
+    #
+    # The rate is a RESULT, not an input.  A summary that states the rate
+    # the workload aimed at, and not the rate the target achieved, is a
+    # claim about a run rather than a record of it -- and the 2026-11-27
+    # regression is exactly the case where the two differ by 32%.  The
+    # archive's own rate is checked below, where the file is in hand.
+
     # ---- THE ARCHIVED REPORT MUST SAY WHAT IT IS ------------------------
     lat_md_path = os.path.join(REPO_ROOT, "docs", "evidence", "governor",
                                "LATENCY.md")
@@ -4142,11 +4464,39 @@ def main():
         if needle not in lat_md:
             fail(f"docs/evidence/governor/LATENCY.md must state {why} "
                  f"(the literal `{needle}` is missing)")
+
     if re.search(r"\bWCET\b", lat_md) and "not a WCET" not in lat_md and \
             "NOT a WCET" not in lat_md:
         fail("docs/evidence/governor/LATENCY.md mentions a WCET without "
              "disclaiming it: this figure is a TCG observation and must never "
              "be quoted as a worst-case execution time")
+    # THE ACHIEVED RATE.  The rate is a RESULT, not an input: a summary
+    # that states the rate the workload aimed at, and not the rate the
+    # target achieved, is a claim about a run rather than a record of it.
+    # The 2026-11-27 regression is exactly the case where the two differ
+    # by 32%, and it PASSED every other criterion -- so the archive has to
+    # carry the achieved rate AND it has to be inside the band.
+    lat_rate_m = re.search(r"^producer rate\s*:\s*([0-9]+(?:\.[0-9]+)?)/s "
+                            r"over the streaming window \(target ([0-9]+) Hz\)",
+                            lat_md, re.M)
+    if not lat_rate_m:
+        fail("docs/evidence/governor/LATENCY.md must state the ACHIEVED "
+             "producer rate over the streaming window, next to the target it "
+             "is measured against. The rate is a result, not an input: the "
+             "2026-11-27 run produced at 610/s under a '900 Hz' workload line "
+             "and passed every other criterion. Re-run "
+             "`make -C qnx evidence-governor-latency`.")
+    else:
+        lat_rate = float(lat_rate_m.group(1))
+        lat_target = float(lat_rate_m.group(2))
+        if lat_rate < lat_target * 0.90 or lat_rate > lat_target * 1.10:
+            fail(f"the archived U-4 measurement reports an achieved producer "
+                 f"rate of {lat_rate:.1f}/s against a {int(lat_target)} Hz "
+                 "target, which is outside a 10% band: the archived workload "
+                 "is not the one the plan describes, so the percentiles "
+                 "describe a different experiment.")
+        pass_check(f"U-4 rate: the archive states the achieved producer rate "
+                   f"({lat_rate:.1f}/s against the {int(lat_target)} Hz target)")
     pass_check("U-4 report: the archived LATENCY.md states N >= 10^6, the "
                "machine, p50/p99/max, the TCG caveat, and disclaims the WCET "
                "reading")

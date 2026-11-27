@@ -103,6 +103,30 @@ SOAK_HOLD_MRAD = 100
 # the lease means the producer is gone, not merely jittery.
 LIVE_LEASE_AGE_TICKS = 50
 
+# THE ACHIEVED RATE IS A RESULT, NOT AN INPUT.
+#
+# The workload this measurement describes is a producer streaming at the
+# guest's own declared rate (900 Hz, stringified out of the build's macro
+# and read back from the guest's plan marker).  The harness has to CHECK
+# that the target actually achieved it, because a producer that runs at a
+# third of the declared rate is a DIFFERENT WORKLOAD -- and the
+# measurement's percentiles would describe that different workload while
+# the report still said "900 Hz".
+#
+# THIS GATE IS NOT HYPOTHETICAL.  Measured on the QEMU AArch64 `virt`
+# target (2026-11-27): a pacer that dropped the credit on ANY lateness
+# removed the catch-up burst but cost a third of the rate -- 901/s became
+# 610/s -- and that run PASSED every other criterion this file has (0 ring
+# drops, a peak backlog of 4, HP throughout, the plant at rest).  A
+# measurement with no criterion on the achieved rate cannot tell a 900 Hz
+# workload from a 610 Hz one, and the archive would have carried both.
+#
+# The band is +-5%.  The measured streaming rate on the target is
+# 894-899/s against a 900 Hz target -- inside 0.7% -- while the two
+# measured regressions (610/s and 646/s) are 28% and 32% out.  The band
+# discriminates decisively and still leaves the TCG host's jitter room.
+RATE_TOLERANCE_FRACTION = 0.05
+
 
 def format_report(report: dict) -> str:
     """The structured, human-readable report the evidence archive carries."""
@@ -148,6 +172,108 @@ def format_report(report: dict) -> str:
     add((report.get("final_status", "") or "").rstrip())
     add("")
     return "\n".join(out) + "\n"
+
+
+def streaming_rate(samples: list[dict]):
+    """The producer's achieved rate over the STREAMING WINDOW, in Hz.
+
+    PURE, and that is the point: the consistency checker imports it and
+    exercises it against a synthetic sample set that carries a long DEAD
+    TAIL, so the property "the rate is read over the stream, not over the
+    whole harness window" is proven without a 40-minute measurement.
+
+    WHY THE STREAMING WINDOW.  The samples whose lease age says the
+    producer was alive are the ones that describe the workload.  The
+    samples after the guest stops describe the HARNESS: the guest has
+    gone, the counter has frozen, and the wall clock has kept running.
+    Averaged over the whole window those samples dilute the figure --
+    a 60-second calibration reads 749/s window-wide against 898/s over
+    the stream, and the 35-minute soak reads 888/s against 898/s.
+
+    Returns None when the rate cannot be computed: fewer than two live
+    polls, a missing counter, or a wall clock that did not advance.
+    """
+    live = [s for s in samples if s.get("live")]
+    if len(live) < 2:
+        return None
+    first = live[0]
+    last = live[-1]
+    if first.get("proposals") is None or last.get("proposals") is None:
+        return None
+    if first.get("wall") is None or last.get("wall") is None:
+        return None
+    d_prop = last["proposals"] - first["proposals"]
+    d_wall = last["wall"] - first["wall"]
+    if d_wall <= 0:
+        return None
+    return d_prop / d_wall
+
+
+def rate_verdict(stream_rate, target_hz, tolerance: float = RATE_TOLERANCE_FRACTION):
+    """(ok, message) for the achieved producer rate.
+
+    PURE, and that is the point: the consistency checker imports it and
+    exercises it against the rates that were MEASURED on the target --
+    including the two regressions -- so the gate's teeth are proven without
+    a 40-minute measurement.
+
+    The measured rates, all on the QEMU AArch64 `virt` target (2026-11-27),
+    against a 900 Hz target:
+
+        897.6/s   the K=4 allowance pacer -- ACCEPT (this is the archive)
+        901/s     the original pacer      -- ACCEPT
+        646/s     a one-period allowance   -- REJECT (28% slow)
+        610/s     drop the credit always   -- REJECT (32% slow)
+    """
+    if stream_rate is None:
+        return False, ("the achieved rate could not be computed from the live "
+                       "samples: the soak collected fewer than two live polls, "
+                       "or the wall clock did not advance")
+    lo = target_hz * (1.0 - tolerance)
+    hi = target_hz * (1.0 + tolerance)
+    if stream_rate < lo or stream_rate > hi:
+        return False, ("the producer achieved %.1f proposals/s over the "
+                       "streaming window, outside the %.1f..%.1f band around "
+                       "the target %d Hz. The workload is not the one the "
+                       "measurement describes, so the percentiles describe a "
+                       "different experiment."
+                       % (stream_rate, lo, hi, target_hz))
+    return True, ""
+
+
+def _rates_table(samples: list[dict], first_tick, first_proposals,
+                 stream_rate, plan: dict, peak_backlog: int,
+                 poll_start: float) -> dict:
+    """The soak's rates, in the shape the report carries them.
+
+    TWO rates, and the difference between them is the point:
+
+      * "guest proposals/s" is the rate over the WHOLE harness window, so
+        it is contaminated by the tail after the guest stops;
+      * "producer rate" is the rate over the STREAMING WINDOW -- the
+        samples whose lease age says the producer was alive -- and that is
+        the one the workload's declared rate is checked against.
+
+    A 60-second calibration reads 749/s in the first and 898/s in the
+    second, so a report that carried only the first would describe a
+    workload the target never ran.
+    """
+    elapsed = max(1e-6, time.monotonic() - poll_start) if poll_start else 0.0
+    first = samples[0] if samples else {}
+    last = samples[-1] if samples else {}
+    tick_span = (last.get("tick") or 0) - (first_tick or 0)
+    prop_span = (last.get("proposals") or 0) - (first_proposals or 0)
+    out = {
+        "supervisor ticks/s": "%.1f" % (tick_span / elapsed) if tick_span else "n/a",
+        "guest proposals/s": "%.1f" % (prop_span / elapsed) if prop_span else "n/a",
+        "proposals per tick": "%.3f" % (prop_span / tick_span) if tick_span else "n/a",
+        "peak backlog": "%s frames (ring depth %d)" % (peak_backlog, RING_DEPTH),
+        "wall-clock seconds": "%.1f" % elapsed,
+    }
+    if stream_rate is not None:
+        out["producer rate"] = "%.1f/s over the streaming window (target %s Hz)" % (
+            stream_rate, plan.get("target_hz", "n/a"))
+    return out
 
 
 def parse_status(text: str) -> dict:
@@ -401,6 +527,11 @@ def main() -> int:
                 lease_age = st.get("lease_age")
                 live = lease_age is not None and lease_age <= LIVE_LEASE_AGE_TICKS
                 sample["live"] = live
+                # The wall clock at the poll.  The supervisor's tick index
+                # counts its own ticks; this is the only clock that can turn
+                # "proposals" into "proposals per SECOND", which is the unit
+                # the guest's declared rate is in.
+                sample["wall"] = time.monotonic()
                 samples.append(sample)
                 report["samples"] = samples[-512:]
                 if first_tick is None:
@@ -485,6 +616,37 @@ def main() -> int:
         # SUPPOSED to fire and the supervisor is SUPPOSED to retract the
         # plant to home.
         streaming_samples = [s for s in samples if s.get("live")]
+
+        # The peak backlog: the SECOND, independent witness that the
+        # producer did not outrun the consumer.  It is computed HERE so
+        # that a FAILING report carries it.
+        backlogs = [s.get("backlog_peak") for s in samples
+                    if s.get("backlog_peak") is not None]
+        peak_backlog = max(backlogs) if backlogs else 0
+
+        # ---- THE ACHIEVED RATE, OVER THE STREAMING WINDOW ---------------
+        #
+        # The rate is computed HERE, before the gates, so that a run that
+        # FAILS one of them still leaves the achieved rate in its report --
+        # a failure report that does not carry the number that explains it
+        # is a worse report than no report.
+        #
+        # It is read over the STREAMING WINDOW -- the samples whose lease
+        # age says the producer was alive at the instant of the poll.
+        # Averaged over the WHOLE harness window it is contaminated by the
+        # tail after the guest stops: a 60-second calibration reported
+        # 749/s while its per-poll rates read 898-899/s, and even the full
+        # 35-minute soak reports 888/s window-wide against ~898/s over the
+        # stream.
+        stream_rate = streaming_rate(samples)
+        report["streaming_rate"] = stream_rate
+
+        # The rates, as they stand right now.  They are refreshed at the
+        # end of a successful run, but a failing run must carry them too.
+        report["rates"] = _rates_table(samples, first_tick, first_proposals,
+                                       stream_rate, plan, peak_backlog,
+                                       poll_start)
+
         thetas = {s.get("theta_mrad") for s in streaming_samples
                   if s.get("theta_mrad") is not None}
         velocities = {s.get("velocity") for s in streaming_samples
@@ -514,9 +676,8 @@ def main() -> int:
         # The backlog is the SECOND, independent witness of the same
         # property: it has to stay well below the ring's depth, or the ring
         # was about to fill and the sample was one hiccup away from a
-        # different workload.
-        backlogs = [s.get("backlog_peak") for s in samples if s.get("backlog_peak") is not None]
-        peak_backlog = max(backlogs) if backlogs else 0
+        # different workload.  (The peak was computed above, so that a
+        # failing report carries it.)
         if peak_backlog >= BACKLOG_CEILING:
             print(f"[LATENCY_QEMU FAIL] the proposal backlog peaked at {peak_backlog} "
                   f"frames, at or above the {BACKLOG_CEILING}-frame ceiling of the "
@@ -531,6 +692,21 @@ def main() -> int:
             write_report()
             return 1
 
+        # ---- THE ACHIEVED RATE ------------------------------------------
+        #
+        # The LAST workload check, and the one that would have caught the
+        # rate-killing pacer.  Everything above says the producer kept the
+        # supervisor fed; this says it fed it at the RATE the workload
+        # claims.  A run that produced at two thirds of the declared rate
+        # has measured a different experiment, and it passed every other
+        # criterion on 2026-11-27.
+        target_hz = int(plan["target_hz"])
+        rate_ok, rate_msg = rate_verdict(stream_rate, target_hz)
+        if not rate_ok:
+            print(f"[LATENCY_QEMU FAIL] {rate_msg}", file=sys.stderr)
+            write_report()
+            return 1
+
         # ---- THE FINAL STATUS -------------------------------------------
         out, _ = command("/proc/boot/latchctl status", timeout=20.0)
         report["final_status"] = out.decode("utf-8", errors="replace")
@@ -539,21 +715,15 @@ def main() -> int:
         report["samples"] = samples[-512:]
 
         # ---- THE RATES, AS THE TARGET REPORTED THEM ---------------------
-        elapsed = max(1e-6, time.monotonic() - poll_start)
-        tick_span = (samples[-1].get("tick") or 0) - (first_tick or 0)
-        prop_span = (samples[-1].get("proposals") or 0) - (first_proposals or 0)
-        report["rates"] = {
-            "supervisor ticks/s": "%.1f" % (tick_span / elapsed) if tick_span else "n/a",
-            "guest proposals/s": "%.1f" % (prop_span / elapsed) if prop_span else "n/a",
-            "proposals per tick": "%.3f" % (prop_span / tick_span) if tick_span else "n/a",
-            "peak backlog": "%s frames (ring depth %d)" % (peak_backlog, RING_DEPTH),
-            "wall-clock seconds": "%.1f" % elapsed,
-        }
+        report["rates"] = _rates_table(samples, first_tick, first_proposals,
+                                       stream_rate, plan, peak_backlog,
+                                       poll_start)
 
         report["verdict"] = "PASS"
         print(f"[LATENCY_QEMU PASS] {total} supervisor ticks sampled "
               f"({decision} decision-path, {motion} motion evaluations, {idle} idle); "
-              f"rung=HP throughout the streaming window; ring drops=0")
+              f"rung=HP throughout the streaming window; ring drops=0; "
+              f"producer rate={stream_rate:.1f}/s against a {target_hz} Hz target")
         print(f"[LATENCY_QEMU] {lat.get('min_max')} | "
               f"decision p50/p99 = {lat.get('decision_p50_p99')} | "
               f"cycle rate = {lat.get('cycle_rate')} Hz")
