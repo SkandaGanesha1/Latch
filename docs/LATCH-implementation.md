@@ -382,6 +382,22 @@ LATCH enforces strict zero-hardcoding. All parameters, constraints, and hardware
 
 Both contracts validate with 100% cryptographic integrity using native NIST FIPS 180-2 SHA-256 sidecars.
 
+### 6.1 The Attested Contracts — every one of them, with its digest
+
+The table above carries the two schema-2 plant contracts.  The repository
+ships **five** signed contracts, and every one of them is attested here,
+in the README and in the SBOM.  The digests below are computed from the
+files; `tools/consistency_check.py` re-derives them and fails the build if
+a document quotes a digest that the file no longer has.
+
+| Contract | Plant | Schema | SHA-256 |
+|:---|:---|:---:|:---|
+| `latch.manifest` | servo-horn-1d | 2 | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` |
+| `syringe_pump_bolus.manifest` | syringe-pump-bolus | 2 | `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e` |
+| `governor_servo.manifest` | servo-horn-1d | 3 | `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b` |
+| `syringe_governor.manifest` | syringe-pump-bolus | 3 | `7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd` |
+| `homeostat_servo.manifest` | servo-horn-1d | 3 | `4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30` |
+
 ---
 
 ## 7. Target Validation & Build Architecture

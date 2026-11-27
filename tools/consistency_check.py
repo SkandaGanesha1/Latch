@@ -208,6 +208,182 @@ def verify_manifest_sidecar(manifest_path: str, sha256_path: str, label: str):
     pass_check(f"{label} sidecar SHA-256 match verified: {computed_sha}")
 
 
+# ---------------------------------------------------------------------------
+# THE ATTESTATION GATE
+#
+# A document that quotes a SHA-256 digest is making a claim about a FILE.
+# The claim rots the moment the file changes, and nothing notices: the
+# document still reads perfectly, the digest still looks like a digest, and
+# a judge who runs `sha256sum -c` against the sidecars finds a
+# contradiction that no gate in the tree was looking for.
+#
+# That is not hypothetical.  The README and the SBOM both quoted
+# `6b62927a...` as the `syringe_governor.manifest` digest long after the
+# file's digest had become `7378df81...`, and the HOMEOSTAT contract was
+# quoted in neither.  The old gate checked TWO contracts against TWO
+# documents, so three of the five contracts -- and one of the two
+# documents -- were never checked at all.
+#
+# THE RULE IS DERIVED, NOT HARD-CODED.  A "contract" is any `*.manifest`
+# with a `*.sha256` sidecar next to it; its digest is computed from the
+# file.  An "attestation document" is one of the three judge-facing
+# documents that carry the contracts' digests.  Nothing in this section
+# names a digest, so adding a contract, removing one, or changing one
+# needs no edit here.
+# ---------------------------------------------------------------------------
+
+# The documents that carry the contracts' attestation digests.
+ATTESTATION_DOCS = (
+    "README.md",
+    os.path.join("docs", "SBOM.md"),
+    os.path.join("docs", "LATCH-implementation.md"),
+)
+
+HEX64_RE = re.compile(r"\b[0-9a-f]{64}\b")
+
+
+def signed_contracts():
+    """Every signed contract in the tree, as (filename, path, digest).
+
+    A CONTRACT is a `*.manifest` file that has a `*.sha256` sidecar next to
+    it.  Section 1 has already proved that the sidecar and the file agree,
+    so the digest here is computed from the FILE -- which is the thing a
+    judge's `sha256sum` computes too.
+    """
+    out = []
+    qnx = os.path.join(REPO_ROOT, "qnx")
+    for dirpath, dirnames, filenames in os.walk(qnx):
+        dirnames[:] = [d for d in dirnames if d != "build"]
+        for fn in sorted(filenames):
+            if not fn.endswith(".manifest"):
+                continue
+            path = os.path.join(dirpath, fn)
+            if not os.path.isfile(path + ".sha256"):
+                continue
+            with open(path, "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+            out.append((fn, path, digest))
+    return sorted(out)
+
+
+def repository_digests():
+    """The SHA-256 of every regular file in the repository, as a set.
+
+    The BUILD OUTPUT TREES are excluded: they are gitignored, they are not
+    part of the repository, and `qnx/build/` alone is ~900 MB.  The
+    tracked `docs/evidence/build/` is INCLUDED -- it holds the mkifs
+    listing, and the rule "a file under docs/evidence/build/ is tracked
+    while a directory named build/ elsewhere is not" is the reason the
+    walk is path-aware rather than a name match.
+    """
+    digests = set()
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "__pycache__", ".pytest_cache", ".mypy_cache")]
+        rel = os.path.relpath(dirpath, REPO_ROOT)
+        parts = [] if rel == "." else rel.split(os.sep)
+        if (not parts and "build" in dirnames) or (parts == ["qnx"] and "build" in dirnames):
+            dirnames.remove("build")
+        for fn in filenames:
+            path = os.path.join(dirpath, fn)
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            h = hashlib.sha256()
+            try:
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+            except OSError:
+                continue
+            digests.add(h.hexdigest())
+    return digests
+
+
+def verify_attestation_digests():
+    """The contracts' digests and the documents that quote them must agree.
+
+    Three rules, and they are all derived from the files themselves:
+
+    A. NO QUOTED DIGEST MAY BE A DEAD ONE.  Every 64-hex token in an
+       attestation document must be the digest of a file that exists in
+       this repository.  This is the rule that catches the defect the old
+       gate missed: a digest that no file has any more.
+
+    B. A DIGEST QUOTED NEXT TO A CONTRACT'S NAME MUST BE THAT CONTRACT'S
+       DIGEST.  The pairing is positional within the line: a name takes
+       the first digest that follows it and precedes the next name.  A
+       document that names a contract and quotes a digest beside it is
+       making a claim about that contract, and the claim is checked.
+
+    C. EVERY CONTRACT MUST BE QUOTED.  A contract that no attestation
+       document mentions is a contract whose integrity nobody is told
+       about, and an omission is as much a drift as a wrong number.
+    """
+    contracts = signed_contracts()
+    if not contracts:
+        fail("no signed contract found under qnx/ -- a repository with no "
+             "attested contract cannot pass the attestation gate")
+    names = [(fn, digest) for fn, _p, digest in contracts]
+    live = repository_digests()
+
+    for rel in ATTESTATION_DOCS:
+        path = os.path.join(REPO_ROOT, rel)
+        if not os.path.isfile(path):
+            fail("attestation document missing: %s" % rel)
+        with io.open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        lines = text.splitlines()
+
+        # --- RULE A: no dead digest -------------------------------------
+        dead = []
+        for lineno, line in enumerate(lines, 1):
+            for tok in HEX64_RE.findall(line):
+                if tok not in live:
+                    dead.append("%s:%d (%s)" % (rel, lineno, tok))
+        if dead:
+            fail("these documents quote a SHA-256 digest that no file in "
+                 "this repository has: %s. A digest is a claim about a file, "
+                 "and a claim about a file that has changed is a stale "
+                 "attestation. Recompute it with `sha256sum`."
+                 % "; ".join(dead))
+
+        # --- RULE B: a digest beside a name is that name's digest --------
+        wrong = []
+        for lineno, line in enumerate(lines, 1):
+            toks = [(m.start(), m.group(0)) for m in HEX64_RE.finditer(line)]
+            if not toks:
+                continue
+            occ = []
+            for fn, digest in names:
+                for m in re.finditer(re.escape(fn), line):
+                    occ.append((m.start(), fn, digest))
+            occ.sort()
+            for i, (pos, fn, digest) in enumerate(occ):
+                end = occ[i + 1][0] if i + 1 < len(occ) else len(line)
+                beside = [t for (tp, t) in toks if pos < tp < end]
+                if beside and beside[0] != digest:
+                    wrong.append("%s:%d quotes %s beside %s, but that file's "
+                                 "digest is %s"
+                                 % (rel, lineno, beside[0][:16] + "...",
+                                    fn, digest[:16] + "..."))
+        if wrong:
+            fail("the attestation digests beside a contract's name do not "
+                 "match that contract: %s. A digest quoted next to a file's "
+                 "name IS a claim about that file." % "; ".join(wrong))
+
+        # --- RULE C: every contract is quoted ---------------------------
+        missing = [fn for fn, digest in names if digest not in text]
+        if missing:
+            fail("%s does not carry the attestation digest of %d contract(s): "
+                 "%s. A contract no document mentions is a contract whose "
+                 "integrity nobody is told about."
+                 % (rel, len(missing), ", ".join(missing)))
+
+    pass_check("Every attestation document carries the current digest of all "
+               "%d signed contract(s), and quotes no digest that no file in "
+               "the repository has" % len(contracts))
+
+
 def check_sdp_payloads(build_text: str, label: str):
     """Verify every vdev / shared library the buildfile ships exists in the SDP.
 
@@ -5244,19 +5420,20 @@ def main():
                "statement is a TCG observation labelled 'not a WCET'")
 
     # 7. Verify Documentation Attestation Digest Synchronization
-    with open(sha256_path, "r", encoding="utf-8") as f:
-        default_sha = f.read().strip().split()[0].lower()
-    with open(syringe_sha256_path, "r", encoding="utf-8") as f:
-        syringe_sha = f.read().strip().split()[0].lower()
-    with open(readme_path, "r", encoding="utf-8") as f:
-        readme_txt = f.read().lower()
-    with open(impl_doc_path, "r", encoding="utf-8") as f:
-        impl_txt = f.read().lower()
-    if default_sha not in readme_txt or syringe_sha not in readme_txt:
-        fail("README.md manifest SHA-256 attestation hashes out of sync with .sha256 sidecars")
-    if default_sha not in impl_txt:
-        fail("docs/LATCH-implementation.md manifest SHA-256 attestation hash out of sync with .sha256 sidecar")
-    pass_check("README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced")
+    #
+    # The OLD gate here checked TWO contracts against TWO documents:
+    # `latch.manifest` and `syringe_pump_bolus.manifest`, against the
+    # README and `docs/LATCH-implementation.md`.  The SBOM was never
+    # checked, and `governor_servo.manifest`, `syringe_governor.manifest`
+    # and `homeostat_servo.manifest` were never checked -- which is how the
+    # README and the SBOM could quote a digest that no file had, and how
+    # the HOMEOSTAT contract could be omitted from every attestation, for
+    # as long as they did.
+    #
+    # The gate is now DERIVED: the contracts come from the tree, the
+    # digests come from the files, and the documents are the three that
+    # carry the attestation.  See `verify_attestation_digests()`.
+    verify_attestation_digests()
 
     # 8. Verify the committed evidence archive is complete and not stale.
     verify_evidence_archive()

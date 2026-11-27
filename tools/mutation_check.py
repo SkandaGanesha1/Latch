@@ -161,6 +161,21 @@ def _lat_samples_line(text):
     return m.group(0) if m else None
 
 
+def _sidecar_digest(manifest_rel):
+    """The digest a document must quote for a contract, read from its sidecar.
+
+    THE ANCHOR IS DERIVED, NOT LITERAL.  A literal digest written into the
+    battery goes STALE the moment a contract changes, and a stale anchor is
+    a hole in the proof: the battery would report a SKIP and fail for a
+    reason that has nothing to do with the gate, or -- worse -- it would
+    mutate nothing and pass.  So the anchor is read from the sidecar at
+    the moment the mutation is resolved, exactly as the gate reads it.
+    """
+    path = os.path.join(REPO_ROOT, manifest_rel)
+    with open(path + ".sha256", "r", encoding="utf-8") as f:
+        return f.read().strip().split()[0].lower()
+
+
 def _lat_samples_wrong(text):
     """The same line, with the sample count off by one."""
     import re
@@ -666,6 +681,49 @@ MUTATIONS = [
      "tools/capture_evidence.py",
      [('L.append("# LATCH — Evidence Archive")',
        'L.append("# LATCH — Evidence Archive (MUTATED)")')]),
+
+    # ===================== THE ATTESTATION ================================
+    #
+    # These four mutations are the DEFECT THAT SHIPPED: the README and the
+    # SBOM quoted `6b62927a...` as the GOVERNOR syringe contract's digest
+    # long after the file's digest had become `7378df81...`, the HOMEOSTAT
+    # contract was quoted in neither document, and the old gate looked at
+    # TWO contracts against TWO documents -- so nothing noticed.  Each
+    # mutation is one of the three rules of the attestation gate.
+    ("ATTEST: a document quotes a digest that NO FILE in the repository has "
+     "(the defect that shipped: the GOVERNOR syringe contract's digest was "
+     "stale in the README and the SBOM, and the gate did not look)",
+     "README.md",
+     [(lambda t: "`%s`" % _sidecar_digest("qnx/contracts/syringe_governor.manifest"),
+       "`6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392`")]),
+
+    ("ATTEST: a document quotes ANOTHER contract's digest beside a "
+     "contract's name (both digests are live, so only the name-to-digest "
+     "pairing can catch it)",
+     "README.md",
+     [(lambda t: "`%s`" % _sidecar_digest("qnx/contracts/syringe_governor.manifest"),
+       (lambda t2: "`%s`" % _sidecar_digest("qnx/contracts/governor_servo.manifest")))]),
+
+    ("ATTEST: the HOMEOSTAT contract is omitted from the SBOM (a contract "
+     "no document mentions is a contract whose integrity nobody is told "
+     "about)",
+     "docs/SBOM.md",
+     [(lambda t: "| **`homeostat_servo.manifest`** | Schema 3 | LATCH Project | "
+                 "MIT | Safety Contract | None (JSON) | `%s` |\n"
+                 % _sidecar_digest("qnx/contracts/homeostat_servo.manifest"), ""),
+      (lambda t: "- `qnx/contracts/homeostat_servo.manifest.sha256`: `%s`\n"
+                 % _sidecar_digest("qnx/contracts/homeostat_servo.manifest"), "")]),
+
+    ("ATTEST: the HOMEOSTAT contract is omitted from the README",
+     "README.md",
+     [(lambda t: "`homeostat_servo.manifest` (HOMEOSTAT Servo): `%s`"
+                 % _sidecar_digest("qnx/contracts/homeostat_servo.manifest"), "")]),
+
+    ("ATTEST: the HOMEOSTAT contract is omitted from the implementation "
+     "document",
+     "docs/LATCH-implementation.md",
+     [(lambda t: "| `homeostat_servo.manifest` | servo-horn-1d | 3 | `%s` |\n"
+                 % _sidecar_digest("qnx/contracts/homeostat_servo.manifest"), "")]),
 ]
 
 

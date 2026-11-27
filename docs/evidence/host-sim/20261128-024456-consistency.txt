@@ -71,7 +71,7 @@ exit status: 0
 [CONSISTENCY PASS] Doc-claimed scheduling mechanisms exist in the source: every mechanism a document names as in use is actually implemented
 [CONSISTENCY PASS] No document credits `mlockall` as a determinism technique (it is a no-op on SDP 8.0)
 [CONSISTENCY PASS] No document asserts a bounded WCET; the accepted latency statement is a TCG observation labelled 'not a WCET'
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md manifest SHA-256 hashes synced
+[CONSISTENCY PASS] Every attestation document carries the current digest of all 5 signed contract(s), and quotes no digest that no file in the repository has
 [CONSISTENCY PASS] Every file in the evidence archive is named in the archive index's file tree (no orphans)
 [CONSISTENCY PASS] The evidence index and the run-output manifest are byte-identical to what tools/capture_evidence.py generates (no hand-edits to generated files)
 [CONSISTENCY PASS] The LFBK feedback-transport family is present and carries both verifiers' PASS lines, the guest's own clean correlation census (foreign/stale/dup = 0) and its 'what this does not prove' section
@@ -89,7 +89,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (1933 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2335 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)
