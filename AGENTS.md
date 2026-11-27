@@ -158,6 +158,30 @@ in the harness step. A failing step is found locally in seconds instead of
 after a push and a CI cycle. Use `--only <substring>` to run one step and
 `--keep-going` to see every failure at once.
 
+**And a failing CI step must keep its OWN TRANSCRIPT.** The evidence
+captures already follow that rule (§4d); it applies to the job as well, and
+it matters more here, because **the job's raw log is NOT public**: GitHub's
+API demands admin rights for a job's logs — `GET
+/repos/<owner>/<repo>/actions/jobs/<id>/logs` returns **403** for a
+non-admin **even on a public repository**. What *is* public on a public
+repository is the **annotations** on the job page, the **step summary**, and
+the **artifacts** (`GET /repos/<owner>/<repo>/actions/artifacts` answers
+**200** unauthenticated). So every `run:` step is wrapped in
+`tools/ci_step.sh`, which
+
+- runs the step with `bash --noprofile --norc -e -x`, so the transcript
+  shows **every command** and the failing one is the last line before the
+  error;
+- tees the transcript into `$RUNNER_TEMP/latch-ci-logs/`, which the job
+  uploads as the public `latch-ci-logs` artifact (`if: always()`, so it is
+  published for a red job too);
+- on failure, copies the transcript into `$GITHUB_STEP_SUMMARY` and raises
+  its last lines as `::error::` annotations.
+
+So a red CI job carries its own diagnosis whether or not you can read the
+raw job log — and `tools/run_ci_locally.py` exercises the same wrapper, so
+the wrapper cannot rot unnoticed.
+
 `tools/verify_qemu_aarch64.py` boots the built IFS under QEMU and asserts the
 on-target signature. It is the only thing that proves the on-target numbers.
 
@@ -1387,6 +1411,61 @@ the measurement.
   scratch directory **only on success** (`scratch_cleanup(tmp, ok)`), and
   a failing run says where its evidence was kept.
 
+### 4e. Facts about the CI JOB ITSELF
+
+These were measured on 2026-11-27, while diagnosing the red CI run
+`45980130747` (sha `9f0d7b9`). They cost a push-and-a-cycle each; read them
+before diagnosing a red job.
+
+- **THE JOB'S DURATION IS A DIAGNOSTIC, AND "EXIT CODE 2" IS NOT A
+  COMMAND.** Measured on this workstation: the consistency check takes
+  **0.74 s** and the mutation battery **12.2 s**. The failed job took
+  **26 s in total** — which, against those two numbers, leaves about
+  **two seconds** for the step that failed. The failing step ("Run
+  200-Tick End-to-End Pipeline & Second Plant Tests") indeed took **1.0 s**,
+  and **GNU make exits with status 2 whenever ANY recipe fails** — so
+  "exit code 2" says only "a recipe failed"; it does NOT mean the second
+  command failed, nor that the failing recipe's own exit code was 2. The
+  per-step timestamps are readable from the public API
+  (`…/actions/jobs/<id>` → `steps[].started_at` / `completed_at`), and they
+  are the cheapest way to tell an early failure from a late one.
+
+- **THE COMMITTED TREE PASSES THE JOB IN A CI-FAITHFUL CONTAINER.** Built
+  and measured: `ubuntu:24.04` + **gcc 13.3.0** + **GNU make 4.3** +
+  **Python 3.11.18** (the CI's exact toolchain), the workflow's `run:`
+  blocks extracted from the YAML with the same parser the local runner
+  uses and executed **in order** with `bash -e` from the workspace root,
+  with `CI=true` and `GITHUB_ACTIONS=true` set. Result: **18/18 green**.
+  So a red job on the runner is **not** proof that the tree is broken — and
+  the local runner's green result is **not** proof that the runner is happy
+  either. Both are evidence; neither is a verdict.
+
+- **A gcc-13 CONTAINER REPRODUCTION IS ONLY A REPRODUCTION IF IT REBUILDS
+  FROM SCRATCH.** The first attempt copied a tree whose `qnx/build/`
+  already held objects compiled by Fedora's gcc 16.2, so **gcc 13 never
+  recompiled the new code at all** and the "PASS" proved nothing about the
+  compiler the CI uses. The reproduction has to start from a pristine
+  `git clone` (which carries no `build/` directory, because it is
+  gitignored) and copy THAT into the image. **A reproduction that reuses
+  somebody else's artefacts reproduces nothing.**
+
+- **"THE CI WAS GREEN" IS A STATEMENT ABOUT A SHA, NOT ABOUT THE BRANCH.**
+  The last **green** CI run was sha `4627040`. The commit after it
+  (`2eba17b1`, the W4/W5/W6 work) failed at **step 3**, so **the tree that
+  followed it never reached step 9 in CI at all** — and every later claim
+  about "CI is broken" was really about a step that had not run yet. Check
+  which sha the last green run belongs to before blaming a commit for a
+  red job.
+
+- **THE PUBLIC API IS BLIND TO THE JOB'S LOG BUT NOT TO ITS VERDICT.** The
+  run's and job's `conclusion` and every **step's** conclusion are public,
+  and so are the job page's **annotations** (the web page carries "Process
+  completed with exit code 2" for a non-admin, even though the log itself
+  403s). The **artifacts** API answers 200 unauthenticated, and the
+  **step summary** is rendered on the job's public page. Those three
+  channels are why the workflow now wraps every step in
+  `tools/ci_step.sh` (§3): a red job has to be diagnosable by somebody who
+  is not the repository's administrator.
 
 ---
 

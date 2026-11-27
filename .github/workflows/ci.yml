@@ -15,6 +15,41 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Record The CI Environment
+        run: |
+          # A CI failure is only diagnosable if the ENVIRONMENT it happened in
+          # is on the record.  This step writes the runner's toolchain,
+          # limits and locale into the job summary, which is rendered on the
+          # job's PUBLIC page -- so the next diagnosis does not have to guess
+          # which compiler or which `ulimit` was in play.
+          {
+            echo "## The CI environment"
+            echo
+            echo '```'
+            echo "date       : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "runner     : ${RUNNER_OS:-?} ${RUNNER_ARCH:-?} ${ImageOS:-?}"
+            echo "workspace  : ${GITHUB_WORKSPACE:-?}"
+            echo "cwd        : $(pwd)"
+            echo "user       : $(id)"
+            echo "uname      : $(uname -a)"
+            echo "make       : $(make --version 2>&1 | head -1)"
+            echo "gcc        : $(gcc --version 2>&1 | head -1)"
+            echo "python3    : $(python3 --version 2>&1)"
+            echo "TARGET     : ${TARGET:-<unset>}"
+            echo "MAKEFLAGS  : ${MAKEFLAGS:-<unset>}"
+            echo "MAKELEVEL  : ${MAKELEVEL:-<unset>}"
+            echo "LANG       : ${LANG:-<unset>}   LC_ALL: ${LC_ALL:-<unset>}"
+            echo "TMPDIR     : ${TMPDIR:-<unset>}"
+            echo "ulimit -n  : $(ulimit -n)"
+            echo "ulimit -u  : $(ulimit -u)"
+            echo "ulimit -v  : $(ulimit -v)"
+            echo "free:"
+            free -h 2>/dev/null | sed 's/^/  /'
+            echo "df:"
+            df -h / /tmp "${RUNNER_TEMP:-/tmp}" 2>/dev/null | sed 's/^/  /'
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -22,10 +57,13 @@ jobs:
 
       - name: Run Architectural Consistency Check
         run: |
+          bash tools/ci_step.sh "Run Architectural Consistency Check" <<'LATCH_CI_STEP_EOF'
           python3 tools/consistency_check.py
+          LATCH_CI_STEP_EOF
 
       - name: Prove The Consistency Gates Still Have Teeth
         run: |
+          bash tools/ci_step.sh "Prove The Consistency Gates Still Have Teeth" <<'LATCH_CI_STEP_EOF'
           # A gate that cannot fail is a gate that proves nothing, and a
           # battery that is only run by hand is a battery that decays.
           #
@@ -42,9 +80,11 @@ jobs:
           # at the end that the real tree is byte-identical to how it
           # started.  It needs no QNX licence and no QEMU.
           python3 tools/mutation_check.py
+          LATCH_CI_STEP_EOF
 
       - name: Verify Judge-Facing Source Anchors Have Not Drifted
         run: |
+          bash tools/ci_step.sh "Verify Judge-Facing Source Anchors Have Not Drifted" <<'LATCH_CI_STEP_EOF'
           # The README's "Evidence-of-QNX-Use" table quotes exact `file:line`
           # anchors so a judge can open a file and land on the line that proves
           # a QNX-native technique is used. A stale anchor is worse than no
@@ -53,23 +93,29 @@ jobs:
           # this gate fails the build when the code moves and the table does
           # not.
           python3 tools/update_api_index.py --check
+          LATCH_CI_STEP_EOF
 
       - name: Validate Protocol Static Asserts & Manifest
         run: |
+          bash tools/ci_step.sh "Validate Protocol Static Asserts & Manifest" <<'LATCH_CI_STEP_EOF'
           cd qnx
           make host-sim
+          LATCH_CI_STEP_EOF
 
       - name: Execute 5-Fault, Seqlock & Manifest Self-Tests
         run: |
+          bash tools/ci_step.sh "Execute 5-Fault, Seqlock & Manifest Self-Tests" <<'LATCH_CI_STEP_EOF'
           ./qnx/build/host-sim/latchd -m qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/latch.manifest
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/syringe_pump_bolus.manifest a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
           # The HOMEOSTAT contract is the ONLY signed contract that carries a
           # `homeostat` section; every other contract must leave the loop off.
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/homeostat_servo.manifest
+          LATCH_CI_STEP_EOF
 
       - name: Run 200-Tick End-to-End Pipeline & Second Plant Tests
         run: |
+          bash tools/ci_step.sh "Run 200-Tick End-to-End Pipeline & Second Plant Tests" <<'LATCH_CI_STEP_EOF'
           cd qnx
           make check
           make demo-syringe
@@ -83,9 +129,11 @@ jobs:
             echo "Error: wrong SHA-256 unexpectedly passed!"
             exit 1
           fi
+          LATCH_CI_STEP_EOF
 
       - name: Verify Evidence Tape Consistency
         run: |
+          bash tools/ci_step.sh "Verify Evidence Tape Consistency" <<'LATCH_CI_STEP_EOF'
           test -f host/suite_tape.csv
           LINE_COUNT=$(wc -l < host/suite_tape.csv)
           echo "Tape lines: $LINE_COUNT"
@@ -95,9 +143,11 @@ jobs:
           fi
           # The offline viewer's embedded copy must not drift from the CSV.
           python3 tools/embed_default_tape.py --check
+          LATCH_CI_STEP_EOF
 
       - name: Verify Semantic Safety Invariants & Latency
         run: |
+          bash tools/ci_step.sh "Verify Semantic Safety Invariants & Latency" <<'LATCH_CI_STEP_EOF'
           # Verify NaN ticks (67-70) have clean 0x0008 (LATCH_FAULT_NAN) without spurious SEQ drop
           grep -E "6[789],.*0x0008" host/suite_tape.csv
           grep -E "70,.*0x0008" host/suite_tape.csv
@@ -159,9 +209,11 @@ jobs:
                 f"monotonic seq, HA-HOME ({home_rows} ticks), and EPERM invariants. "
                 f"EXACT SIGNATURE: wire_faults={wire}, envelope_vetoes={envelope}, last_seq={last_seq}.")
           '
+          LATCH_CI_STEP_EOF
 
       - name: Verify the On-Target Signature Is Asserted By The Harness
         run: |
+          bash tools/ci_step.sh "Verify the On-Target Signature Is Asserted By The Harness" <<'LATCH_CI_STEP_EOF'
           # tools/verify_qemu_aarch64.py boots the built IFS under QEMU and
           # asserts the same signature. It needs qemu-system-aarch64 and the
           # QNX SDP, so it runs on a self-hosted runner rather than here.
@@ -205,9 +257,11 @@ jobs:
           print("[CI ASSERTION PASS] The on-target harness asserts the same counters as "
                 "the host-sim gate (12 wire / 7 envelope / 0 drops / VERIFY_RC=0).")
           PYEOF
+          LATCH_CI_STEP_EOF
 
       - name: Verify The Committed Evidence Archive Is Not Stale
         run: |
+          bash tools/ci_step.sh "Verify The Committed Evidence Archive Is Not Stale" <<'LATCH_CI_STEP_EOF'
           # docs/evidence/ is the target proof a judge reads without a QNX SDP
           # licence. If the code drifts away from the archived evidence, the
           # submission quietly becomes false -- so the archive is checked
@@ -307,30 +361,38 @@ jobs:
           print("[CI ASSERTION PASS] The archived run index still shows the "
                 "monotone progression 51 -> 48 -> 27 -> 7 envelope vetoes.")
           PYEOF
+          LATCH_CI_STEP_EOF
 
       - name: Verify GOVERNOR Gate & Scenarios
         run: |
+          bash tools/ci_step.sh "Verify GOVERNOR Gate & Scenarios" <<'LATCH_CI_STEP_EOF'
           make -C qnx check-governor
+          LATCH_CI_STEP_EOF
 
       - name: Verify In-Guest Action Schema Validator
         run: |
+          bash tools/ci_step.sh "Verify In-Guest Action Schema Validator" <<'LATCH_CI_STEP_EOF'
           # The in-guest inference program re-validates the language
           # model's JSON with an INDEPENDENT parser before it is allowed
           # to become a 32-byte frame.  That parser is the gate between
           # an untrusted model and the safety-relevant channel, and it
           # has no llama.cpp dependency -- so CI can run it on any host.
           make -C qnx latch-action-check
+          LATCH_CI_STEP_EOF
 
       - name: Verify Manifest Parser (Fail-Closed Admission)
         run: |
+          bash tools/ci_step.sh "Verify Manifest Parser (Fail-Closed Admission)" <<'LATCH_CI_STEP_EOF'
           # The manifest is the SAFETY FRONT DOOR: every plant limit, timing
           # budget and calibration constant enters the supervisor through this
           # parser. A parser that silently accepts a malformed document is a
           # safety defect, not a convenience.
           make -C qnx latch-manifest-check
+          LATCH_CI_STEP_EOF
 
       - name: Verify HOMEOSTAT Outer Loop (Unit + Runtime Proof)
         run: |
+          bash tools/ci_step.sh "Verify HOMEOSTAT Outer Loop (Unit + Runtime Proof)" <<'LATCH_CI_STEP_EOF'
           # HOMEOSTAT is a CONTRACTING-ONLY advisor: it may lower the
           # effective velocity ceiling below the signed manifest limit, never
           # raise it. These three gates prove the arithmetic, the wiring and
@@ -348,21 +410,43 @@ jobs:
           grep -q "HOMEOSTAT_NEGATIVE" docs/evidence/governor/homeostat-runtime-proof.txt
           # The dedicated signed contract must still attest.
           ./qnx/build/host-sim/latchctl manifest-verify qnx/contracts/homeostat_servo.manifest
+          LATCH_CI_STEP_EOF
 
       - name: Verify Adversarial Attack Rig
         run: |
+          bash tools/ci_step.sh "Verify Adversarial Attack Rig" <<'LATCH_CI_STEP_EOF'
           make -C qnx host-sim
           python3 tools/attacks/run_attacks.py
+          LATCH_CI_STEP_EOF
 
       - name: Verify AddressSanitizer & UndefinedBehaviorSanitizer Suites
         run: |
+          bash tools/ci_step.sh "Verify AddressSanitizer & UndefinedBehaviorSanitizer Suites" <<'LATCH_CI_STEP_EOF'
           make -C qnx check-asan
+          LATCH_CI_STEP_EOF
 
       - name: Verify Manifest Parser Fuzzing (Fail-Closed)
         run: |
+          bash tools/ci_step.sh "Verify Manifest Parser Fuzzing (Fail-Closed)" <<'LATCH_CI_STEP_EOF'
           make -C qnx fuzz
+          LATCH_CI_STEP_EOF
 
       - name: Verify Evidence Archive Signature Anti-Rot
         run: |
+          bash tools/ci_step.sh "Verify Evidence Archive Signature Anti-Rot" <<'LATCH_CI_STEP_EOF'
           make -C qnx evidence-check
+          LATCH_CI_STEP_EOF
 
+      - name: Publish The CI Transcripts
+        # A failing CI step must keep its own transcript (AGENTS.md §4d's rule
+        # for the evidence captures, applied to the CI job).  The artifact is
+        # readable WITHOUT authentication on a public repository, so the
+        # transcript is public evidence and not something that dies with the
+        # job's admin-only log.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latch-ci-logs
+          path: ${{ runner.temp }}/latch-ci-logs/
+          if-no-files-found: ignore
+          retention-days: 14
