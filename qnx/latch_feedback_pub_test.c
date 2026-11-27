@@ -83,25 +83,69 @@ static int wait_for_quiescent(int timeout_ms)
     return -1;
 }
 
-static int read_frames(unsigned char *buf, size_t cap, size_t *count)
+/* The node's frame count, read from the node's ACTUAL size.
+ *
+ * WHY NOT A FIXED BUFFER
+ * ----------------------
+ * The first version of this test read the node into a fixed 4096-byte
+ * buffer and then compared the LAST frame IN THAT BUFFER with the last
+ * frame published.  A frame is LATCH_FEEDBACK_SIZE (28) bytes, so a
+ * 4096-byte window holds at most 4096/28 = 146 frames -- while the number
+ * of frames the writer thread lands during the burst is a RACE: it depends
+ * on whether the writer keeps up with the publisher.
+ *
+ * Measured: on this workstation the writer lands 18-34 of the 500 burst
+ * frames with the node on the repository's disk, and 104-132 with the node
+ * on tmpfs -- so the window happens to hold the whole file and the test
+ * passes.  On the CI runner (2026-11-27, run 45988680440) the writer kept
+ * up and landed more than 146, so the window held the FIRST 146 frames and
+ * the test compared frame 145 with the LAST published frame -- and failed
+ * with "the node does not hold the LATEST verdict" even though the node
+ * DID hold it.  The publisher was right; THE TEST WAS WRONG, and it was
+ * wrong in a way that only showed up on a faster machine.
+ *
+ * So the node's size is the authority, and the frame under test is
+ * addressed by INDEX.  The test's verdict then does not depend on how many
+ * frames landed.
+ *
+ * The return value is 0 on success, -1 if the node cannot be stat'ed, and
+ * -2 if the node holds a TORN frame (its size is not a whole number of
+ * frames) -- which is a protocol violation in its own right.
+ */
+static int node_frame_count(uint64_t *count)
+{
+    struct stat st;
+    if (stat(g_node_path, &st) != 0) {
+        return -1;
+    }
+    if (st.st_size < 0 ||
+        (uint64_t)st.st_size % (uint64_t)LATCH_FEEDBACK_SIZE != 0u) {
+        return -2;
+    }
+    *count = (uint64_t)st.st_size / (uint64_t)LATCH_FEEDBACK_SIZE;
+    return 0;
+}
+
+/* Read ONE frame, addressed by its index in the node. */
+static int read_frame_at(uint64_t index, unsigned char *out)
 {
     int fd = open(g_node_path, O_RDONLY);
     if (fd < 0) {
         return -1;
     }
-    ssize_t n = read(fd, buf, cap);
+    off_t off = (off_t)(index * (uint64_t)LATCH_FEEDBACK_SIZE);
+    ssize_t n = pread(fd, out, LATCH_FEEDBACK_SIZE, off);
     (void)close(fd);
-    if (n < 0) {
+    if (n != (ssize_t)LATCH_FEEDBACK_SIZE) {
         return -1;
     }
-    *count = (size_t)n / LATCH_FEEDBACK_SIZE;
     return 0;
 }
 
 int main(void)
 {
-    unsigned char buf[4096];
-    size_t count = 0u;
+    unsigned char buf[LATCH_FEEDBACK_SIZE];
+    uint64_t frames = 0u;
     latch_feedback_pub_status_t st;
 
     /* The publisher must refuse to publish anything before it is started:
@@ -157,8 +201,18 @@ int main(void)
         if (wait_for_written(1u, 2000) != 0) {
             FAIL("the publisher did not write the frame");
         }
-        if (read_frames(buf, sizeof(buf), &count) != 0 || count != 1u) {
-            FAIL("the node does not hold exactly one frame");
+        {
+            int rc = node_frame_count(&frames);
+            if (rc == -2) {
+                FAIL("the node holds a TORN frame: its size is not a whole "
+                     "number of frames");
+            }
+            if (rc != 0 || frames != 1u) {
+                FAIL("the node does not hold exactly one frame");
+            }
+        }
+        if (read_frame_at(0u, buf) != 0) {
+            FAIL("the node's frame cannot be read");
         }
         memcpy(&back, buf, sizeof(back));
         if (latch_feedback_decode(buf, LATCH_FEEDBACK_SIZE, &back) != 0) {
@@ -193,10 +247,17 @@ int main(void)
         /* The whole burst must be over in well under a second: the
          * publish call is a memcpy and a signal, never a write. */
         latch_feedback_pub_get_status(&st);
-        if (st.offered < burst) {
+        /* `offered` is CUMULATIVE: it also counts the single frame of
+         * section 1, so the burst's share is `offered - 1`.  Comparing the
+         * cumulative counter against the burst's own size was a second
+         * off-by-one in this test: on a machine where the writer keeps up
+         * with every publish, `written` reaches 501 and the test failed
+         * with "the publisher wrote more frames than it was given" even
+         * though the publisher had written exactly what it was given. */
+        if (st.offered < (uint64_t)burst + 1u) {
             FAIL("the publisher did not accept the whole burst");
         }
-        if (st.written > burst) {
+        if (st.written > st.offered) {
             FAIL("the publisher wrote more frames than it was given");
         }
         /* Wait for the writer to settle before the accounting is checked:
@@ -220,11 +281,22 @@ int main(void)
             f_last.verdict       = (uint8_t)LATCH_FEEDBACK_VERDICT_ACCEPT;
             f_last.rung          = 0u;
             (void)latch_feedback_encode(&f_last);
-            if (read_frames(buf, sizeof(buf), &count) != 0 || count == 0u) {
-                FAIL("the node holds no frame after the burst");
+            {
+                int rc = node_frame_count(&frames);
+                if (rc == -2) {
+                    FAIL("the node holds a TORN frame: its size is not a "
+                         "whole number of frames");
+                }
+                if (rc != 0 || frames == 0u) {
+                    FAIL("the node holds no frame after the burst");
+                }
+                /* The frame under test is the node's LAST frame, addressed
+                 * by index -- not "the last frame inside a 4096-byte
+                 * window".  See node_frame_count() for why. */
+                if (read_frame_at(frames - 1u, last) != 0) {
+                    FAIL("the node's last frame cannot be read");
+                }
             }
-            memcpy(last, buf + (count - 1u) * LATCH_FEEDBACK_SIZE,
-                   LATCH_FEEDBACK_SIZE);
             if (memcmp(last, &f_last, LATCH_FEEDBACK_SIZE) != 0) {
                 FAIL("the node does not hold the LATEST verdict");
             }
@@ -262,11 +334,11 @@ int main(void)
     (void)unlink(g_node_path);
 
     printf("[LATCH_FEEDBACK_PUB] PASS: offered=%llu written=%llu dropped=%llu "
-           "errors=%llu opens=%llu -- the frame arrives unchanged, the publish "
-           "call never blocks, the latest verdict wins, and every loss is "
-           "counted\n",
+           "errors=%llu opens=%llu frames_in_node=%llu -- the frame arrives "
+           "unchanged, the publish call never blocks, the latest verdict wins, "
+           "and every loss is counted\n",
            (unsigned long long)st.offered, (unsigned long long)st.written,
            (unsigned long long)st.dropped, (unsigned long long)st.errors,
-           (unsigned long long)st.opens);
+           (unsigned long long)st.opens, (unsigned long long)frames);
     return 0;
 }

@@ -77,16 +77,50 @@ if [ "$RC" -ne 0 ]; then
         echo '```'
     } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-    echo "::error title=CI step failed: $NAME::exit $RC -- the transcript is in the job summary and the latch-ci-logs artifact"
+    # The annotation channel is public on a public repository, so the tail
+    # of the transcript -- which is where the failing command is -- is
+    # readable without the job log.
+    #
+    # IT HAS TO BE ONE ANNOTATION, NOT ONE PER LINE.
+    #
+    # Measured on 2026-11-27 (run 45988680440): GitHub keeps only the
+    # FIRST TEN annotations of a step and drops the rest.  A failure that
+    # raised one annotation per transcript line therefore showed the first
+    # ten lines of the tail and SILENTLY DROPPED THE ERROR, which was the
+    # whole point of the annotations.  The diagnosis was undiagnosable from
+    # the public page for exactly one CI cycle because of this.
+    #
+    # So the tail goes out as ONE multi-line annotation, with the newlines
+    # escaped as %0A (GitHub's workflow-command syntax), and it goes out
+    # FIRST so that it is inside the ten-annotation budget.
+    #
+    # The second, shorter annotation is the fallback: if the long one is
+    # rejected for size, the last dozen lines still arrive.
+    escape_annotation() {
+        # %0A = LF, %0D = CR, %25 = '%' (the escape character itself).
+        local line out=""
+        while IFS= read -r line; do
+            line="${line//$'\r'/}"
+            line="${line//%/%25}"
+            if [ -n "$out" ]; then
+                out="${out}%0A${line}"
+            else
+                out="${line}"
+            fi
+        done
+        printf '%s' "$out"
+    }
 
-    # The annotation channel is public on a public repository, so the LAST
-    # lines of the transcript -- which is where the failing command is --
-    # are readable without the job log.
-    tail -n 40 "$LOG" | while IFS= read -r line; do
-        if [ -n "$line" ]; then
-            echo "::error::$NAME: $line"
-        fi
-    done
+    LONG_MSG="$(tail -n 120 "$LOG" | escape_annotation)"
+    # Keep the annotation inside GitHub's size budget by shortening it from
+    # the FRONT: the last lines are the ones that matter.
+    if [ "${#LONG_MSG}" -gt 40000 ]; then
+        LONG_MSG="$(tail -n 40 "$LOG" | escape_annotation)"
+    fi
+    SHORT_MSG="$(tail -n 12 "$LOG" | escape_annotation)"
+
+    echo "::error title=CI step failed: $NAME::exit $RC -- the transcript's tail follows; the whole transcript is in the job summary and the latch-ci-logs artifact%0A${LONG_MSG}"
+    echo "::error title=CI step failed (last 12 lines): $NAME::${SHORT_MSG}"
 fi
 
 exit "$RC"

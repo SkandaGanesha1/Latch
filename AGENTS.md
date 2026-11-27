@@ -1467,6 +1467,77 @@ before diagnosing a red job.
   `tools/ci_step.sh` (§3): a red job has to be diagnosable by somebody who
   is not the repository's administrator.
 
+- **GITHUB KEEPS ONLY THE FIRST TEN ANNOTATIONS OF A STEP — AND THE
+  INTERESTING ONES ARE AT THE *END*.** Measured on run `45988680440`
+  (2026-11-27): the wrapper raised one `::error::` annotation per
+  transcript line (41 of them) and the job page showed **"10 errors and 1
+  warning"** — the FIRST ten of the tail, so the `make: ***` error at the
+  BOTTOM of the transcript was **silently dropped**. The page's annotations
+  are rendered newest-first, which is what makes this so easy to misread:
+  the reader sees a plausible-looking block of command lines and concludes
+  that the step died at the command in the middle of it. It did not.
+  **The tail has to go out as ONE multi-line annotation** (newlines
+  escaped as `%0A`, `%` as `%25`), and it has to go out FIRST, because the
+  budget is the first ten. One annotation for the whole tail, plus one
+  short fallback, is the shape that cannot be truncated.
+
+- **THE JOB'S ARTIFACT IS PUBLIC — BUT NOT THROUGH GITHUB'S OWN URL.**
+  `GET …/actions/runs/<id>/artifacts` answers **200** unauthenticated and
+  lists the artifact with its size and digest, while the
+  `archive_download_url` it hands out answers **401** for a non-admin, and
+  the web UI's download paths 404. The third-party proxy **`nightly.link`**
+  serves the same ZIP unauthenticated
+  (`https://nightly.link/<owner>/<repo>/actions/runs/<run>/<artifact>.zip`).
+  Use it to READ a red job's transcript from outside the repository; do
+  not make the project depend on it.
+
+- **A FLAKY TEST CAN FAIL ONLY ON A FASTER MACHINE, AND A FIXED-SIZE
+  READ WINDOW IS THE CLASSIC WAY TO GET ONE.** The red CI run
+  `45988680440` failed in `latch_feedback_pub_test` with *"the node does
+  not hold the LATEST verdict"*, and the **publisher was right**: the node
+  did hold the latest verdict. The TEST read the node into a fixed
+  **4096-byte** buffer and compared the last frame *inside that window*
+  with the last frame published — and a frame is 28 bytes, so the window
+  holds at most **146** frames, while the number of frames the writer
+  thread lands during the burst is a **race**. Measured on this
+  workstation the writer lands 18-34 of the 500 burst frames with the node
+  on the repository's disk, and 104-132 with the node on tmpfs (the window
+  holds the whole file, the test passes); on the runner it landed more
+  than 146 (the window held the first 146, the test compared frame 145
+  with the last published frame, and failed). The same file had a second
+  instance of the same class of defect: `written` is a **cumulative**
+  counter, and it was compared against the burst's own size — so on a
+  machine where the writer keeps up with every publish, `written` reaches
+  501 and the test fails with *"the publisher wrote more frames than it
+  was given"*. **A test that addresses data by a fixed-size window, or
+  compares a cumulative counter against a partial count, is a test whose
+  verdict depends on the machine.** Address the data by **index** (read
+  the node's size, then `pread` the frame you mean) and compare
+  cumulative counters against cumulative counters.
+
+- **A FLAKY TEST CAN BE REPRODUCED WITHOUT TOUCHING IT, AND THE WAY IS A
+  `LD_PRELOAD` SHIM.** The defect above was reproduced with the **shipped
+  binary** by making the publisher's hot loop slower: an
+  `LD_PRELOAD` library that wraps `pthread_cond_signal` (called only by
+  the publisher) to mark the thread and `pthread_mutex_unlock` to sleep
+  **after** the real unlock. The delay has to be **outside** the critical
+  section: a delay inside it starves the writer thread and makes the
+  writer land FEWER frames — the opposite of the runner. With a 0-2 us
+  delay the shipped test fails with the runner's exact message; with
+  3 us and up it fails with the second message. The fixed test passes at
+  every setting, with the node holding 125, 478, 499, 500 and 501 frames.
+  **A defect that only appears on a faster machine can be brought back
+  to a slow one on purpose.**
+
+- **A REPRODUCTION'S CONTEXT MUST BE A REAL CHECKOUT.** Building the
+  faithful container's context with `tar --exclude=…/build` dropped
+  **`docs/evidence/build/`**, which is **TRACKED** (two files), and the
+  consistency checker correctly failed with *"docs/evidence/README.md is
+  NOT what the generator produces"*. The context is now a real
+  `git clone` plus the changed files, which is also what the runner
+  gets. **Do not filter a checkout by directory name: `build` is
+  gitignored in one place and tracked in another.**
+
 ---
 
 ## 5. What this project must never claim
