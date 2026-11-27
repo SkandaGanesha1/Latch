@@ -141,6 +141,16 @@
  * and a decision that cannot be built there is a decision with no test. */
 #include "latch_fb_reader.h"
 
+/* THE RESOURCE MANAGER'S ATTRIBUTE LOCK.  Every iofunc entry point this
+ * resource manager calls goes through the wrappers in this header, so
+ * the iofunc call is made while the device's SHARED attribute (the
+ * file-use count, the reader and writer counts) is locked.  This channel
+ * runs TWO dispatch threads with `DISPATCH_FLAG_NOLOCK`, so two opens of
+ * the same node really can be in flight at the same time -- and the
+ * iofunc library updates those counters with a NON-ATOMIC 16-bit
+ * read-modify-write. */
+#include "latch_rm_attr.h"
+
 /* The fixed frame size of the LFBK wire format (qnx/latch_feedback.h).
  * The mailbox is FRAME-ORIENTED: a write is either exactly one frame or
  * it is refused with EINVAL.  A transport that could deliver half a frame
@@ -509,7 +519,7 @@ static int fb_io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
         /* The exact errno matters: EBADF means "this descriptor was not
          * opened for reading", which is a bug in the CALLER and must be
          * reported as itself, not flattened into EIO. */
-        int status = iofunc_read_verify(ctp, msg, ocb, NULL);
+        int status = latch_rm_read_verify(ctp, msg, ocb, NULL);
         if (status != EOK) {
             return status;
         }
@@ -570,7 +580,7 @@ static int fb_io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb
             return ENOSYS;
         }
         {
-            int status = iofunc_write_verify(ctp, msg, ocb, NULL);
+            int status = latch_rm_write_verify(ctp, msg, ocb, NULL);
             if (status != EOK) {
                 return status;
             }
@@ -601,7 +611,7 @@ static int fb_io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb
         return ENOSYS;
     }
     {
-        int status = iofunc_write_verify(ctp, msg, ocb, NULL);
+        int status = latch_rm_write_verify(ctp, msg, ocb, NULL);
         if (status != EOK) {
             return status;
         }
@@ -682,7 +692,11 @@ static int fb_io_close_dup(resmgr_context_t *ctp, io_close_t *msg, RESMGR_OCB_T 
     (void)iofunc_notify_trigger_strict(ctp, node->notify, INT_MAX, IOFUNC_NOTIFY_OBAND);
     (void)iofunc_notify_remove(ctp, node->notify);
 
-    return iofunc_close_dup_default(ctp, msg, ocb);
+    /* The close DETACHES the OCB, which decrements the node's shared
+     * file-use count.  The wrapper takes the node's attribute lock
+     * around the call, so two concurrent closes cannot lose a
+     * decrement. */
+    return latch_rm_close_dup_default(ctp, msg, ocb);
 }
 
 /*
@@ -827,7 +841,11 @@ static int fb_io_open(resmgr_context_t *ctp,
     }
     /* O_CREAT and O_TRUNC mean nothing for a character device. */
     msg->connect.ioflag &= ~((unsigned)(O_CREAT | O_TRUNC));
-    return iofunc_open_default(ctp, msg, handle, extra);
+    /* The open ATTACHES an OCB, which increments the node's shared
+     * file-use count.  The wrapper takes the node's attribute lock
+     * around the call, so two concurrent opens cannot lose an
+     * increment. */
+    return latch_rm_open_default(ctp, msg, handle, extra);
 }
 
 /* ------------------------------------------------------------------ */

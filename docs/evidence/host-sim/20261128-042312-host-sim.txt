@@ -28,8 +28,8 @@ $ mkdir -p build/host-sim && python3 ../guest/liar.py suite --raw-stdout --manif
 
 exit status: 0
 
-[LATCH_PIPE_SIM] Completed 200 ticks | rx=200 | wire_faults=12 | env_faults=7 | eperm_rejects=1 | max_latency=1743 ns
-[LATCH_LATENCY] samples=200 decision=200 idle=0 motion=72 | min=40 cyc | max=1743 cyc | over_budget=0 over_period=0 | hist_decision_nonzero=12 hist_idle_nonzero=0
+[LATCH_PIPE_SIM] Completed 200 ticks | rx=200 | wire_faults=12 | env_faults=7 | eperm_rejects=1 | max_latency=1833 ns
+[LATCH_LATENCY] samples=200 decision=200 idle=0 motion=72 | min=30 cyc | max=1833 cyc | over_budget=0 over_period=0 | hist_decision_nonzero=15 hist_idle_nonzero=0
 
 
 ==============================================================================

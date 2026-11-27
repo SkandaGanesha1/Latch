@@ -28,6 +28,7 @@ exit status: 0
 [CONSISTENCY PASS] qnx/latch_qemu_infer.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] Experimental in-guest inference profile: same signed contract, read-only asset disk, typed guest launch, heartbeat below the deadman lease
 [CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] C-2 resource manager locking: every resource manager (latch_fb_sink.c, latch_guestd.c, latchd.c) reaches the iofunc library only through the locked wrappers -- the iofunc call runs with the device's shared attribute locked, a lock that cannot be taken refuses the operation, and the lock is released on the error path too
 [CONSISTENCY PASS] C-1 first reader: the decision is shared, host-tested and atomic -- a probe and a refused open do not consume the first-reader slot, the first GRANTED reader is the first reader, and the decision and the backlog discard are one critical section
 [CONSISTENCY PASS] Feedback-transport probe (W4): read-only verdict file on virtio-blk, the sink is its only writer and writes on a dedicated thread, the probe reads with pread64 before the session opens, one console report, the production LFBK frame format, experiment's policy additions kept out of the deployment
 [CONSISTENCY PASS] LFBK feedback frame (W5): 28 bytes, session epoch beside the sequence number, CRC over the first 24, sequence+epoch correlation, zero epoch rejected
@@ -91,7 +92,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (1743 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (1833 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)

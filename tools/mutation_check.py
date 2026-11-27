@@ -810,6 +810,110 @@ MUTATIONS = [
      "qnx/latch_fb_sink.c",
      [("        first_reader = latch_fb_reader_account(&g_fb.reader, rd, wr);",
        "        first_reader = (rd != 0u && g_fb.read_opens == 1u);")]),
+
+    # ===================== THE RESOURCE MANAGER'S ATTRIBUTE LOCK =====
+    #
+    # C-2.  The QNX iofunc library updates the device's SHARED attribute
+    # (the file-use count, the reader and writer counts) with a
+    # NON-ATOMIC 16-bit read-modify-write -- MEASURED by disassembling
+    # the installed SDP 8.0 library: `iofunc_ocb_attach()` does a `ldrh`
+    # and then a `strh` of the incremented value, and
+    # `iofunc_ocb_detach()` decrements the same five counters the same
+    # way.  LATCH's resource managers dispatch with
+    # `DISPATCH_FLAG_NOLOCK` on more than one thread, so two opens of the
+    # same node can be in flight at the same time and LOSE an increment.
+    #
+    # The fix: every iofunc entry point a resource manager calls goes
+    # through a wrapper in `qnx/latch_rm_attr.h` that takes the device's
+    # attribute lock around the call and FAILS CLOSED.
+    #
+    # The consistency gate derives the resource managers from the source,
+    # so a new one is covered without being listed.
+    ("C-2: a resource manager calls the iofunc library directly (the call "
+     "updates the device's shared counters without the attribute lock, and "
+     "two concurrent opens can lose an increment)",
+     "qnx/latchd.c",
+     [("    int status = latch_rm_write_verify(ctp, msg, io_ocb, NULL);",
+       "    int status = iofunc_write_verify(ctp, msg, io_ocb, NULL);")]),
+
+    ("C-2: the open wrapper takes the attribute lock AFTER the iofunc call "
+     "(the shared counters are updated INSIDE the iofunc call, so the lock "
+     "has to be held while it runs)",
+     "qnx/latch_rm_attr.h",
+     [("    int rc = latch_rm_attr_lock(attr);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int status = iofunc_open_default(ctp, msg, attr, extra);\n"
+       "    int urc = latch_rm_attr_unlock(attr);",
+       "    int status = iofunc_open_default(ctp, msg, attr, extra);\n"
+       "    int rc = latch_rm_attr_lock(attr);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int urc = latch_rm_attr_unlock(attr);")]),
+
+    ("C-2: the write wrapper IGNORES the lock's failure (the iofunc call "
+     "would then run with the device's shared counters unlocked -- the "
+     "operation has to be REFUSED, not performed unlocked)",
+     "qnx/latch_rm_attr.h",
+     [("    int rc = latch_rm_attr_lock(attr);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int status = iofunc_write_verify(ctp, msg, io_ocb, nonblock);",
+       "    int rc = latch_rm_attr_lock(attr);\n"
+       "    if (rc != EOK) {\n"
+       "        rc = EOK;\n"
+       "    }\n"
+       "    int status = iofunc_write_verify(ctp, msg, io_ocb, nonblock);")]),
+
+    ("C-2: the devctl wrapper never releases the attribute lock (the node "
+     "would deadlock on the next request)",
+     "qnx/latch_rm_attr.h",
+     [("    int status = iofunc_devctl_default(ctp, msg, io_ocb);\n"
+       "    int urc = latch_rm_attr_unlock(attr);",
+       "    int status = iofunc_devctl_default(ctp, msg, io_ocb);\n"
+       "    int urc = EOK;")]),
+
+    ("C-2: the lock primitive swallows the lock's error and reports "
+     "success (a lock that failed and was reported as success would let the "
+     "iofunc call run unlocked)",
+     "qnx/latch_rm_attr.h",
+     [("    int rc = iofunc_attr_lock(attr);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    return EOK;",
+       "    int rc = iofunc_attr_lock(attr);\n"
+       "    (void)rc;\n"
+       "    return EOK;")]),
+
+    ("C-2: a resource manager stops including the shared header (it would "
+     "have no way to reach the iofunc library under the lock)",
+     "qnx/latch_fb_sink.c",
+     [("#include \"latch_rm_attr.h\"\n", "")]),
+
+    ("C-2: a resource manager is built against the HOST STUB instead of "
+     "QNX's <sys/iofunc.h> (a resource manager that ships with the stub is "
+     "one that never touched the real library)",
+     "qnx/latch_guestd.c",
+     [("#include \"latch_rm_attr.h\"",
+       "#define LATCH_RM_ATTR_HOSTED 1\n#include \"latch_rm_attr.h\"")]),
+
+    ("C-2: the host test is dropped from the regression suite (the "
+     "attribute-lock discipline would have no proof at all)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-rm-attr-check\n", "")]),
+
+    ("C-2: the shipped header is no longer a prerequisite of the host test's "
+     "build rule (`make` would not rebuild the test when the header changes, "
+     "so the test would prove a STALE header)",
+     "qnx/Makefile",
+     [("$(BUILD_DIR)/host-sim/latch_rm_attr_test: latch_rm_attr.h "
+       "latch_rm_attr_host.h latch_rm_attr_test.c | dirs",
+       "$(BUILD_DIR)/host-sim/latch_rm_attr_test: latch_rm_attr_host.h "
+       "latch_rm_attr_test.c | dirs")]),
 ]
 
 

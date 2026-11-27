@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -189,6 +189,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory latch-feedback-check
 	$(MAKE) --no-print-directory latch-fb-decode-check
 	$(MAKE) --no-print-directory latch-fb-reader-check
+	$(MAKE) --no-print-directory latch-rm-attr-check
 	$(MAKE) --no-print-directory latch-soak-pace-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
@@ -267,7 +268,9 @@ check-asan:
 	$$ASAN_CC $$ASAN_FLAGS latch_feedback.c latch_feedback_test.c -o $(BUILD_DIR)/asan/latch_feedback_test -lm && \
 	./$(BUILD_DIR)/asan/latch_feedback_test && \
 	$$ASAN_CC $$ASAN_FLAGS latch_manifest.c latch_manifest_test.c -o $(BUILD_DIR)/asan/latch_manifest_test -lpthread -lrt -lm && \
-	./$(BUILD_DIR)/asan/latch_manifest_test
+	./$(BUILD_DIR)/asan/latch_manifest_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_rm_attr_test.c -o $(BUILD_DIR)/asan/latch_rm_attr_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_rm_attr_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -380,6 +383,31 @@ $(BUILD_DIR)/host-sim/latch_fb_reader_test: latch_fb_reader.h latch_fb_reader_te
 
 latch-fb-reader-check: $(BUILD_DIR)/host-sim/latch_fb_reader_test
 	./$(BUILD_DIR)/host-sim/latch_fb_reader_test
+
+# THE RESOURCE MANAGER'S ATTRIBUTE LOCK (C-2).
+#
+# The QNX iofunc library keeps PER-DEVICE state in an `iofunc_attr_t` --
+# the file-use count, the reader and writer counts, the lock counts --
+# and it updates those counters with a NON-ATOMIC 16-bit
+# read-modify-write (measured on the installed SDP 8.0 library:
+# `iofunc_ocb_attach()` does a `ldrh` and then a `strh` of the
+# incremented value).  LATCH's resource managers create their dispatch
+# channel with `DISPATCH_FLAG_NOLOCK` and run more than one dispatch
+# thread on it, so two opens of the SAME node can be in flight at the
+# same time and LOSE an increment.
+#
+# The rule is that every iofunc entry point a resource manager calls is
+# made while the device's attribute lock is held, and it lives in
+# `latch_rm_attr.h`.  The header is QNX-only by default, so the test
+# compiles the SHIPPED header against a stub of the iofunc interface and
+# RUNS it: the assertion is that the iofunc call ran WITH the lock
+# held, that a lock failure refuses the operation, and that the lock is
+# released on the error path too.
+$(BUILD_DIR)/host-sim/latch_rm_attr_test: latch_rm_attr.h latch_rm_attr_host.h latch_rm_attr_test.c | dirs
+	$(CC) $(CFLAGS) latch_rm_attr_test.c -o $@ $(LDFLAGS)
+
+latch-rm-attr-check: $(BUILD_DIR)/host-sim/latch_rm_attr_test
+	./$(BUILD_DIR)/host-sim/latch_rm_attr_test
 
 # The HOST-SIDE FEEDBACK PUBLISHER (W5).  It is the thing that carries the
 # supervisor's verdict to the transport without ever letting the transport

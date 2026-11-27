@@ -385,6 +385,397 @@ def verify_attestation_digests():
 
 
 # ---------------------------------------------------------------------------
+# THE RESOURCE MANAGER'S ATTRIBUTE LOCK (C-2)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS MEASURED, ON THE INSTALLED LIBRARY.
+#
+# The QNX iofunc library keeps a block of PER-DEVICE state in an
+# `iofunc_attr_t`: the file-use count, the reader and writer counts and
+# the lock counts.  Every client of the node shares that block.
+#
+# Disassembling the installed SDP 8.0 library
+# (`target/qnx/aarch64le/lib/libc.so.6`) shows how it is updated:
+#
+#   - `iofunc_ocb_attach()` -- reached by `iofunc_open_default()` --
+#     updates `attr->count` (offset 44), `attr->rcount` (46),
+#     `attr->wcount` (48), `attr->rlocks` (50) and `attr->wlocks` (52)
+#     with a NON-ATOMIC 16-bit read-modify-write: a `ldrh` followed by a
+#     `strh` of the incremented value.
+#
+#   - `iofunc_ocb_detach()` -- reached by `iofunc_close_ocb_default()` --
+#     updates the same five counters the same way.
+#
+#   - `iofunc_write_verify()` stores to `attr->flags` (40) and
+#     `attr->mode` (104).
+#
+#   The offsets are confirmed by `iofunc_attr_init_sized()`, which
+#   memsets the structure and then stores the dirty-flag word at offset
+#   40 and the mode at offset 104 -- exactly the layout in
+#   <sys/iofunc.h>.
+#
+# A read-modify-write of a shared 16-bit counter is NOT atomic, so two
+# threads that attach an OCB at the same time can LOSE an increment: both
+# read `count == 0`, both write `count == 1`, and the device believes it
+# has one user when it has two.  On the close path a lost decrement can
+# drive the count below zero and wrap it to 65535.
+#
+# LATCH's resource managers create their dispatch channel with
+# `DISPATCH_FLAG_NOLOCK` and run MORE THAN ONE dispatch thread on it
+# (`latch_fb_sink` runs two), so two messages really can be in flight
+# at the same time on the same node.  The iofunc library does not take
+# the attribute lock around its own entry points -- PROVEN by walking
+# the FULL transitive call closure of each wrapper with the PLT
+# resolved against the installed SDP 8.0 library: 350 functions, and
+# `iofunc_attr_lock` is in NONE of them -- so the resource manager has
+# to do it.
+#
+# The QNX SDP 8.0 documentation for `iofunc_attr_lock()` calls it a
+# COUNTING lock ("a given thread can lock the attributes structure
+# multiple times; it must then unlock the attributes structure a
+# corresponding number of times"), so a re-entrant acquisition returns
+# EOK rather than deadlocking.  And the mutex inside the attribute is
+# valid after `iofunc_attr_init()`, which memsets the whole structure
+# to zero -- exactly the state `_mutex_init()` produces on QNX.
+#
+# THE RULE
+# --------
+# Every iofunc entry point a LATCH resource manager calls is made while
+# that device's attribute lock is held, and it FAILS CLOSED: if the lock
+# cannot be taken, the operation is refused rather than performed
+# unlocked.
+#
+# THE GATE
+# --------
+# The resource managers are DERIVED from the source -- every `qnx/*.c`
+# that creates a dispatch channel and attaches a node -- so a new
+# resource manager is covered without this gate being told about it.
+#
+# For each one, the gate requires:
+#
+#   - it includes the shared header;
+#   - it contains NO raw call to an attr-mutating iofunc entry point;
+#   - it reaches the iofunc library only through the locked wrappers.
+#
+# And for each wrapper, the gate requires that it takes the lock BEFORE
+# the iofunc call, releases it AFTER, and returns WITHOUT calling the
+# iofunc function when the lock cannot be taken.
+#
+# The BEHAVIOURAL half compiles the shipped header against a stub of the
+# iofunc interface and RUNS it, so the gate binds to the lock
+# discipline's BEHAVIOUR and not to the shape of its source.  It is
+# skipped (with a note) when no C compiler is available; the structural
+# half never skips.
+# ---------------------------------------------------------------------------
+
+# The iofunc entry points that operate on the device's shared
+# `iofunc_attr_t`, and the wrapper that each one must be reached
+# through.
+RM_ATTR_IOFUNC_WRAPPERS = (
+    ("iofunc_open_default",      "latch_rm_open_default"),
+    ("iofunc_close_ocb_default", "latch_rm_close_ocb_default"),
+    ("iofunc_close_dup_default", "latch_rm_close_dup_default"),
+    ("iofunc_read_verify",       "latch_rm_read_verify"),
+    ("iofunc_write_verify",      "latch_rm_write_verify"),
+    ("iofunc_devctl_default",    "latch_rm_devctl_default"),
+)
+
+
+def _rm_attr_wrappers():
+    """Every wrapper the header defines, in the order the header has them."""
+    out = []
+    for iofunc_name, wrapper in RM_ATTR_IOFUNC_WRAPPERS:
+        out.append((iofunc_name, wrapper))
+    return out
+
+
+def _c_inline_func_body(src: str, name: str):
+    """Return the text of one `static inline` C function, or None.
+
+    The anchor is a LINE that starts with `static`, so a CALL to the
+    function can never be mistaken for its definition.
+    """
+    m = re.search(r"(?m)^[ \t]*(?:static[ \t]+)?(?:inline[ \t]+)?"
+                  r"[A-Za-z_][A-Za-z0-9_]*[ \t\*]+"
+                  + re.escape(name) + r"[ \t]*\(", src)
+    if not m:
+        return None
+    i = src.index("{", m.start())
+    depth = 0
+    j = i
+    n = len(src)
+    while j < n:
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start():j + 1]
+        j += 1
+    return None
+
+
+def verify_rm_attr_locking():
+    """Every resource manager reaches the iofunc library under the lock.
+
+    See the block comment above for the measured defect this closes.
+    """
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hdr_path = os.path.join(qnx_dir, "latch_rm_attr.h")
+    stub_path = os.path.join(qnx_dir, "latch_rm_attr_host.h")
+    test_path = os.path.join(qnx_dir, "latch_rm_attr_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hdr_path, stub_path, test_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hdr_path, encoding="utf-8", errors="replace") as f:
+        hdr = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hdr_code = strip_c_comments(hdr)
+
+    # --- THE RESOURCE MANAGERS ARE DERIVED, NOT LISTED ----------------
+    #
+    # A resource manager is a source file that creates a dispatch channel
+    # and attaches a node to it.  Deriving the list means a NEW resource
+    # manager is covered by this gate without anyone having to remember
+    # to add it here -- and a resource manager that forgets the rule
+    # cannot escape the gate by being left out of it.
+    rm_files = []
+    try:
+        names = sorted(os.listdir(qnx_dir))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".c"):
+            continue
+        path = os.path.join(qnx_dir, name)
+        try:
+            with io.open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except (IOError, OSError):
+            continue
+        if "DISPATCH_FLAG_NOLOCK" in text and "resmgr_attach" in text:
+            rm_files.append((name, text))
+
+    if not rm_files:
+        fail("no QNX resource manager was found in qnx/: every file that "
+             "creates a dispatch channel and attaches a node must reach the "
+             "iofunc library under the device's attribute lock, and the gate "
+             "that proves it derives the list from the source")
+
+    for name, text in rm_files:
+        code = strip_c_comments(text)
+
+        if not re.search(r'#\s*include\s*"latch_rm_attr\.h"', code):
+            fail("qnx/%s is a QNX resource manager, so it must include "
+                 "\"latch_rm_attr.h\": every iofunc entry point it calls "
+                 "updates the device's SHARED attribute (the file-use count, "
+                 "the reader and writer counts) with a NON-ATOMIC 16-bit "
+                 "read-modify-write, and the dispatch channel is created "
+                 "with DISPATCH_FLAG_NOLOCK, so two messages can be in "
+                 "flight at the same time" % name)
+
+        if "LATCH_RM_ATTR_HOSTED" in code:
+            fail("qnx/%s must not define LATCH_RM_ATTR_HOSTED: that macro "
+                 "swaps QNX's <sys/iofunc.h> for the host test's stub, and a "
+                 "resource manager that ships with the stub is a resource "
+                 "manager that never touched the real library" % name)
+
+        # --- NO RAW IOFUNC CALL -------------------------------------
+        #
+        # The wrappers are the ONLY sanctioned way in.  A raw call is a
+        # call that updates the shared attribute without the lock.
+        for iofunc_name, wrapper in RM_ATTR_IOFUNC_WRAPPERS:
+            if re.search(r"(?<![\w])" + re.escape(iofunc_name) + r"[ \t]*\(",
+                         code):
+                fail("qnx/%s calls %s() directly: that entry point updates "
+                     "the device's SHARED attribute without the attribute "
+                     "lock, so it must be reached through %s()"
+                     % (name, iofunc_name, wrapper))
+
+        # The resource manager must therefore use the wrappers.
+        if not any(re.search(r"(?<![\w])" + re.escape(wrapper) + r"[ \t]*\(",
+                             code)
+                   for _iofunc_name, wrapper in RM_ATTR_IOFUNC_WRAPPERS):
+            fail("qnx/%s is a QNX resource manager but does not use any of "
+                 "the locked iofunc wrappers in latch_rm_attr.h: every "
+                 "iofunc entry point it calls has to run under the device's "
+                 "attribute lock" % name)
+
+    # --- THE WRAPPERS MUST LOCK, CALL, UNLOCK, AND FAIL CLOSED -------
+    #
+    # The ORDER matters and so does the failure behaviour:
+    #
+    #   1. the lock is taken BEFORE the iofunc call;
+    #   2. if the lock cannot be taken, the wrapper RETURNS without
+    #      calling the iofunc function (fail closed);
+    #   3. the iofunc call happens;
+    #   4. the lock is released AFTER the call -- on the error path too.
+    for iofunc_name, wrapper in _rm_attr_wrappers():
+        body = _c_inline_func_body(hdr_code, wrapper)
+        if not body:
+            fail("qnx/latch_rm_attr.h must define %s(): it is the ONLY way "
+                 "a LATCH resource manager may reach %s(), so that the "
+                 "shared device attribute is locked while the iofunc "
+                 "library updates it" % (wrapper, iofunc_name))
+            continue
+
+        i_lock = body.find("latch_rm_attr_lock(")
+        i_call = body.find(iofunc_name + "(")
+        i_unlock = body.find("latch_rm_attr_unlock(")
+        if i_lock < 0 or i_call < 0 or i_unlock < 0:
+            fail("qnx/latch_rm_attr.h: %s() must take the attribute lock, "
+                 "call %s() and release the lock" % (wrapper, iofunc_name))
+            continue
+        if not (i_lock < i_call < i_unlock):
+            fail("qnx/latch_rm_attr.h: %s() must take the attribute lock "
+                 "BEFORE it calls %s() and release it AFTER -- the iofunc "
+                 "library updates the device's shared counters inside that "
+                 "call" % (wrapper, iofunc_name))
+            continue
+
+        between = body[i_lock:i_call]
+        if "return" not in between:
+            fail("qnx/latch_rm_attr.h: %s() must REFUSE the operation when "
+                 "the attribute lock cannot be taken: a resource manager "
+                 "that mutates shared device state without the lock is "
+                 "worse than one that refuses the request (fail closed)"
+                 % wrapper)
+
+    # --- THE LOCK PRIMITIVE ITSELF -----------------------------------
+    lock_body = _c_inline_func_body(hdr_code, "latch_rm_attr_lock")
+    if not lock_body:
+        fail("qnx/latch_rm_attr.h must define latch_rm_attr_lock()")
+    else:
+        if "iofunc_attr_lock(" not in lock_body:
+            fail("qnx/latch_rm_attr.h: latch_rm_attr_lock() must call "
+                 "iofunc_attr_lock() -- that is the QNX API for the "
+                 "attribute lock")
+        if "return" not in lock_body:
+            fail("qnx/latch_rm_attr.h: latch_rm_attr_lock() must RETURN the "
+                 "lock's error instead of swallowing it: a lock that failed "
+                 "and was reported as success would let the iofunc call "
+                 "run unlocked")
+    unlock_body = _c_inline_func_body(hdr_code, "latch_rm_attr_unlock")
+    if not unlock_body:
+        fail("qnx/latch_rm_attr.h must define latch_rm_attr_unlock()")
+    elif "iofunc_attr_unlock(" not in unlock_body:
+        fail("qnx/latch_rm_attr.h: latch_rm_attr_unlock() must call "
+             "iofunc_attr_unlock()")
+
+    # --- THE HOST TEST AND THE REGRESSION SUITE ----------------------
+    #
+    # The header is QNX-only by default, so without the hosted build the
+    # lock discipline could only be READ and never RUN.  The test
+    # compiles the SHIPPED header against a stub of the iofunc interface
+    # and asserts the discipline BEHAVIOURALLY.
+    if "LATCH_RM_ATTR_HOSTED" not in test_src:
+        fail("qnx/latch_rm_attr_test.c must define LATCH_RM_ATTR_HOSTED: "
+             "the host test compiles the SHIPPED header against the stub, "
+             "so the wrappers that ship are the ones that are proved")
+    if "latch_rm_attr.h" not in test_src:
+        fail("qnx/latch_rm_attr_test.c must include the shipped header: a "
+             "test that reimplements the wrappers proves nothing about the "
+             "code that ships")
+    for _iofunc_name, wrapper in RM_ATTR_IOFUNC_WRAPPERS:
+        if wrapper not in test_src:
+            fail("qnx/latch_rm_attr_test.c must exercise %s(): a wrapper "
+                 "that is never run is a wrapper that is never proved"
+                 % wrapper)
+
+    if "latch-rm-attr-check" not in makefile_text:
+        fail("qnx/Makefile must provide the latch-rm-attr-check target: the "
+             "attribute-lock discipline is only proved if the host test is "
+             "BUILDABLE and RUN")
+    if not re.search(r"(?m)^[^:\n:]*latch_rm_attr_test[^:\n:]*:[^\n]*"
+                     r"latch_rm_attr\.h", makefile_text):
+        fail("qnx/Makefile's rule for the latch_rm_attr_test binary must "
+             "depend on latch_rm_attr.h: without the dependency, `make` "
+             "would not rebuild the test when the header changes, and the "
+             "test would prove a STALE header")
+    if not re.search(r"(?m)^latch-rm-attr-check:[^\n]*latch_rm_attr_test",
+                     makefile_text):
+        fail("qnx/Makefile's latch-rm-attr-check target must depend on the "
+             "latch_rm_attr_test binary: a target that builds nothing proves "
+             "nothing")
+
+    def _recipe(text, target):
+        """The RECIPE of one Makefile target -- its tab-indented lines."""
+        lines = text.splitlines()
+        out = []
+        in_target = False
+        for ln in lines:
+            m = re.match(r"^([A-Za-z0-9_.\-/]+):", ln)
+            if m:
+                in_target = (m.group(1) == target)
+                continue
+            if not in_target:
+                continue
+            if ln.startswith("\t"):
+                out.append(ln)
+            elif ln.strip() == "":
+                continue
+            else:
+                break
+        return "\n".join(out)
+
+    if "latch-rm-attr-check" not in _recipe(makefile_text, "check-governor"):
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-rm-attr-check, or the attribute-lock discipline's host "
+             "test is not part of the regression suite")
+
+    # --- THE BEHAVIOURAL HALF: COMPILE AND RUN THE SHIPPED HEADER ---
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("C-2 resource manager locking: every resource manager "
+                   "reaches the iofunc library only through the locked "
+                   "wrappers, and every wrapper locks, calls, unlocks and "
+                   "fails closed (the BEHAVIOURAL probe was SKIPPED -- no "
+                   "C compiler on PATH -- so only the structural half of "
+                   "the gate ran)")
+        return
+
+    tmp = tempfile.mkdtemp(prefix="latch_rmattr_")
+    try:
+        test_bin = os.path.join(tmp, "latch_rm_attr_test")
+        comp = subprocess.run(
+            [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+             "-D_POSIX_C_SOURCE=200809L", "-I", qnx_dir,
+             test_path, "-o", test_bin],
+            capture_output=True, text=True, timeout=180)
+        if comp.returncode != 0:
+            fail("the shipped qnx/latch_rm_attr.h does not compile against "
+                 "its host stub: %s. The lock discipline has to be usable by "
+                 "a HOST test, or the property it encodes cannot be proved "
+                 "off-target." % (comp.stderr.strip() or comp.stdout.strip()))
+        run = subprocess.run([test_bin], capture_output=True, text=True,
+                             timeout=120)
+        if run.returncode != 0:
+            detail = (run.stdout.strip() or run.stderr.strip() or
+                      "exit status %d" % run.returncode)
+            fail("the shipped qnx/latch_rm_attr.h does NOT BEHAVE correctly: "
+                 "%s. Every iofunc entry point a resource manager calls must "
+                 "run while the device's attribute lock is held, and a lock "
+                 "that cannot be taken must REFUSE the operation."
+                 % detail)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    pass_check("C-2 resource manager locking: every resource manager (%s) "
+               "reaches the iofunc library only through the locked "
+               "wrappers -- the iofunc call runs with the device's shared "
+               "attribute locked, a lock that cannot be taken refuses the "
+               "operation, and the lock is released on the error path too"
+               % ", ".join(name for name, _t in rm_files))
+
+
+# ---------------------------------------------------------------------------
 # THE FIRST-READER DECISION (C-1)
 # ---------------------------------------------------------------------------
 #
@@ -3814,6 +4205,15 @@ def main():
         fail("qnx/latch_fb_sink.c must carry the static assertion "
              "`(FB_RING_BYTES % FB_FRAME_SIZE) == 0`: the frame copy writes one "
              "frame at the tail, so the tail must always be on a frame boundary")
+
+    # --- THE RESOURCE MANAGER'S ATTRIBUTE LOCK (C-2) ------------------
+    #
+    # The iofunc library updates the device's SHARED attribute (the
+    # file-use count, the reader and writer counts) with a NON-ATOMIC
+    # 16-bit read-modify-write, and LATCH's resource managers dispatch
+    # with DISPATCH_FLAG_NOLOCK on more than one thread.  See
+    # `verify_rm_attr_locking()`.
+    verify_rm_attr_locking()
 
     # --- THE FIRST-READER DECISION (C-1) -------------------------------
     #

@@ -81,6 +81,17 @@
 
 #include "latch_protocol.h"
 
+/* THE RESOURCE MANAGER'S ATTRIBUTE LOCK.  Every iofunc entry point this
+ * resource manager calls goes through the wrappers in this header, so
+ * the iofunc call is made while the device's SHARED attribute (the
+ * file-use count, the reader and writer counts) is locked.  The iofunc
+ * library updates those counters with a NON-ATOMIC 16-bit
+ * read-modify-write, so two concurrent opens of the same node can lose
+ * an increment -- and the dispatch channel is created with
+ * `DISPATCH_FLAG_NOLOCK`, which is exactly what allows two messages to
+ * be in flight at the same time. */
+#include "latch_rm_attr.h"
+
 /* The QNX type the guest VM is spawned into.  The child inherits the
  * hypervisor abilities it needs (hyp, mem_phys, io, interrupt, ...) from
  * the policy, exactly as it did when the boot script started it directly. */
@@ -371,7 +382,7 @@ static int guest_io_open(resmgr_context_t *ctp,
      * change the guest's state.
      */
     (void)msg;
-    return iofunc_open_default(ctp, msg, handle, extra);
+    return latch_rm_open_default(ctp, msg, handle, extra);
 }
 
 static int guest_io_devctl(resmgr_context_t *ctp,
@@ -379,7 +390,7 @@ static int guest_io_devctl(resmgr_context_t *ctp,
                            RESMGR_OCB_T *ocb) {
     iofunc_ocb_t *io_ocb = (iofunc_ocb_t *)ocb;
 
-    int status = iofunc_devctl_default(ctp, msg, io_ocb);
+    int status = latch_rm_devctl_default(ctp, msg, io_ocb);
     if (status != _RESMGR_DEFAULT) {
         return status;
     }

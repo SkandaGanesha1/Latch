@@ -46,6 +46,16 @@
 #include <sys/procmgr.h>
 #include <sys/resmgr.h>
 #include <sys/syspage.h>
+/* THE RESOURCE MANAGER'S ATTRIBUTE LOCK.  Every iofunc entry point this
+ * resource manager calls goes through the wrappers in this header, so
+ * the iofunc call is made while the device's SHARED attribute (the
+ * file-use count, the reader and writer counts) is locked.  The iofunc
+ * library updates those counters with a NON-ATOMIC 16-bit
+ * read-modify-write, so two concurrent opens of the same node can lose
+ * an increment -- and the dispatch channel is created with
+ * `DISPATCH_FLAG_NOLOCK`, which is exactly what allows two messages to
+ * be in flight at the same time. */
+#include "latch_rm_attr.h"
 #else
 #ifndef LATCH_HOST_SIM
 #define LATCH_HOST_SIM 1
@@ -59,6 +69,7 @@
 #include "governor_policy.h"
 #include "gov_gate_precheck.h"
 #include "gov_homeostat.h"
+
 #include "latch_feedback.h"
 #include "latch_feedback_pub.h"
 
@@ -2767,7 +2778,7 @@ static int latch_io_open(resmgr_context_t *ctp,
             }
             /* Do not flush a session or advance session_generation for an open
              * that fails permissions or OCB allocation. */
-            int rc = iofunc_open_default(ctp, msg, handle, extra);
+            int rc = latch_rm_open_default(ctp, msg, handle, extra);
             if (rc != 0) {
                 atomic_store_explicit(&g_simplex.open_writers, 0u, memory_order_release);
                 return rc;
@@ -2803,7 +2814,7 @@ static int latch_io_open(resmgr_context_t *ctp,
             return rc;
         }
     }
-    return iofunc_open_default(ctp, msg, handle, extra);
+    return latch_rm_open_default(ctp, msg, handle, extra);
 }
 
 static int latch_io_close_ocb(resmgr_context_t *ctp,
@@ -2820,7 +2831,7 @@ static int latch_io_close_ocb(resmgr_context_t *ctp,
             atomic_store_explicit(&g_simplex.open_writers, 0u, memory_order_release);
         }
     }
-    return iofunc_close_ocb_default(ctp, reserved, ocb);
+    return latch_rm_close_ocb_default(ctp, reserved, ocb);
 }
 
 static int latch_io_write(resmgr_context_t *ctp,
@@ -2829,7 +2840,7 @@ static int latch_io_write(resmgr_context_t *ctp,
     iofunc_ocb_t *io_ocb = (iofunc_ocb_t *)ocb;
     latch_dev_attr_t *lattr = (latch_dev_attr_t *)io_ocb->attr;
 
-    int status = iofunc_write_verify(ctp, msg, io_ocb, NULL);
+    int status = latch_rm_write_verify(ctp, msg, io_ocb, NULL);
     if (status != EOK) return status;
     if ((msg->i.xtype & _IO_XTYPE_MASK) != _IO_XTYPE_NONE) return ENOSYS;
 
@@ -2869,7 +2880,7 @@ static int latch_io_devctl(resmgr_context_t *ctp,
     iofunc_ocb_t *io_ocb = (iofunc_ocb_t *)ocb;
     latch_dev_attr_t *lattr = (latch_dev_attr_t *)io_ocb->attr;
 
-    int status = iofunc_devctl_default(ctp, msg, io_ocb);
+    int status = latch_rm_devctl_default(ctp, msg, io_ocb);
     if (status != _RESMGR_DEFAULT) return status;
     if (!lattr->is_actuator_node) return ENOTTY;
 
