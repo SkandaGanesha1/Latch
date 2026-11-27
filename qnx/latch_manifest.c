@@ -1129,10 +1129,14 @@ int latch_manifest_load_opts(const char *path, latch_manifest_t *out_m, bool req
 
         const char *req_p = json_find_key_bounded(act_sec, act_end, "required");
         if (req_p) {
-            if (strncmp(req_p, "true", 4) == 0) {
+            if ((req_p + 4 <= act_end) && strncmp(req_p, "true", 4) == 0 &&
+                (req_p + 4 == act_end || isspace((unsigned char)req_p[4]) ||
+                 req_p[4] == ',' || req_p[4] == '}')) {
                 out_m->actuator.required = true;
                 has_act_required = true;
-            } else if (strncmp(req_p, "false", 5) == 0) {
+            } else if ((req_p + 5 <= act_end) && strncmp(req_p, "false", 5) == 0 &&
+                       (req_p + 5 == act_end || isspace((unsigned char)req_p[5]) ||
+                        req_p[5] == ',' || req_p[5] == '}')) {
                 out_m->actuator.required = false;
                 has_act_required = true;
             }
@@ -1558,9 +1562,10 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
                 m->medical.min_bolus_interval_ticks == 0u ||
                 m->medical.cumulative_dose_window_ticks == 0u ||
                 m->medical.max_cumulative_dose_uL == 0u ||
-                m->medical.max_cumulative_dose_uL < m->medical.max_bolus_uL) {
+                m->medical.max_cumulative_dose_uL < m->medical.max_bolus_uL ||
+                (m->governor.advise_fault_mask & (1u << 15)) != 0u) {
                 if (err_buf) snprintf(err_buf, err_len,
-                                      "Schema 3 medical parameters are invalid or outside supported safety bounds");
+                                      "Schema 3 medical parameters are invalid, outside supported safety bounds, or allow advisory DOSE");
                 return LATCH_ADMIT_VIOLATED;
             }
         }
@@ -1612,6 +1617,12 @@ latch_admissibility_t latch_manifest_validate(const latch_manifest_t *m, char *e
         if (err_buf) snprintf(err_buf, err_len,
                               "Fail closed: tape.log_path '%s' must be an absolute path",
                               m->tape.log_path);
+        return LATCH_ADMIT_VIOLATED;
+    }
+    if (m->actuator.init_delay_us > 1000000u) {
+        if (err_buf) snprintf(err_buf, err_len,
+                              "Fail closed: actuator.init_delay_us %u exceeds 1000000 us",
+                              m->actuator.init_delay_us);
         return LATCH_ADMIT_VIOLATED;
     }
     if (m->actuator.pwm_min >= m->actuator.pwm_center ||

@@ -293,6 +293,15 @@ jobs:
         run: |
           make -C qnx check-governor
 
+      - name: Verify In-Guest Action Schema Validator
+        run: |
+          # The in-guest inference program re-validates the language
+          # model's JSON with an INDEPENDENT parser before it is allowed
+          # to become a 32-byte frame.  That parser is the gate between
+          # an untrusted model and the safety-relevant channel, and it
+          # has no llama.cpp dependency -- so CI can run it on any host.
+          make -C qnx latch-action-check
+
       - name: Verify Manifest Parser (Fail-Closed Admission)
         run: |
           # The manifest is the SAFETY FRONT DOOR: every plant limit, timing
@@ -325,6 +334,14 @@ jobs:
         run: |
           make -C qnx host-sim
           python3 tools/attacks/run_attacks.py
+
+      - name: Verify AddressSanitizer & UndefinedBehaviorSanitizer Suites
+        run: |
+          make -C qnx check-asan
+
+      - name: Verify Manifest Parser Fuzzing (Fail-Closed)
+        run: |
+          make -C qnx fuzz
 
       - name: Verify Evidence Archive Signature Anti-Rot
         run: |

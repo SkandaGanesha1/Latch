@@ -51,7 +51,7 @@ The versioned GOVERNOR status devctl keeps the legacy status prefix unchanged. E
 
 ## 3. Internal IPC
 
-The LPRP v1 message remains 24 bytes with its current layout and magic. V2 uses a distinct 48-byte LPR2 message. The supplied proposal listed 20 bytes of appended fields after a 24-byte prefix, which totals 44 bytes; this layout adds explicit padding/reserved bytes to satisfy the intended 48-byte ABI and makes offsets checkable.
+The LPRP v1 message remains 24 bytes with its current layout and magic. V2 uses a distinct 56-byte LPR2 message. The supplied proposal listed 20 bytes of appended fields after a 24-byte prefix, which totals 44 bytes; this layout adds explicit padding/reserved bytes to satisfy the intended 48-byte ABI and makes offsets checkable. The session epoch (RT-02, below) appended two further 32-bit fields, taking the message to 56 bytes; every offset remains checkable by a compile-time assertion.
 
 | Offset | Width | Field | Rule |
 |---:|---:|---|---|
@@ -66,13 +66,28 @@ The LPRP v1 message remains 24 bytes with its current layout and magic. V2 uses 
 | 27 | 1 | `kind` | 0–3 |
 | 28 | 1 | `confidence_q8` | 0–255 |
 | 29 | 1 | `agent_state` | 0–4 |
-| 30 | 2 | `reserved0` | zero |
+| 30 | 2 | `producer_tag` | identity of the bridge that produced the frame; `0` is reserved and rejected |
 | 32 | 4 | `coherence_ctr` | low 24 bits used; high byte zero |
 | 36 | 4 | `shrink_v` | only SHRINK_REQ; otherwise zero |
 | 40 | 4 | `shrink_scale_q8` | only SHRINK_REQ; otherwise zero |
 | 44 | 4 | `unit_id` | CMD_V2 source unit; zero for other kinds |
+| 48 | 4 | `session_epoch` | producer-chosen session epoch; `0` is reserved and rejected |
+| 52 | 4 | `reserved1` | zero |
 
-Both IPC structs have compile-time size and offset assertions. `latchd` accepts exactly 24 bytes with LPRP or exactly 48 bytes with LPR2; all other lengths and mismatched magic/version pairs are rejected. The ring payload must represent either message without modifying its odd/even seqlock publication protocol. V1 publishes zeroed v2 fields.
+Both IPC structs have compile-time size and offset assertions. `latchd` accepts exactly 24 bytes with LPRP or exactly 56 bytes with LPR2; all other lengths and mismatched magic/version pairs are rejected. The ring payload must represent either message without modifying its odd/even seqlock publication protocol. V1 publishes zeroed v2 fields.
+
+### 3.1 Session epoch (RT-02)
+
+The supervisor re-bases its sequence baseline whenever a session opens, so the sequence number alone cannot distinguish a frame that belongs to this session from a frame captured in an earlier one. The epoch makes the session's identity explicit.
+
+- The **producer** chooses a fresh epoch for every session it opens and stamps it on every frame it forwards (`latch-ingest --session-epoch N`; the default is a fresh value derived from the monotonic clock, the wall clock and the pid).
+- The **supervisor** binds the epoch of the session it is running and rejects every frame that names a different one. The rejection is a `LATCH_FAULT_SEQ` fault: the epoch is the session's sequence namespace, and the fault taxonomy already has a bit for it. A rejected frame cannot move the plant, advance the sequence, renew the lease or earn warm-up credit.
+- The epoch is bound **only after** the frame has passed the sequence check, so a stale frame that happens to arrive first cannot become the session's identity.
+- The supervisor keeps a ring of the **16 most recently used epochs**. An epoch that has already been spent can never be bound again, so a producer that restarts and reuses its previous epoch is rejected rather than being allowed to resume the old session's identity. The ring outlives the session: it is the supervisor's memory of which epochs are spent, not part of the session.
+- The **first frame of a session opened by a new producer must carry `seq == 1`.** A session's sequence space starts at 1, so this is the only frame that can legitimately open one. Without the rule, a frame captured mid-session in an earlier session — say one carrying `seq = 999999` — was accepted as the first frame of the new session, became the new baseline, and could move the plant.
+- A **takeover** by an already-running producer rebases to that producer's own sequence space, which does not start at 1; it is protected by the epoch ring instead. The old epoch stays bound until the takeover frame is accepted, and a takeover epoch that has already been spent cannot be bound.
+
+What the epoch is **not**: it is an identifier, not a secret and not an authentication mechanism. It protects against *stale* frames — frames captured in an earlier session — not against a peer that can forge a frame carrying the current epoch. The `producer_tag` has the same property: it scopes the lease, it does not authenticate the sender.
 
 ## 4. Fault namespace decision
 
@@ -83,11 +98,11 @@ Existing fault bits 0–11 remain unchanged. For this protocol milestone, reserv
 | 12 | `UNIT` | unknown or invalid unit metadata; may be advisory only when explicitly enabled by contract |
 | 13 | `HEARTBEAT` | lease/coherence fault; rung demotion |
 | 14 | `WIDEN` | shrink request would increase authority; rung demotion |
-| 15 | `DOSE` | Dose/step-rate limit exceeded for the active rung (medical `LATCH_FAULT_DOSE`); may be advisory only when explicitly enabled by contract. Backward-compatibility alias: `CONSIST`. |
+| 15 | `DOSE` | Dose/step-rate limit exceeded for the active rung (medical `LATCH_FAULT_DOSE`); medical contracts treat it as a hard fault even when the advisory mask includes it. Backward-compatibility alias: `CONSIST`. |
 
 This assignment follows the implementation plan. Bit 15 is live as `DOSE` — the medical syringe contract asserts it on over-infusion (`0x8000`), and the servo contract may enable it via its advisory mask; `LATCH_FAULT_CONSIST` remains as a source-compatibility alias for `DOSE`. No existing fault meaning is renumbered.
 
-**Why the two contracts classify `DOSE` differently.** The ladder treats a fault bit set in `ladder.advise_fault_mask` as *graded*: the first occurrence drops `HP → ADVISE`, further occurrences demote one rung per `demote_faults_per_rung` (bounded hysteresis, `promote_clean_frames` clean frames to recover), while any fault **outside** the mask latches `LATCH` immediately and needs an operator release. At the `CLAMP`/`SLOW` rungs the precheck **clamps the candidate to the rung limit in the same evaluation that sets `DOSE`** (`gov_gate_precheck.c`), so the offending dose step is already bounded. The syringe contract (`advise_fault_mask = 0x9000` = `UNIT | DOSE`) therefore grades `DOSE`: repeated *bounded* over-limit requests walk the ladder down toward `SAFE_STOP` instead of freezing infusion on the first one — while envelope, keep-out, watchdog and `EPERM` faults remain outside the mask and still latch `LATCH` instantly (at `HP`/`ADVISE` an over-`v_max` step sets `DOSE | RATE` together, and `RATE` is hard on both contracts). The servo contract (`advise_fault_mask = 0x1000` = `UNIT` only) keeps `DOSE` hard. Manifest validation (`latch_manifest.c`, `advisory_allowed`) only ever permits bits `RATE | UNIT | DOSE` in the mask, so `KEEPOUT`, `BOUNDS`, `WATCHDOG` and the rest can never be softened by contract data.
+**Medical dose faults fail closed.** For a medical contract, the supervisor removes `DOSE` from the effective advisory mask and treats a dose violation as a hard fault requiring operator release, even if the manifest mask contains that bit. The manifest mask alone therefore does not soften medical dose faults. For nonmedical contracts, the configured advisory mask governs classification. The `CONSIST` name is a compatibility alias for bit 15, not a separate fault.
 
 ## 5. Test vectors and required checks
 
@@ -100,7 +115,9 @@ The protocol implementation must provide tests for:
 - sequence replay/gap/wrap and coherence duplicate/gap/wrap/session reset;
 - invalid or overflowing shrink limits, confidence values, and boundary conversions;
 - ingest mapping only to allowed wire-mask bits;
-- exact 24-byte/48-byte IPC acceptance and wrong-size/magic/version rejection;
+- exact 24-byte/56-byte IPC acceptance and wrong-size/magic/version rejection;
+- a v2 frame with no session epoch, a zero reserved word, or a mismatched epoch is rejected;
+- the first frame of a new session must carry `seq == 1`, a frame naming another session is rejected without moving the plant, and an epoch that has already been spent cannot be bound again;
 - v1 scenario tape remains identical and mode remains in `{0,1,2}`.
 
 Host tests cover v2 framing, CRC and kind constraints, exact LPRP/LPR2 sizes, schema-3 positive/negative cases, and a full v2 wire → ingest → LPR2 → latchd pipe scenario. `latch_ingest` dispatches v2 only when the loaded schema-3 contract selects protocol v2 and enables GOVERNOR; `latchd` repeats that authorization check before publishing an LPR2 message. The enabled example contract remains opt-in: the default schema-2 servo manifest continues to use wire v1. QNX resource-manager handling is validated on the QNX AArch64 target run (payload-length checks against the QNX receive buffer are enforced per the [QNX resource-manager security guidance](https://qnx.com/developers/docs/8.0/com.qnx.doc.security.system/topic/manual/write_resource_manager.html)).

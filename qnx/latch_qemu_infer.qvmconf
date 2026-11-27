@@ -1,0 +1,204 @@
+################################################################################
+# qnx/latch_qemu_infer.qvmconf
+#
+# QNX Hypervisor 8.0 Guest Configuration for the EXPERIMENTAL IN-GUEST
+# INFERENCE profile on QEMU AArch64 (`virt`, GICv2).
+#
+# This file is derived from latch_qemu_governor.qvmconf.  It differs in
+# exactly TWO ways:
+#
+#   1. the guest gets a SECOND block device -- a read-only virtio-blk disk
+#      that carries the language model and the inference program; and
+#   2. the guest's RAM is 768 MB instead of 512 MB, because llama.cpp needs
+#      room for the model weights, the compute buffer and the page cache
+#      of the model file.
+#
+# THE SIGNED CONTRACT IS THE SAME ONE.
+#
+# This profile is judged by `contracts/governor_servo.manifest` -- the SAME
+# manifest, byte for byte, that the scripted GOVERNOR profile uses.  In
+# particular the deadman lease is the scripted profile's 100 ticks (100 ms).
+# A language model takes seconds to think, so the GUEST POLICY holds that
+# lease with heartbeats every 10 ms instead of asking the trusted host for
+# a longer lease.  The loader caps `lease_ticks` at 100 on purpose, and
+# relaxing it would mean the experiment is judged by a different contract
+# than the thing it is an experiment OF.
+#
+# TWO SEPARATE MACHINES -- do not mix their maps:
+#
+#   Outer host (QEMU `virt` machine, defined by QEMU hw/arm/virt.c):
+#     RAM          0x40000000   (1 GB in the launcher; the IFS [image=0x40080000]
+#                                 = base + 0x80000, and the inner guest's RAM is
+#                                 carved out of this same pool)
+#     GICv2        GICD=0x08000000 GICC=0x08010000   (host: "FOUND GICv2", 288 SPIs)
+#     PL011 UART   0x09000000, IRQ 33 (SPI 1)
+#     virtio-mmio  0x0a000000, size 0x200, SPI 16 (host side only)
+#     virtio-pcie  0x10000000 (PCI MMIO window)
+#
+#   Inner guest (the `qvm` VM, defined by THIS file):
+#     RAM          0x80000000, 768 MB  (guest-physical, differs on purpose)
+#     GICv2        GICD=0x08000000 GICC=0x08010000 (virtual, via `vdev gic`)
+#     PL011        0x1c090000, IRQ 33  (QNX Linux-guest example address)
+#     virtio-console 0x1c0a0000, IRQ 42  (QNX Linux-guest example address)
+#     virtio-blk  0x1c0d0000, IRQ 41  (QNX Linux-guest example address)
+#
+# qvm generates the guest FDT from the vdevs listed below. The Linux guest
+# NEVER sees QEMU's DTB and is not attached to QEMU's virtio card.
+#
+# Static CPU & Priority Isolation:
+#   - _cpu-0 : Host `latchd` SCHED_FIFO 63 (pinned via ThreadCtl in latchd)
+#   - _cpu-1 : Host `latch-ingest` / `latchlog` / `ksh`
+#   - _cpu-2 : Guest vCPU 0  (`cpu` + `cluster _cpu-2` + `sched 8r`)
+#   - _cpu-3 : Guest vCPU 1
+#
+# The guest console node is /dev/qvm/latch-policy-guest-qemu-virt/latch_console
+# (control only -- it is NEVER opened as an actuator).
+################################################################################
+
+system latch-infer-policy-guest-qemu-virt
+
+logger error,fatal,internal,warn,info stderr
+
+# ------------------------------------------------------------------------------
+# QEMU TCG bring-up valves (qvm configuration variables, not vdev-gic switches).
+#
+# psci-supported = on   *** THE CRITICAL ONE ***
+#   qvm auto-detects host PSCI support by reading the HOST device tree. On the
+#   QEMU virt machine the QNX startup cannot fully read QEMU's DTB (the boot
+#   log shows "no clock-frequency property in FDT!"), so auto-detection can
+#   fail and the generated guest FDT gets NO PSCI node. Without PSCI, Linux
+#   6.12 hangs during secondary-CPU bring-up (PSCI CPU_ON) -- which is exactly
+#   where the guest used to stall, immediately after
+#   "cacheinfo: Unable to detect cache hierarchy for CPU 0". QEMU virt DOES
+#   provide PSCI in its DTB, so we assert it explicitly. This is the exact
+#   override the qvm manual describes:
+#     "[aarch64] psci-supported: global, tristate, default = auto ...
+#      if the host does support PSCI but does not provide an appropriate device
+#      tree or entry, this option can be used to override."
+#
+# pointer-authentication = off
+#   The host console prints "# PE does not support PAUTH feature". qvm's own
+#   note: "all physical cpus on which a vCPU may run must support FEAT_PAUTH".
+#   QEMU's TCG A76 does not implement PAUTH, so advertising FEAT_PAUTH to the
+#   guest is wrong. Turning it off removes the warning AND the mismatch.
+#
+# gic-hwassist = off
+#   The host GICv2 has no hardware-assisted virtualization on QEMU virt; the
+#   auto-detected path misbehaves under TCG. (Real variable; default is true.)
+#
+# linux-fdt-free = on
+#   "Enable this variable to allow the FDT provided to the guest to be located
+#   anywhere in guest memory. By default, the FDT is located in the memory
+#   region within 512M of OS image as required prior to linux 4.2." Our RAM
+#   window is now 768 MB, so the FDT placement is well inside the window;
+#   the relaxation is kept so the two profiles differ ONLY where they must.
+# ------------------------------------------------------------------------------
+set psci-supported on
+set pointer-authentication off
+set gic-hwassist off
+set linux-fdt-free on
+
+# Linux probes ID registers that QEMU TCG does not implement. These are the
+# normal Linux-on-qvm bring-up valves, not a safety feature.
+unsupported instruction ignore
+unsupported reference ignore
+unsupported register ignore
+
+# Guest-physical RAM: 768 MB. Not the QEMU virt host map.
+#
+# WHY MORE THAN THE SCRIPTED PROFILE'S 512 MB:
+#   llama.cpp's working set is the model's weights (138 MiB for
+#   SmolLM2-135M-Instruct-Q8_0), the CPU compute buffer (measured on the
+#   cross-built binary: 51.88 MiB), the context's KV cache, and the guest
+#   kernel's page cache for the model file itself.  512 MB leaves no room
+#   for the page cache on top of the mapped weights; 768 MB does.
+ram 0x80000000,0x30000000
+
+# Static vCPU pinning. QNX 8.0 hypervisor `cpu` takes an INDENTED OPTIONS BLOCK;
+# the only two options are `cluster` and `sched` (confirmed against the qvm
+# binary: "Unknown option '%s'" / "Cluster name '%s' not valid").
+# The `cluster` option takes EXACTLY ONE cluster name (the whole
+# whitespace-delimited token) -- a comma-separated list is NOT accepted in 8.0.
+# One `cpu` block per vCPU, each bound to its own single-CPU cluster.
+#
+# The qvm PROCESS itself is started with an unconstrained runmask (see
+# latch_qemu_infer.build) because `on -C <n>` / `on -R <mask>` resolve to a
+# predefined single-CPU cluster, and no predefined cluster covers CPUs 2+3
+# together.
+cpu
+    cluster _cpu-2
+    sched 8r
+cpu
+    cluster _cpu-3
+    sched 8r
+
+# Virtual GICv2 (v3-only `gicr` must NOT be set with version 2 -- it aborts qvm)
+vdev gic
+    version 2
+    gicd 0x08000000
+    gicc 0x08010000
+
+# Black channel: guest /dev/hvc0 <-> host /proc/boot/latch-ingest over a QNX pipe.
+# `hostdev >"|cmd"` is the documented pipe form; it requires the `pipe` resource
+# manager to be running BEFORE qvm starts.
+#
+# `sched 60` -- the vdev's guest->host forwarding is PULSE-DRIVEN, and the
+# official reference says: "sched priority: Use the priority specified by
+# priority for pulses indicating that input is available on the host device."
+# At the default (low) priority the forward pulse is starved whenever the host
+# is busy -- measured on QEMU TCG, where the host QNX, the guest Linux and
+# latchd (SCHED_FIFO 63) all contend for the same x86 cores. The starved
+# forward showed up on the evidence tape as 16-tick and then 28-tick gaps
+# between guest frames, during which the supervisor's 2-tick watchdog fired,
+# failed closed into HA-HOLD -> HA-HOME, retracted theta, and turned every
+# later frame into a spurious RATE veto. 40 is above the default 10 and
+# below latchd's decision priority 63, so the data path cannot preempt the
+# 1 kHz decision loop.
+#
+# `-p 30f` on the spawned latch-ingest: the pipe reader must drain the pipe
+# promptly, otherwise the vdev's buffer backs up and the same starvation
+# reappears one stage earlier.
+vdev virtio-console
+    loc 0x1c0a0000
+    intr gic:42
+    sched 60
+    hostdev >"|on -T latch_ingest_t -C 1 -p 30f /proc/boot/latch-ingest -m /proc/boot/governor_servo.manifest"
+    name latch_console
+
+# THE ASSET DISK -- the only thing this profile adds.
+#
+# `vdev virtio-blk` presents a host FILE to the guest as a block device.  The
+# vdev's own usage text (read out of the installed
+# target/qnx/aarch64le/lib/dll/vdev-virtio-blk.so) is:
+#
+#     hostdev [<]<pathname>
+#         Host device to use for input/output. If "<" is present, device is
+#         read only.
+#
+# The `<` therefore makes the backing file READ-ONLY AT THE DEVICE.  That is
+# the whole point: the guest is the untrusted side, and the model and the
+# inference program are inputs it must not be able to rewrite.  Enforcing
+# that in the hypervisor means it does not depend on the guest behaving.
+#
+# `loc 0x1c0d0000` / `intr gic:41` are the addresses the SDP's OWN example
+# guest configuration uses for virtio-blk (host/common/mkqnximage/inputs/
+# qvmconf-aarch64le), so they are known-good on this hypervisor.
+#
+# The Linux guest sees this as /dev/vda and the policy mounts it at /model.
+vdev virtio-blk
+    loc 0x1c0d0000
+    intr gic:41
+    hostdev </proc/boot/latch_guest_disk.img
+    name latch_assets
+
+# Debug PL011 for the guest kernel console (ttyAMA0) -> /dev/shmem/guest_console.log
+vdev pl011
+    loc 0x1c090000
+    intr gic:33
+    hostdev >/dev/shmem/guest_console.log
+
+# Linux 6.12 AArch64 kernel Image + the freestanding /init initramfs that
+# carries the in-guest inference relay.
+load 0x80080000,/proc/boot/linux-guest.Image
+initrd load /proc/boot/governor-linux-guest-infer.initrd
+cmdline "earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8"

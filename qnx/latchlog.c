@@ -110,22 +110,24 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    bool gov_on = (manifest.schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+                   manifest.governor.enabled != 0u);
+
     FILE *fp = fopen(output_file, "a+");
     if (!fp) {
-        fprintf(stderr, "latchlog: Cannot open output '%s': %s (trying local ./latch_tape.csv)\n",
+        fprintf(stderr, "latchlog: FATAL: Cannot open output '%s': %s (Fail-Closed)\n",
                 output_file, strerror(errno));
-        output_file = "latch_tape.csv";
-        fp = fopen(output_file, "a+");
-        if (!fp) {
-            fprintf(stderr, "latchlog: Failed to open '%s': %s\n", output_file, strerror(errno));
-            close(fd);
-            return EXIT_FAILURE;
-        }
+        close(fd);
+        return EXIT_FAILURE;
     }
 
     fseek(fp, 0, SEEK_END);
     if (ftell(fp) == 0) {
-        fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits\n");
+        if (gov_on) {
+            fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits,rung\n");
+        } else {
+            fprintf(fp, "tick,cycles_in,cycles_out,latency_cycles,seq,u_proposed,theta_applied,mode,mode_name,fault_bits\n");
+        }
         fflush(fp);
     }
 
@@ -135,6 +137,7 @@ int main(int argc, char *argv[]) {
     uint64_t last_persisted_tick = 0;
     uint64_t next_read_index = 0u;
     bool initial_query = true;
+    uint8_t last_known_rung = 0u;
 
     struct timespec sleep_ts = {
         .tv_sec  = (time_t)(interval_ms / 1000u),
@@ -144,6 +147,23 @@ int main(int argc, char *argv[]) {
     while (g_log_running) {
         (void)nanosleep(&sleep_ts, NULL);
         if (!g_log_running) break;
+
+        latch_gov_event_dump_t ev_dump;
+        bool have_events = false;
+        if (gov_on) {
+            latch_governor_status_reply_t gov_st;
+            memset(&gov_st, 0, sizeof(gov_st));
+            if (devctl(fd, DCMD_LATCH_GET_GOV_STATUS, &gov_st, sizeof(gov_st), NULL) == EOK &&
+                gov_st.extension_version >= 1u) {
+                last_known_rung = (uint8_t)gov_st.rung;
+            }
+            memset(&ev_dump, 0, sizeof(ev_dump));
+            ev_dump.start_index = UINT64_MAX;
+            ev_dump.count = LATCH_GOV_EVENT_DUMP_MAX;
+            if (devctl(fd, DCMD_LATCH_DUMP_GOV_EVENTS, &ev_dump, sizeof(ev_dump), NULL) == EOK) {
+                have_events = true;
+            }
+        }
 
         bool drain_more = false;
         do {
@@ -181,11 +201,32 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 uint64_t lat = (e->cycles_out >= e->cycles_in) ? (e->cycles_out - e->cycles_in) : 0;
-                fprintf(fp, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
-                        e->tick, e->cycles_in, e->cycles_out, lat,
-                        e->seq, e->u_proposed, e->theta_applied,
-                        (unsigned int)e->mode, mode_str(e->mode),
-                        (unsigned int)e->fault_bits);
+                if (gov_on) {
+                    uint8_t rung = last_known_rung;
+                    if (have_events) {
+                        for (uint32_t g = 0u; g < ev_dump.count && g < LATCH_GOV_EVENT_DUMP_MAX; ++g) {
+                            if (ev_dump.entries[g].tick <= e->tick) {
+                                rung = ev_dump.entries[g].rung_after;
+                            }
+                            if (ev_dump.entries[g].tick == e->tick &&
+                                ev_dump.entries[g].seq == e->seq) {
+                                rung = ev_dump.entries[g].rung_after;
+                                break;
+                            }
+                        }
+                    }
+                    fprintf(fp, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X,%u\n",
+                            e->tick, e->cycles_in, e->cycles_out, lat,
+                            e->seq, e->u_proposed, e->theta_applied,
+                            (unsigned int)e->mode, mode_str(e->mode),
+                            (unsigned int)e->fault_bits, (unsigned int)rung);
+                } else {
+                    fprintf(fp, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%u,%s,0x%04X\n",
+                            e->tick, e->cycles_in, e->cycles_out, lat,
+                            e->seq, e->u_proposed, e->theta_applied,
+                            (unsigned int)e->mode, mode_str(e->mode),
+                            (unsigned int)e->fault_bits);
+                }
                 last_persisted_tick = e->tick;
                 written_count++;
             }

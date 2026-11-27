@@ -80,7 +80,7 @@
   "governor": {
     "enabled": 1,
     "ladder": {
-      "advise_fault_mask": 36864,
+      "advise_fault_mask": 4096,
       "clamp_max_step": 50,
       "slow_scale_pct": 25,
       "safe_stop_decel": 10,

@@ -27,7 +27,7 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 |  - Reads wire proposals from standard input                                           |
 |  - Validates wire framing, kind codes (0..3), and 28-byte CRC-32                      |
 |  - Performs zero-copy unbuffered writes to `/dev/latch/proposal`                      |
-|  - Translates 32-byte wire v2 into 48-byte LPR2 IPC proposal structure                |
+|  - Translates 32-byte wire v2 into 56-byte LPR2 IPC proposal structure                |
 +---------------------------------------------------------------------------------------+
                                           |
                                           | (QNX Resource Manager `io_write`)
@@ -420,3 +420,7 @@ This is the target the submission demonstrates on, and the only one with a commi
 The full on-target evidence is archived in `docs/evidence/`, indexed by `docs/evidence/README.md`. The canonical artefact is `docs/evidence/on-target/CURRENT-SESSION.txt`; the defect record is in `docs/evidence/resolution/SUMMARY.md`.
 
 **Note on the latency figures.** The archived timing evidence is from the QEMU AArch64 `virt` session of §7.3 (the Linux host-sim's figures are in `docs/evidence/host-sim/`). The AArch64 `virt` figures are measured under **TCG** — software emulation of AArch64 on an x86_64 host — and are therefore *not* a WCET. The project reports the **last** and the **max** decision latency, in cycles and in nanoseconds, against the manifest's `timing.wcet_budget_us`, and names the machine. On the archived AArch64 `virt` session the **last** decision latency was **64 cycles (1,024 ns)** and the **max** was **40,323 cycles (645,168 ns)**; the authoritative copy is `docs/evidence/derived/on-target-numbers.txt`, which names the session it was derived from.
+
+**The U-4 decision-latency measurement.** The `last`/`max` pair above is a **snapshot**, not a distribution, and it cannot say how the supervisor behaves over a long run. The project therefore also carries a **measured distribution**: the trusted supervisor's own per-tick decision latency, sampled **once per tick** for more than a million ticks and aggregated in a histogram **on the target**, read back through the output-only devctl `latchctl latency`. It lives in `docs/evidence/governor/LATENCY.md`, it is **generated** by `make -C qnx evidence-governor-latency` (so no figure in it is typed in by hand), and it replaces a **withdrawn** claim — the old "61 µs WCET", whose generator inserted fixed values.
+
+The caveats are the same as the snapshot's, and one is stronger: under TCG the supervisor shares host cores with the guest and with QEMU itself, so the distribution's maxima are the **host's** scheduling noise rather than the supervisor's own worst case. Its percentiles are **bucket ranges**, not exact values, and its workload is **one** workload — a HOLD at 100 mrad. **It is not a WCET, and it must never be quoted as one.**

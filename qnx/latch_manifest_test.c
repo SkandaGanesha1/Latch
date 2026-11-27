@@ -463,6 +463,51 @@ int main(void) {
     expect_rejected("recovery missing hysteresis_clean_frames",
         mutate("\"hysteresis_clean_frames\": 25, ", ""));
 
+    /* Medical contract with DOSE (bit 15 = 32768) in advise_fault_mask must fail closed,
+     * while non-medical contracts may configure DOSE in advise_fault_mask. */
+    {
+        checks++;
+        latch_manifest_t m;
+        memset(&m, 0, sizeof(m));
+        if (load_body(mutate("\"advise_fault_mask\": 4096", "\"advise_fault_mask\": 36864"),
+                      &m, err, sizeof(err)) != 0 || m.medical_present) {
+            fprintf(stderr, "FAIL: non-medical contract with advise_fault_mask=36864 was rejected: %s\n", err);
+            failures++;
+        }
+
+        const char *med_section =
+            ",\n  \"medical\": {\"drug_name\": \"insulin-lispro\", \"drug_id\": 1,"
+            " \"concentration_uL_per_unit\": 10, \"max_bolus_uL\": 100,"
+            " \"min_bolus_interval_ticks\": 300, \"cumulative_dose_window_ticks\": 3600000,"
+            " \"max_cumulative_dose_uL\": 1500}\n";
+        checks++;
+        memset(&m, 0, sizeof(m));
+        if (load_body(with_homeostat(med_section), &m, err, sizeof(err)) != 0 || !m.medical_present) {
+            fprintf(stderr, "FAIL: valid medical contract with advise_fault_mask=4096 was rejected: %s\n", err);
+            failures++;
+        }
+        static char med_dose_buf[8192];
+        const char *med_body = with_homeostat(med_section);
+        const char *hit = strstr(med_body, "\"advise_fault_mask\": 4096");
+        if (hit != NULL) {
+            size_t head = (size_t)(hit - med_body);
+            snprintf(med_dose_buf, sizeof(med_dose_buf), "%.*s\"advise_fault_mask\": 36864%s",
+                     (int)head, med_body, hit + strlen("\"advise_fault_mask\": 4096"));
+            expect_rejected("medical_present contract with LATCH_FAULT_DOSE (36864) in advise_fault_mask",
+                            med_dose_buf);
+        }
+    }
+
+    /* actuator.required must require exact JSON boolean delimiter (not true_bogus / falsehood). */
+    expect_rejected("actuator.required with trailing garbage (true_bogus)",
+        mutate("\"required\": false", "\"required\": true_bogus"));
+    expect_rejected("actuator.required with trailing garbage (falsehood)",
+        mutate("\"required\": false", "\"required\": falsehood"));
+
+    /* actuator.init_delay_us > 1000000 must be rejected (prevents tv_nsec overflow). */
+    expect_rejected("actuator.init_delay_us exceeding 1000000 us",
+        mutate("\"init_delay_us\": 600", "\"init_delay_us\": 1000001"));
+
     if (failures != 0) {
         fprintf(stderr, "[LATCH_MANIFEST] FAIL: %d of %d checks failed\n", failures, checks);
         return 1;

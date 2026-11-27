@@ -73,6 +73,9 @@ static void print_usage(const char *prog) {
             "Usage: %s [-d /dev/latch/actuator] <command> [args...]\n\n"
             "Commands:\n"
             "  status                             Query live Simplex supervisor state & telemetry\n"
+            "  latency                            Report the decision-latency DISTRIBUTION\n"
+            "                                      (U-4): sample count, p50/p99, max\n"
+            "  session-status                     Report the writer-session state (L-2 handoff)\n"
             "  grant-check                        Verify whether caller holds 'latch/actuator' ability\n"
             "  hold <1|0> [reason]                Set (1) or release (0) operator emergency HA-HOLD\n"
             "  dump <output.csv>                  Dump evidence tape records to CSV\n"
@@ -80,7 +83,10 @@ static void print_usage(const char *prog) {
             "         [--json] [--csv]\n"
             "  manifest-verify <path> [sha256]    Verify manifest integrity, admissibility & sidecar\n"
             "  console [path] [-f]                Mirror the guest kernel console (default\n"
-            "                                      /dev/shmem/guest_console.log); -f follows\n",
+            "                                      /dev/shmem/guest_console.log); -f follows\n"
+            "  guest-status                       Report the guest VM lifecycle state\n"
+            "  guest-restart [--timeout <sec>]    Stop the guest VM, OBSERVE the writer-session\n"
+            "                                      handoff, then start it again\n",
             prog);
 }
 
@@ -197,6 +203,20 @@ static int do_status(int fd) {
                    gov.homeostat_scale_q8, gov.homeostat_v_max,
                    gov.homeostat_stress_epochs);
         }
+        if (gov.extension_version >= 5u) {
+            printf("Lease Owner          : %s | producer tag %u | session dead %s\n",
+                   gov.lease_owner_valid ? "valid" : "unset", gov.lease_owner_tag,
+                   gov.session_dead ? "YES" : "NO");
+            printf("Foreign / Takeovers  : %u frames | %u takeovers\n",
+                   gov.foreign_frames, gov.producer_takeovers);
+        }
+        if (gov.extension_version >= 6u) {
+            /* The epoch is the session's IDENTITY (RT-02): two sessions can
+             * both start at sequence 1, but they cannot share an epoch. */
+            printf("Session Epoch        : %s | 0x%08X\n",
+                   gov.session_epoch_valid ? "bound" : "unbound",
+                   (unsigned int)gov.session_epoch);
+        }
         printf("Rate / Shrink        : %u tokens | active=%u v_max=%u scale_q8=%u\n",
                gov.rate_tokens_remaining, gov.shrink_active,
                gov.shrink_v_max, gov.shrink_scale_q8);
@@ -211,6 +231,150 @@ static int do_status(int fd) {
     sha_hex[64] = '\0';
     printf("Manifest SHA-256     : %s\n", sha_hex);
 
+    return 0;
+}
+
+/*
+ * THE DECISION-LATENCY DISTRIBUTION (U-4).
+ *
+ * This is the READOUT of the measurement that replaces the withdrawn
+ * "61 microsecond WCET" claim.  It reports a DISTRIBUTION over a sample of
+ * ticks, with the sample count, and it reports each percentile as the
+ * BUCKET RANGE the sample fell into -- never as a point estimate the
+ * histogram cannot support.
+ *
+ * It is deliberately NOT called a worst-case execution time: the project
+ * claims no WCET, and a tool that printed one would be the first place the
+ * withdrawn claim came back.
+ */
+
+/* The nearest-rank percentile: the smallest bucket whose cumulative count
+ * reaches ceil(num/den * samples).  Integer arithmetic only -- a floating
+ * point rank could put a sample in the wrong bucket. */
+static int latency_percentile(const uint64_t *hist, uint64_t samples,
+                               unsigned num_buckets, uint64_t num, uint64_t den,
+                               uint64_t *lo, uint64_t *hi) {
+    if (samples == 0u || hist == NULL) return -1;
+    uint64_t rank = (num * samples + den - 1u) / den;
+    if (rank == 0u) rank = 1u;
+    uint64_t cumulative = 0u;
+    for (unsigned b = 0u; b < num_buckets; ++b) {
+        cumulative += hist[b];
+        if (cumulative >= rank) {
+            latch_latency_bucket_range(b, lo, hi);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Cycles to nanoseconds, without the overflow the naive form has.  The
+ * supervisor uses the same quotient/remainder shape, so the two agree. */
+static uint64_t latency_cycles_to_ns(uint64_t cycles, uint64_t cps) {
+    if (cps == 0u) return 0u;
+    uint64_t whole = cycles / cps;
+    uint64_t rem   = cycles % cps;
+    if (whole > (UINT64_MAX / 1000000000ULL) - 1u) return UINT64_MAX;
+    return whole * 1000000000ULL + (rem * 1000000000ULL) / cps;
+}
+
+static void latency_print_distribution(const char *label,
+                                       const uint64_t *hist, uint64_t samples,
+                                       uint64_t cps) {
+    uint64_t p50_lo = 0u, p50_hi = 0u, p99_lo = 0u, p99_hi = 0u;
+    int have50 = latency_percentile(hist, samples, LATCH_LATENCY_BUCKETS,
+                                    50u, 100u, &p50_lo, &p50_hi);
+    int have99 = latency_percentile(hist, samples, LATCH_LATENCY_BUCKETS,
+                                    99u, 100u, &p99_lo, &p99_hi);
+    /* latency_percentile() returns 0 on SUCCESS and -1 on failure, so the
+     * test is `!= 0`, NOT `!`.  The inverted test printed "no samples" for
+     * every populated histogram -- the readout said the distribution was
+     * empty when the distribution was right there in the payload. */
+    if (have50 != 0 || have99 != 0) {
+        printf("%-22s: no samples\n", label);
+        return;
+    }
+    printf("%-22s: p50 = [%" PRIu64 ", %" PRIu64 ") cyc ([%" PRIu64 ", %" PRIu64 ") ns)"
+           " | p99 = [%" PRIu64 ", %" PRIu64 ") cyc ([%" PRIu64 ", %" PRIu64 ") ns)\n",
+           label,
+           p50_lo, p50_hi, latency_cycles_to_ns(p50_lo, cps), latency_cycles_to_ns(p50_hi, cps),
+           p99_lo, p99_hi, latency_cycles_to_ns(p99_lo, cps), latency_cycles_to_ns(p99_hi, cps));
+}
+
+static int do_latency(int fd) {
+    latch_latency_stats_t st;
+    memset(&st, 0, sizeof(st));
+
+    int rc = devctl(fd, DCMD_LATCH_GET_LATENCY_STATS, &st, sizeof(st), NULL);
+    if (rc != EOK) {
+        fprintf(stderr, "latchctl: devctl(GET_LATENCY_STATS) failed: %s (%d)\n",
+                strerror(rc), rc);
+        return (rc == EPERM) ? 2 : 1;
+    }
+    if (st.struct_size != (uint32_t)sizeof(st)) {
+        fprintf(stderr, "latchctl: the supervisor returned a latency payload of a "
+                        "different size (%u vs %u) -- refuse to interpret it\n",
+                st.struct_size, (unsigned int)sizeof(st));
+        return 1;
+    }
+
+    printf("=== LATCH Supervisor Decision-Latency Distribution ===\n");
+    printf("Samples (ticks)       : %" PRIu64 "\n", st.samples_total);
+    printf("Decision-path samples : %" PRIu64 " (a proposal was dequeued)\n", st.samples_decision);
+    printf("Idle-path samples     : %" PRIu64 " (the proposal queue was empty)\n", st.samples_idle);
+    printf("Motion evaluations    : %" PRIu64 " (of the decision-path samples)\n", st.samples_motion);
+    printf("Cycle rate            : %" PRIu64 " Hz\n", st.cycles_per_sec);
+    printf("First / last tick     : %" PRIu64 " / %" PRIu64 "\n",
+           st.first_tick, st.last_tick);
+    if (st.samples_decision > 0u) {
+        printf("Min / Max (decision)  : %" PRIu64 " / %" PRIu64 " cyc"
+               " (%" PRIu64 " / %" PRIu64 " ns)\n",
+               st.min_decision_cycles, st.max_decision_cycles,
+               latency_cycles_to_ns(st.min_decision_cycles, st.cycles_per_sec),
+               latency_cycles_to_ns(st.max_decision_cycles, st.cycles_per_sec));
+        /* The mean is over the DECISION-path samples only, so it describes
+         * the decision path.  Dividing the ALL-sample sum by the all-sample
+         * count under a "Mean (decision)" label reported a number that
+         * described neither path. */
+        printf("Mean (decision)       : %.3f cyc\n",
+               (double)st.sum_decision_cycles / (double)st.samples_decision);
+    }
+    if (st.samples_total > 0u) {
+        printf("Min / Max (all ticks) : %" PRIu64 " / %" PRIu64 " cyc"
+               " (%" PRIu64 " / %" PRIu64 " ns)\n",
+               st.min_cycles, st.max_cycles,
+               latency_cycles_to_ns(st.min_cycles, st.cycles_per_sec),
+               latency_cycles_to_ns(st.max_cycles, st.cycles_per_sec));
+        printf("Mean (all ticks)      : %.3f cyc\n",
+               (double)st.sum_cycles / (double)st.samples_total);
+    }
+    latency_print_distribution("Decision path", st.hist_decision,
+                               st.samples_decision, st.cycles_per_sec);
+    latency_print_distribution("Idle path", st.hist_idle,
+                               st.samples_idle, st.cycles_per_sec);
+    printf("Histogram shape      : decision path %u non-empty buckets"
+           " | idle path %u non-empty buckets (of %u)\n",
+           latch_latency_nonzero_buckets(st.hist_decision, LATCH_LATENCY_BUCKETS),
+           latch_latency_nonzero_buckets(st.hist_idle, LATCH_LATENCY_BUCKETS),
+           LATCH_LATENCY_BUCKETS);
+    printf("Over budget           : %" PRIu64 " samples (over the manifest's "
+           "timing.wcet_budget_us)\n", st.over_budget);
+    printf("Over tick period      : %" PRIu64 " samples (over the decision period)\n",
+           st.over_period);
+    {
+        char modes[256];
+        size_t at = 0u;
+        modes[0] = '\0';
+        for (unsigned m = 0u; m < LATCH_LATENCY_MODES; ++m) {
+            if (st.mode_ticks[m] == 0u) continue;
+            int n = snprintf(modes + at, sizeof(modes) - at, "%s%s=%u",
+                             (at == 0u) ? "" : " ",
+                             mode_name((uint16_t)m), st.mode_ticks[m]);
+            if (n < 0 || (size_t)n >= sizeof(modes) - at) break;
+            at += (size_t)n;
+        }
+        printf("Mode ticks            : %s\n", (modes[0] == '\0') ? "(none)" : modes);
+    }
     return 0;
 }
 
@@ -296,8 +460,7 @@ static int do_hold(int fd, int argc, char *argv[]) {
         switch (st.release_state) {
             case LATCH_RELEASE_ARMED:
                 printf("latchctl: Release ARMED at rung LATCH: the fail-closed interlock "
-                       "may leave LATCH after %u clean frames.\n",
-                       25u /* recovery.hysteresis_clean_frames */);
+                       "may leave LATCH after the manifest's configured clean-frame hysteresis.\n");
                 break;
             case LATCH_RELEASE_DEFERRED:
                 printf("latchctl: Release RECORDED but DEFERRED: the ladder is at rung %u, "
@@ -316,10 +479,220 @@ static int do_hold(int fd, int argc, char *argv[]) {
     return 0;
 }
 
-static int do_dump(int fd, const char *out_csv) {
-    latch_tape_dump_t dump;
-    memset(&dump, 0, sizeof(dump));
-    dump.start_index = UINT32_MAX;
+/*
+ * Report the writer-session state (L-2 handoff).
+ *
+ * `writer_held` is the OBSERVABLE handoff point between two writer sessions:
+ * a harness waits for it to read 0 before it opens the proposal node itself,
+ * instead of sleeping and hoping the resource manager has processed the
+ * previous writer's disconnect.  `session_generation` counts the writer
+ * sessions the supervisor has seen, so a caller can also prove it is in a
+ * DIFFERENT session from the previous one.
+ *
+ * This is a read-only query: it grants no ability and changes nothing.
+ */
+static int do_session_status(int fd) {
+    latch_session_status_t st;
+    memset(&st, 0, sizeof(st));
+
+    int rc = devctl(fd, DCMD_LATCH_GET_SESSION_STATUS, &st, sizeof(st), NULL);
+    if (rc != EOK) {
+        fprintf(stderr, "latchctl: devctl(GET_SESSION_STATUS) failed: %s (%d)\n",
+                strerror(rc), rc);
+        return (rc == EPERM || rc == EACCES) ? 2 : 1;
+    }
+
+    printf("=== LATCH Session Status ===\n");
+    /* The numeric value comes FIRST so a machine can parse it without
+     * having to understand the human-readable suffix. */
+    printf("Writer Held      : %u (%s)\n", st.writer_held,
+           st.writer_held ? "exclusive writer OCB is OPEN" : "no writer OCB is open");
+    printf("Session Gen      : %u\n", st.session_generation);
+    return 0;
+}
+
+/* ==========================================================================
+ * Guest lifecycle control (U-1)
+ * ==========================================================================
+ *
+ * The guest VM is owned by `latch_guestd`, a narrowly-typed process that
+ * serves exactly one control channel (`/dev/latch/guestctl`, channel type
+ * `guest_ctl_t`).  This client is the ONLY thing that talks to it.
+ *
+ * The restart is deliberately split into an OBSERVED sequence rather than a
+ * single server-side "restart":
+ *
+ *     1. STOP   -- latch_guestd kills the guest VM child and waits for it
+ *                  to be reaped.
+ *     2. OBSERVE -- poll the SUPERVISOR's session status until it reports
+ *                  that the exclusive proposal writer has been released.
+ *                  The handoff is a supervisor fact, so the supervisor is
+ *                  what reports it; a sleep would only guess.
+ *     3. START  -- latch_guestd spawns a new guest VM child.
+ *
+ * If step 2 does not complete inside the timeout, the guest is NOT started
+ * again.  Starting a guest while the previous writer still holds the
+ * proposal node would produce a guest whose ingest is refused with EBUSY
+ * and which therefore never streams -- a silent failure that looks like a
+ * working system.  Leaving the guest down is the safe direction: the
+ * supervisor is in LATCH, the plant is frozen, and the operator is told.
+ */
+static int guest_open_ctl(void) {
+    int fd = open(LATCH_DEV_GUESTCTL, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "latchctl: Cannot open '%s': %s\n",
+                LATCH_DEV_GUESTCTL, strerror(errno));
+        fprintf(stderr, "latchctl: (the guest-lifecycle daemon is present only on "
+                        "profiles that run a guest VM)\n");
+        return -1;
+    }
+    return fd;
+}
+
+static int guest_devctl(int fd, unsigned int dcmd, latch_guest_status_t *rep) {
+    latch_guest_status_t tmp;
+    if (rep == NULL) {
+        rep = &tmp;
+    }
+    memset(rep, 0, sizeof(*rep));
+    int rc = devctl(fd, dcmd, rep, sizeof(*rep), NULL);
+    if (rc != EOK) {
+        fprintf(stderr, "latchctl: devctl(0x%02X) failed: %s (%d)\n",
+                dcmd, strerror(rc), rc);
+        return rc;
+    }
+    return EOK;
+}
+
+static int do_guest_status(void) {
+    int fd = guest_open_ctl();
+    if (fd < 0) {
+        return 1;
+    }
+    latch_guest_status_t st;
+    int rc = guest_devctl(fd, (unsigned int)DCMD_LATCH_GET_GUEST_STATUS, &st);
+    close(fd);
+    if (rc != EOK) {
+        return (rc == EPERM || rc == EACCES) ? 2 : 1;
+    }
+
+    printf("=== LATCH Guest VM Status ===\n");
+    printf("Guest Running    : %s\n", st.running ? "YES" : "NO");
+    printf("Guest PID        : %d\n", (int)st.pid);
+    printf("Launch Generation: %u\n", st.generation);
+    printf("Last Exit Status : 0x%X\n", (unsigned int)st.last_exit_status);
+    return 0;
+}
+
+/* Read the supervisor's writer-session state.  Returns 1 if a writer is
+ * still held, 0 if it is released, and -1 if the state could not be read. */
+static int writer_is_held(int actuator_fd) {
+    latch_session_status_t st;
+    memset(&st, 0, sizeof(st));
+    int rc = devctl(actuator_fd, DCMD_LATCH_GET_SESSION_STATUS, &st, sizeof(st), NULL);
+    if (rc != EOK) {
+        fprintf(stderr, "latchctl: devctl(GET_SESSION_STATUS) failed: %s (%d)\n",
+                strerror(rc), rc);
+        return -1;
+    }
+    return (st.writer_held != 0u) ? 1 : 0;
+}
+
+static int do_guest_restart(int argc, char *argv[]) {
+    unsigned int timeout_s = 30u;
+    for (int i = 0; i < argc; ++i) {
+        if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+            long v = strtol(argv[++i], NULL, 10);
+            if (v < 0) {
+                v = 0;
+            }
+            timeout_s = (unsigned int)v;
+        } else {
+            fprintf(stderr, "latchctl: guest-restart: unknown argument '%s'\n", argv[i]);
+            print_usage("latchctl");
+            return 1;
+        }
+    }
+
+    int ctl_fd = guest_open_ctl();
+    if (ctl_fd < 0) {
+        return 1;
+    }
+    int act_fd = open(LATCH_DEV_ACTUATOR, O_RDONLY);
+    if (act_fd < 0) {
+        fprintf(stderr, "latchctl: Cannot open '%s': %s\n",
+                LATCH_DEV_ACTUATOR, strerror(errno));
+        close(ctl_fd);
+        return 1;
+    }
+
+    latch_guest_status_t st;
+
+    /* --- 1. STOP ------------------------------------------------------- */
+    if (guest_devctl(ctl_fd, (unsigned int)DCMD_LATCH_GUEST_STOP, &st) != EOK) {
+        close(act_fd);
+        close(ctl_fd);
+        return 1;
+    }
+    printf("latchctl: guest VM stopped (generation %u, running=%s)\n",
+           st.generation, st.running ? "YES" : "NO");
+
+    /* --- 2. OBSERVE the writer-session handoff ------------------------ */
+    /*
+     * The writer is released when the ingest that held it exits, which
+     * happens when the guest VM's virtio-console endpoint closes.  That is
+     * a supervisor-side fact and only the supervisor can report it, so the
+     * poll reads the supervisor's session status.  It is deliberately NOT
+     * a sleep: a fixed delay is exactly the assumption that made the
+     * legacy verifier fail with an unrelated EBUSY.
+     */
+    bool handoff = false;
+    const unsigned int poll_ms = 50u;
+    for (unsigned int waited = 0u; waited <= timeout_s * 1000u; waited += poll_ms) {
+        int held = writer_is_held(act_fd);
+        if (held < 0) {
+            close(act_fd);
+            close(ctl_fd);
+            return 1;
+        }
+        if (held == 0) {
+            handoff = true;
+            break;
+        }
+        struct timespec ts = { 0, (long)poll_ms * 1000000L };
+        (void)nanosleep(&ts, NULL);
+    }
+    if (!handoff) {
+        fprintf(stderr,
+                "latchctl: guest-restart ABORTED: the proposal writer was still held "
+                "after %u s. The guest has NOT been restarted.\n"
+                "latchctl: Leaving the guest down is the safe direction: the "
+                "supervisor stays in LATCH and the plant is frozen.\n",
+                timeout_s);
+        close(act_fd);
+        close(ctl_fd);
+        return 1;
+    }
+    printf("latchctl: writer-session handoff OBSERVED (no writer OCB is open)\n");
+
+    /* --- 3. START ------------------------------------------------------ */
+    if (guest_devctl(ctl_fd, (unsigned int)DCMD_LATCH_GUEST_START, &st) != EOK) {
+        close(act_fd);
+        close(ctl_fd);
+        return 1;
+    }
+    printf("latchctl: guest VM started (pid %d, generation %u)\n",
+           (int)st.pid, st.generation);
+    printf("latchctl: The guest must boot and re-establish its session before it "
+           "streams again; the supervisor stays in LATCH until then.\n");
+
+    close(act_fd);
+    close(ctl_fd);
+    return 0;
+}
+
+static int do_dump(int fd, const char *out_csv) {    latch_tape_dump_t dump;    memset(&dump, 0, sizeof(dump));
+    dump.start_index = UINT64_MAX;
     dump.count       = LATCH_DUMP_MAX_ENTRIES;
 
     int rc = devctl(fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL);
@@ -570,6 +943,16 @@ int main(int argc, char *argv[]) {
         return do_console(cpath, follow);
     }
 
+    /* The guest-lifecycle commands talk to latch_guestd on their OWN node,
+     * not to the supervisor's actuator node, so they are dispatched before
+     * the generic device open below. */
+    if (strcmp(cmd, "guest-status") == 0) {
+        return do_guest_status();
+    }
+    if (strcmp(cmd, "guest-restart") == 0) {
+        return do_guest_restart(argc - optind, &argv[optind]);
+    }
+
     int oflag = (strcmp(cmd, "hold") == 0) ? O_RDWR : O_RDONLY;
     int fd = open(dev_path, oflag);
     if (fd < 0) {
@@ -584,6 +967,10 @@ int main(int argc, char *argv[]) {
     int ret = 0;
     if (strcmp(cmd, "status") == 0) {
         ret = do_status(fd);
+    } else if (strcmp(cmd, "latency") == 0) {
+        ret = do_latency(fd);
+    } else if (strcmp(cmd, "session-status") == 0) {
+        ret = do_session_status(fd);
     } else if (strcmp(cmd, "grant-check") == 0) {
         ret = do_grant_check(fd);
     } else if (strcmp(cmd, "hold") == 0) {

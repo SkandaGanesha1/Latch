@@ -43,7 +43,9 @@
     secpolpush /proc/boot/secpol.bin
 
     # 3. BSP I2C1 driver for PCA9685 servo controller at 0x40 (BCM2711 BSC1 SPI 117 + 32 = IRQ 149)
-    on -T i2c_t /proc/boot/i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1
+    #    Run at FIFO priority 20 on _cpu-1 (below SCHED_FIFO 63 latchd decision thread on _cpu-0,
+    #    above guest vCPUs sched 8r and operator shell 10r).
+    on -T i2c_t -C 1 -p 20f /proc/boot/i2c-bcm2711 -p0xfe804000 -i149 --b400000 --u1
     waitfor /dev/i2c1 4
 
     # 4. Start system logger and pipe resource manager.
@@ -68,6 +70,21 @@
 
     # 7. Launch QNX Hypervisor 8.0 guest VM.
     #
+    #    The VM is started by `latch_guestd`, a narrowly-typed guest-lifecycle
+    #    daemon, NOT directly by the boot script.  The reason is measured
+    #    (2026-11-25, QEMU AArch64 target): `slay -9 qvm` from the operator
+    #    shell works, but `on -T qvm_host_t ... qvm @qvmconf` is REFUSED with
+    #    "on: Operation not permitted", because `operator_shell_t` holds no
+    #    `settypeid` and no `spawn`.  Granting the operator shell that
+    #    ability would collapse the "the operator shell is deliberately
+    #    unprivileged" property, so the power to start the guest lives in
+    #    one dedicated typed domain instead -- one that holds no actuator
+    #    ability and no proposal-write right.
+    #
+    #    latch_guestd spawns the VM as a CHILD of type `qvm_host_t`, so the
+    #    hypervisor gets exactly the abilities it got when the boot script
+    #    started it directly.
+    #
     #    CPU affinity: deliberately NOT constrained here.
     #    `on -C <n>` resolves to the predefined single-CPU cluster _cpu-<n>, and
     #    `on -R <mask>` resolves the mask to a predefined cluster too -- there is
@@ -82,7 +99,8 @@
     #        cpu _cpu-3 sched 8r
     #    The previous `-C 1` pinned the whole qvm process to CPU 1 (the shell and
     #    latchlog core) and locked out CPUs 2 and 3 entirely.
-    on -T qvm_host_t /proc/boot/qvm @/proc/boot/latch.qvmconf &
+    on -T latch_guestd_t /proc/boot/latch_guestd -q /proc/boot/qvm -c /proc/boot/latch.qvmconf &
+    waitfor /dev/latch/guestctl 4
 
     # 8. Operator shell on _cpu-1
     [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
@@ -124,9 +142,10 @@ libfdt.so.1
 [uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = latch-ingest
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = latchlog
+[uid=0 gid=0 perms=0755] /proc/boot/latch_guestd = latch_guestd
 [uid=0 gid=0 perms=0644] /proc/boot/latch.manifest = latch.manifest
 [uid=0 gid=0 perms=0644] /proc/boot/latch.manifest.sha256 = latch.manifest.sha256
 [uid=0 gid=0 perms=0644] /proc/boot/latch.qvmconf = latch.qvmconf
 [uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = secpol.bin
-[perms=0644] /proc/boot/linux-guest.Image = $(GUEST_IMAGE)
-[perms=0644] /proc/boot/linux-guest.initrd = $(GUEST_INITRD)
+[perms=0644] /proc/boot/linux-guest.Image = ${GUEST_IMAGE}
+[perms=0644] /proc/boot/linux-guest.initrd = ${GUEST_INITRD}

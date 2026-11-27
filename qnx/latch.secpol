@@ -9,6 +9,7 @@
 #   - `ability <name>;`
 #   - `allow <type> self:ability { ... };`
 #   - `allow_attach <type> <path>;`
+#   - `allow_attach <type> <path> <channel_type>;`
 #   - `allow <client> <server>:channel connect;`
 #
 # Enforces Principle of Least Privilege:
@@ -17,6 +18,8 @@
 #   3. Restricts /dev/latch/proposal & /dev/latch/actuator attachment to `latchd_t`.
 #   4. Grants `latch/actuator` ability only to `latchd_t`, `latchctl_t`, and admin checks.
 #   5. Denies `qvm_host_t` and `latch_ingest_t` any connection or ability toward actuators.
+#   6. Confines the guest-lifecycle daemon (`latch_guestd_t`) to ONE channel type
+#      (`guest_ctl_t`) that grants no actuator ability and no proposal access.
 # ==============================================================================
 
 # 1. Process Types
@@ -29,6 +32,16 @@ type i2c_t;
 type qvm_host_t;
 type slogger2_t;
 type pipe_t;
+# The guest-lifecycle daemon (U-1). It OWNS the guest VM process and is the
+# only process that may spawn one. It holds NO `latch/actuator` ability, no
+# `latch/propose` ability, and no right to connect to the supervisor's own
+# channels -- so it cannot propose motion and cannot actuate. Its only
+# power is to start and stop the guest that the supervisor is supervising.
+type latch_guestd_t;
+# A CHANNEL type, not a process type. `allow_attach ... guest_ctl_t` makes
+# the channel latch_guestd attaches at /dev/latch/guestctl carry this type,
+# and only the two process types listed in section 5 may connect to it.
+type guest_ctl_t;
 # The operator shell gets its OWN type. It deliberately does NOT receive
 # `latch/actuator`, so the "a process without the ability gets EPERM" demo
 # does not depend on the shell happening to be untyped root.
@@ -36,6 +49,7 @@ type operator_shell_t;
 
 # 2. Custom Ability Declaration (created at runtime via procmgr_ability_create)
 ability latch/actuator;
+ability latch/propose;
 # Looked up by the pipe resource manager before it registers as pipe handler
 ability iofunc/exec;
 
@@ -58,6 +72,7 @@ allow latchctl_t self:ability {
 # Ingest runs least-privilege without latch/actuator, hardware I/O, or able_create
 allow latch_ingest_t self:ability {
     nonroot
+    latch/propose
 };
 
 allow i2c_t self:ability {
@@ -83,6 +98,7 @@ allow latch_verify_t self:ability {
     nonroot
     pathspace
     public_channel
+    latch/propose
 };
 
 # The operator shell: an ordinary unprivileged domain with NO `latch/actuator`.
@@ -112,6 +128,27 @@ allow qvm_host_t self:ability {
     settypeid
 };
 
+# The guest-lifecycle daemon (U-1).
+#
+# It needs exactly four things:
+#   pathspace + public_channel  -- to be a resource manager and attach its
+#                                  node (same as every other daemon here)
+#   spawn                        -- to start the guest VM child
+#   settypeid:qvm_host_t         -- to give that child the hypervisor
+#                                  type it needs, and ONLY that type
+#
+# It does NOT get `hyp`, `mem_phys`, `io`, `interrupt`, `rsrcdbmgr`,
+# `timer`, `event`, `schedule`, `fork`, `latch/actuator` or
+# `latch/propose`.  The hypervisor privileges belong to the CHILD it
+# spawns; the daemon itself holds only the power to create and destroy
+# that child.
+allow latch_guestd_t self:ability {
+    pathspace
+    public_channel
+    spawn
+    settypeid:qvm_host_t
+};
+
 # 4. Pathspace Ownership (allow_attach)
 allow_attach latchd_t /dev/latch/proposal;
 allow_attach latchd_t /dev/latch/actuator;
@@ -124,6 +161,12 @@ allow_attach slogger2_t /dev/slog2_notify;
 allow_attach qvm_host_t /dev/qvm;
 allow_attach qvm_host_t /dev/qvm/*;
 allow_attach qvm_host_t /dev/qvm/*/*;
+
+# The guest-lifecycle control node.  The THIRD argument is the CHANNEL
+# TYPE the attached channel takes: `guest_ctl_t`.  It is deliberately not
+# `latch_guestd_t`, so the daemon's own internal channels keep the daemon's
+# process type and no client rule can reach them.
+allow_attach latch_guestd_t /dev/latch/guestctl guest_ctl_t;
 
 # 4b. slogger2 daemon abilities (attaches /dev/slog2 for system logging)
 allow slogger2_t self:ability {
@@ -162,3 +205,23 @@ allow latchlog_t slogger2_t:channel connect;
 allow latch_verify_t slogger2_t:channel connect;
 allow operator_shell_t slogger2_t:channel connect;
 allow qvm_host_t slogger2_t:channel connect;
+
+# 6. Guest-lifecycle control channel (U-1)
+#
+# `guest_ctl_t` is a CHANNEL type.  Only the two process types below may
+# connect to it; every other type is refused at connect time.
+#
+# `operator_shell_t` is here because `latchctl` inherits the type of
+# whatever spawned it, and the operator's `latchctl` is spawned by the
+# operator shell.  This grant is NARROW: it permits a connection to the
+# guest-control channel and nothing else.  It does NOT give the operator
+# shell `latch/actuator` (so `latchctl hold` is still refused), and it
+# does NOT let the operator shell connect to the proposal node (whose
+# channel type is `latchd_t`, and for which there is no
+# `operator_shell_t` rule).
+#
+# The operator could already stop the guest with `slay -9 qvm`; this grant
+# adds the ability to START it again, with a fixed binary and a fixed
+# configuration that the operator cannot choose.
+allow latchctl_t guest_ctl_t:channel connect;
+allow operator_shell_t guest_ctl_t:channel connect;

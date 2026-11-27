@@ -98,22 +98,34 @@ averages. All arithmetic is bounded 64-bit integer; there is no floating point,
 no heap and no I/O in the loop.
 
 Each epoch spans `homeostat.epoch_ticks` supervisor ticks and accumulates four
-Essential Variables:
+Essential Variables. The epoch is closed by the **tick counter**, not by the
+number of proposals: a quiet epoch still closes, and every accumulator is reset
+when it does.
 
 1. **Proposal Rejection Ratio ($R_{\text{rej}}$)** — Q8 fixed point:
    $$R_{\text{rej}} = \left\lfloor \frac{\text{rejected} \cdot 256}{\text{proposals}} \right\rfloor$$
-   Only *motion* proposals count. A heartbeat or a shrink request carries no
-   motion, so counting the supervisor's own liveness traffic as a rejection
-   would manufacture stress out of nothing.
+   Only *motion* proposals count. The supervisor sets `proposal_present` only
+   for `kind = CMD` and `kind = CMD_V2`; a heartbeat or a shrink request
+   carries no motion, so counting the supervisor's own liveness traffic as a
+   rejection would manufacture stress out of nothing.
 2. **Clamp Fraction ($C_{\text{clamp}}$)** — the share of requested motion that
    was **not** applied, in Q8:
    $$C_{\text{clamp}} = \left\lfloor \frac{\text{proposed\_motion} - \text{applied\_motion}}{\text{proposed\_motion}} \cdot 256 \right\rfloor$$
+   The Q8 fraction is computed by an exact 8-step binary expansion
+   (`fraction_q8()` in `qnx/gov_homeostat.c`), so there is no rounding drift
+   and no division by zero. Both motion accumulators are saturating 64-bit
+   adds, and the applied motion is clamped to the proposed motion before it is
+   accumulated, so a frame at the edge of the `int32` range cannot overflow
+   the accounting or produce a negative clamp fraction.
 3. **Latency Spread ($\Delta t$)** — the difference between the maximum and the
    minimum decision latency observed inside the epoch, in nanoseconds:
    $$\Delta t = t_{\max} - t_{\min}$$
+   The latency is sampled on **every tick** of the epoch, because it is a
+   property of the decision pipeline rather than of the proposal.
 4. **Coherence Anomalies ($A_{\text{coh}}$)** — the count of frames whose
    24-bit guest coherence counter did not advance within
-   `governor.deadman.coherence_max_gap`.
+   `governor.deadman.coherence_max_gap`. This is counted **per frame**, not
+   per tick.
 
 ### 3.3 Generic, Non-Hardcoded Adaptive Scaling Function
 
@@ -122,8 +134,24 @@ represents unity:
 
 $$S[k+1] = \begin{cases}
 \max\left(S_{\min},\ S[k] - C_{\text{step}}\right) & \text{if any threshold is crossed} \\
-\min\left(256,\ S[k] + R_{\text{step}}\right) & \text{otherwise}
+\min\left(256,\ S[k] + R_{\text{step}}\right) & \text{otherwise, and the epoch saw at least one proposal}
 \end{cases}$$
+
+The three step/floor parameters are **signed manifest values**, not symbols:
+
+| Symbol | Manifest key | Meaning |
+|:---|:---|:---|
+| $C_{\text{step}}$ | `homeostat.contraction_q8` | How much the scale shrinks in one stressed epoch |
+| $R_{\text{step}}$ | `homeostat.recovery_q8` | How much the scale grows in one clean epoch |
+| $S_{\min}$ | `homeostat.floor_q8` | The floor the scale may never go below |
+
+**The recovery branch requires the epoch to have seen at least one motion
+proposal.** An epoch in which nothing was proposed leaves the scale exactly
+where it was. This is a deliberate difference from the bare formula above, and
+it is the safer of the two: a supervisor that has seen no traffic has no
+evidence that the plant is behaving, so it must not talk itself back up to
+unity merely because it went quiet. The shipped condition is
+`else if (state->proposals != 0u)` in `gov_homeostat_observe()`.
 
 An epoch is **stressed** when *any* of the following holds (a threshold of `0`
 disables that particular trigger):
@@ -152,13 +180,32 @@ so the agent's own confidence scale composes **multiplicatively** on top:
 
 $$v_{\text{max, gate}} = \left\lfloor \frac{v_{\text{max, effective}} \cdot q_{\text{confidence}}}{256} \right\rfloor$$
 
+The shipped path, in order, is:
+
+1. `latch_homeostat_vmax()` (`qnx/latchd.c`) computes the ceiling for the
+   **current** tick as `min(v_max, floor(v_max · S / 256))` via
+   `gov_homeostat_effective_vmax(v_max, scale_q8, 256)`. The third argument is
+   `256` (unity) because the agent's own scale is applied by the gate, not
+   here. A ceiling that would underflow to zero is floored at `1` mrad/tick.
+2. `gov_gate_precheck()` takes `base_v_max = manifest.v_max` and lowers it to
+   the HOMEOSTAT ceiling **only if that ceiling is strictly lower and strictly
+   positive**. A `homeostat_v_max` of `0` means "not applied" and reproduces
+   the pre-HOMEOSTAT behaviour bit-for-bit.
+3. The gate then applies the agent's confidence scale to `base_v_max`
+   (`v_eff = q8_scale(base_v_max, scale_q8)`), so the two compose
+   multiplicatively and the result can only be smaller than either factor.
+
 Two properties are enforced by construction and asserted by the test suite:
 
 - **Contracting only.** A ceiling above the manifest limit can never raise it.
   The gate takes `min(manifest, homeostat)` and never the other way round.
 - **Never zero.** A scale that would underflow to a zero velocity ceiling is
   floored at the smallest non-zero step the kinematic model can represent
-  (1 mrad/tick), because a zero ceiling is indistinguishable from a bug.
+  (1 mrad/tick), because a zero ceiling is indistinguishable from a bug. The
+  floor is applied in both `latch_homeostat_vmax()` and `q8_scale()`. It is a
+  **kinematic-model constant, not a safety parameter**, so it is not a
+  manifest key: a plant that needs a larger minimum step declares it in its own
+  envelope `v_max`, and the floor never raises that value above it.
 
 If the manifest has **no** `homeostat` section, or the section has
 `"enabled": 0`, the loop is inert: $S \equiv 256$ and the supervisor behaves
@@ -201,10 +248,10 @@ and that **only** `homeostat_servo.manifest` carries one.
 ## 4. GOVERNOR: Integrate the Downloaded LLM
 
 ### 4.1 Verified Starting Point & Audit of the Existing Setup
-- **Downloaded Assets**: The machine has `llama.cpp` built at `/home/skanda/llama.cpp/build/bin/llama-cli` and a 139 MiB `SmolLM2-135M-Instruct-Q8_0.gguf` at `/home/skanda/models/`.
-- **Host vs Guest Architecture**: The compiled `llama-cli` binary is an **x86-64 Linux binary**. The QEMU guest VM runs an **AArch64 Linux 6.12** kernel. An x86-64 binary cannot execute directly inside the AArch64 guest VM without an AArch64 cross-compilation or running on the host via the host-sim FIFO bridge.
-- **Current Guest Payload**: The existing guest payload is `guest/latch_guest_init.c` (a freestanding static AArch64 C program running as PID 1 using raw `svc #0` syscalls). It executes a deterministic 235-frame scripted sequence. It does not invoke `llama.cpp` or load GGUF weights.
-- **The Core Deficiency**: Downloading the model and binary was only Step 0. The system lacked an active, closed-loop **observe $\to$ plan $\to$ propose $\to$ observe** iterative agent architecture.
+- **Downloaded Assets** (re-verified 2026-11-25): `llama.cpp` is checked out at `/home/skanda/tools/llama.cpp`, revision `44d50873b`, and the host build produces `/home/skanda/tools/llama.cpp/build/bin/llama-cli`. The model is `/home/skanda/models/SmolLM2-135M-Instruct-Q8_0.gguf` — 144,811,360 bytes (138.1 MiB), SHA-256 `5a1395716f7913741cc51d98581b9b1228d80987a9f7d3664106742eb06bba83`. **Neither the model nor the host binary is tracked in this repository**; the model is a 138 MiB artefact and must be delivered to the guest out of band.
+- **Host vs Guest Architecture**: the compiled `llama-cli` binary is an **x86-64 Linux binary** (`ELF 64-bit LSB executable, x86-64, dynamically linked`). The QEMU guest VM runs an **AArch64 Linux 6.12** kernel. An x86-64 binary cannot execute directly inside the AArch64 guest VM without an AArch64 cross-compilation or running on the host via the host-sim FIFO bridge. **The requirement for this project is the former**: the inference must run *inside* the guest.
+- **Current Guest Payload**: The **scripted** guest payload is `guest/latch_guest_init.c` (a freestanding static AArch64 C program running as PID 1 using raw `svc #0` syscalls). It executes a deterministic 235-frame scripted sequence. **A separate experimental profile** (`qnx/latch_qemu_infer.build`) now also runs the model: the policy stays PID 1 and freestanding, and `clone()`s + `execve()`s a statically linked AArch64 C++ program (`guest/latch_infer.cpp`) that links llama.cpp, loads the GGUF weights, constrains the output with a GBNF grammar, re-validates the JSON independently, and emits a 32-byte wire-v2 frame into a pipe that the policy relays. The model and the inference binary travel on a **read-only virtio-blk asset disk** (`hostdev <…`, read-only enforced by the hypervisor) because qvm's blob loader cannot deliver a large initramfs to an upstream-Linux guest.
+- **The Core Deficiency**: Downloading the model and binary was only Step 0. The system lacked an active, closed-loop **observe $\to$ plan $\to$ propose $\to$ observe** iterative agent architecture. **The model now runs inside the guest** and the supervisor judges its proposals against the signed envelope, but the loop's **observe** half is still missing: there is **no bidirectional feedback channel** (see U-2), so the experiment demonstrates one supervised proposal, not a closed loop.
 
 ### 4.2 Missing Functions & Architectural Upgrades Required
 
@@ -255,7 +302,9 @@ The proposal channel (`virtio-console` write sink) was one-way. A complete feedb
   * `uint32_t crc32`: IEEE CRC-32 over the first 20 bytes.
   * Compile-time assertions pin the size and the CRC offset.
 - The codec (`qnx/latch_feedback.c`) implements encode, strict decode, and `latch_feedback_decode_for_seq()`, which correlates a verdict with the proposal it answers (`-ESTALE` on a sequence mismatch).
-- **Status: the codec is built and unit-tested (`make -C qnx latch-feedback-check`), but it is NOT yet on the runtime path.** The supervisor does not currently emit the frame: wire protocol v2 is frozen and the archived on-target GOVERNOR evidence chain is a signed SHA-256 chain over the 62-byte event record, so adding a transport would invalidate evidence that cannot currently be re-captured (the QEMU `GUEST_IMAGE` is unavailable). Emitting it is therefore a separate, explicitly-scoped change, not a silent add-on.
+- **Status: the codec is built and unit-tested (`make -C qnx latch-feedback-check`), but it is NOT yet on the runtime path.** The supervisor does not currently emit the frame and no transport carries it.
+  - *Correction to the previous revision of this document:* the earlier note claimed that adding a transport "would invalidate evidence that cannot currently be re-captured (the QEMU `GUEST_IMAGE` is unavailable)". **That is no longer true.** The guest kernel image is present at `/home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image`, the GOVERNOR IFS builds from it, and `tools/verify_governor_qemu.py` passes against a fresh build. The evidence chain **can** be re-captured. The obstacle to wiring the feedback channel is therefore **not** evidence availability — it is the absence of a validated host→guest transport (AGENTS.md forbids a second `vdev virtio-console`; the measured cost of that experiment is recorded in `docs/evidence/resolution/05-rejected-2nd-virtio-console.txt`).
+  - Emitting the frame is a **separate, explicitly-scoped change** (update item **U-2** in `docs/plan/04_CORRECTIONS_ADDENDUM_AND_TIMELINE.md`), not a silent add-on.
 
 #### 3. Decoupling Planner Liveness from Heartbeat Flooding
 A common failure mode in autonomous systems is a heartbeat thread keeping safety leases alive while the planning LLM is completely frozen or caught in an infinite loop:
@@ -267,6 +316,8 @@ To ensure 100% reproducibility in CI and judge evaluations:
 - **Mode A (Deterministic Replay - CI Baseline)**: Replays exact recorded LLM session transcripts frame-by-frame, verifying that `make check` and `run_attacks.py` pass with byte-identical signatures.
 - **Mode B (Live Bounded Inference)**: Launches `llama-cli` / `llama-server` with `SmolLM2-135M-Instruct-Q8_0.gguf` under live prompt injection (Attacks A1..A7) and captures real-time gate rejections.
 
+**As implemented (2026-11-26), Mode B runs the inference binary *inside* the guest** rather than launching `llama-cli` on the host: a statically linked AArch64 C++ program (`guest/latch_infer.cpp`) links llama.cpp, loads the GGUF weights from a read-only virtio-blk asset disk, constrains the output with a GBNF grammar, re-validates the JSON independently, and emits a 32-byte wire-v2 frame into a pipe. The freestanding policy stays PID 1, stays the **sole writer** on the black channel, and relays the frame. The safety envelope is **not** duplicated in the guest — the guest-side check is STRUCTURE only; the keep-out, slew and rate limits live in the signed manifest and are enforced only by the trusted supervisor. The decisive test is a **prompt-injection attack**: the same binary, model, grammar and contract, with only the prompt changed, and the supervisor refuses the forbidden motion and the plant does not move.
+
 ---
 
 ## 5. Implementation Roadmap & File-Level Plan
@@ -274,8 +325,8 @@ To ensure 100% reproducibility in CI and judge evaluations:
 | Step | Action | Impacted Files | Status & Verification Method |
 |:---:|:---|:---|:---|
 | **1** | Define the supervisor-verdict feedback frame | `qnx/latch_feedback.h` | **DONE (codec only).** Compile-time `_Static_assert(sizeof(latch_feedback_t) == 24)` and a second assert pinning the CRC offset at 20. Verified by `make -C qnx latch-feedback-check`. Not yet on the runtime path — see §4.2 item 2. |
-| **2** | Add Supervisor Feedback Dispatch | `qnx/latchd.c`, `qnx/latch_ingest.c` | **NOT DONE.** Requires a frozen-protocol decision and a fresh on-target evidence capture. The guest-side agent (`guest/latch_guest_agent.py`) does not exist either. |
+| **2** | Add Supervisor Feedback Dispatch | `qnx/latchd.c`, `qnx/latch_ingest.c` | **NOT DONE.** Requires a frozen-protocol decision and a fresh on-target evidence capture. The guest-side agent (`guest/latch_guest_agent.py`) does not exist either. **This is the blocker on the in-guest inference's observe half** — the model can propose but cannot yet see the plant's response. |
 | **3** | Implement the HOMEOSTAT engine | `qnx/gov_homeostat.c/.h`, `qnx/latch_manifest.c/.h`, `qnx/latchd.c`, `qnx/gov_gate_precheck.c/.h` | **DONE.** Optional schema-3 `homeostat` manifest section (default-off), contracting-only ceiling applied in the gate. Unit test `qnx/gov_homeostat_test.c`; runtime test `tools/homeostat_e2e.py`; both run from `make -C qnx check-governor`. |
 | **4** | Build Iterative Agent Loop | `tools/agent_loop.py` | **PARTIAL.** `tools/agent_loop.py` exists (an autonomous planning/heartbeat simulation using the GovernorClient SDK). The live-LLM guest variant `guest/latch_guest_agent.py` does **not** exist. |
-| **5** | Integrate SmolLM2-135M Live Demo | `tools/llm_governor_runner.py` | **NOT DONE as named.** The installed assets exist (`/home/skanda/llama.cpp/build/bin/llama-cli`, `/home/skanda/models/SmolLM2-135M-Instruct-Q8_0.gguf`) and `tools/llama_governor_agent_test.py` exercises the agent-side policy, but `tools/llm_governor_runner.py` does not exist. |
+| **5** | Integrate SmolLM2-135M Live Demo | `tools/llm_governor_runner.py`, `guest/latch_infer.cpp`, `qnx/latch_qemu_infer.build` | **DONE — but not as named, and EXPERIMENTALLY.** `tools/llm_governor_runner.py` does not exist; the in-guest equivalent does: `guest/latch_infer.cpp` is a custom llama.cpp API program (not `llama-cli`) that runs **inside** the guest, and `qnx/latch_qemu_infer.build` is the bootable profile that carries it. The model and the binary travel on a **read-only virtio-blk asset disk**. Proven on target by a decisive **prompt-injection attack**: the model asked for a forbidden motion and the trusted supervisor refused it and the plant did not move (`docs/evidence/governor/infer-qemu.txt`). The **loop's observe half is still missing** — there is no bidirectional feedback channel (step 2 / U-2), so this is one supervised proposal, not a closed loop. |
 | **6** | Zero-Regression Verification Gate | `qnx/Makefile`, `tools/consistency_check.py` | **DONE.** `consistency_check.py` asserts the HOMEOSTAT wiring and the default-off property; `make -C qnx check`, `check-governor`, `fuzz`, `check-asan`, `evidence-check` and `tools/attacks/run_attacks.py` are all green. |

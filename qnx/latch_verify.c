@@ -120,20 +120,31 @@ static int send_frame(int fd, uint32_t seq, int32_t u_mrad, uint16_t fault, uint
     return 0;
 }
 
+static int finish_verify(int rc, bool print_rc) {
+    if (print_rc) {
+        printf("VERIFY_RC=%d\n", rc);
+        fflush(stdout);
+    }
+    return rc;
+}
+
 int main(int argc, char *argv[]) {
     bool dump_only = false;
     bool explicit_manifest = false;
+    bool print_rc = false;
     const char *manifest_path = "latch.manifest";
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--status") == 0) {
             dump_only = true;
+        } else if (strcmp(argv[i], "--print-rc") == 0) {
+            print_rc = true;
         } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
             manifest_path = argv[++i];
             explicit_manifest = true;
         } else {
-            fprintf(stderr, "Usage: %s [--status] [-m latch.manifest]\n", argv[0]);
-            return 1;
+            fprintf(stderr, "Usage: %s [--status] [--print-rc] [-m latch.manifest]\n", argv[0]);
+            return finish_verify(1, print_rc);
         }
     }
 
@@ -150,7 +161,7 @@ int main(int argc, char *argv[]) {
     if (latch_manifest_load(manifest_path, &manifest, err_buf, sizeof(err_buf)) != 0) {
         fprintf(stderr, "latch_verify: FATAL: Failed to load manifest '%s': %s (Fail-Closed)\n",
                 manifest_path, err_buf);
-        return 1;
+        return finish_verify(1, print_rc);
     }
 
     const char *act_path  = (manifest.paths.actuator[0] != '\0') ? manifest.paths.actuator : LATCH_DEV_ACTUATOR;
@@ -216,7 +227,7 @@ int main(int argc, char *argv[]) {
     }
     if (act_fd < 0) {
         perror("open /dev/latch/actuator");
-        return 1;
+        return finish_verify(1, print_rc);
     }
 
     /* --- Pre-flight: the supervisor's current state ------------------- */
@@ -226,21 +237,21 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "latch_verify: FATAL: cannot read the supervisor status "
                         "(devctl GET_STATUS failed) -- cannot verify anything.\n");
         close(act_fd);
-        return 2;
+        return finish_verify(2, print_rc);
     }
     if (st0.manifest_sha256[0] == 0u) {
         fprintf(stderr, "latch_verify: FATAL: the supervisor returned an empty "
                         "manifest digest -- the status snapshot was not taken "
                         "consistently.\n");
         close(act_fd);
-        return 2;
+        return finish_verify(2, print_rc);
     }
 
     int prop_fd = open(prop_path, O_WRONLY);
     if (prop_fd < 0) {
         perror("open /dev/latch/proposal");
         close(act_fd);
-        return 1;
+        return finish_verify(1, print_rc);
     }
 
     /* Continue the supervisor's sequence, and remember where we started. */
@@ -348,7 +359,7 @@ int main(int argc, char *argv[]) {
         {
             latch_tape_dump_t dump;
             memset(&dump, 0, sizeof(dump));
-            dump.start_index = UINT32_MAX;
+            dump.start_index = UINT64_MAX;
             dump.count       = LATCH_DUMP_MAX_ENTRIES;
             if (devctl(act_fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL) != 0) {
                 fprintf(stderr, "latch_verify: cannot read the evidence tape.\n");
@@ -485,7 +496,7 @@ int main(int argc, char *argv[]) {
         /* Inspect evidence tape to verify HOME retraction occurred monotonically */
         latch_tape_dump_t tape_check;
         memset(&tape_check, 0, sizeof(tape_check));
-        tape_check.start_index = UINT32_MAX;
+        tape_check.start_index = UINT64_MAX;
         tape_check.count       = LATCH_DUMP_MAX_ENTRIES;
         bool saw_home_mode = false;
         bool home_monotonic = true;
@@ -594,7 +605,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "latch_verify: FATAL: cannot read the final supervisor status "
                         "(devctl GET_STATUS failed) -- verification INCOMPLETE.\n");
         close(act_fd);
-        return 2;
+        return finish_verify(2, print_rc);
     }
 
     uint64_t cps = SYSPAGE_ENTRY(qtime)->cycles_per_sec;
@@ -616,7 +627,7 @@ int main(int argc, char *argv[]) {
 
     latch_tape_dump_t dump;
     memset(&dump, 0, sizeof(dump));
-    dump.start_index = UINT32_MAX;
+    dump.start_index = UINT64_MAX;
     dump.count       = 12;
     if (devctl(act_fd, DCMD_LATCH_DUMP_TAPE, &dump, sizeof(dump), NULL) == 0) {
         printf("\nLast %u Evidence Tape Records (.bss Ring):\n", dump.count);
@@ -638,12 +649,12 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("\n[LATCH VERIFY] ALL 5 MICROKERNEL CRITICALITY INVARIANTS VERIFIED (PASS).\n");
             }
-            return 0;
+            return finish_verify(0, print_rc);
         } else {
             printf("\n[LATCH VERIFY] VERIFICATION FAILED: One or more invariants violated.\n");
-            return 1;
+            return finish_verify(1, print_rc);
         }
     }
 
-    return 0;
+    return finish_verify(0, print_rc);
 }

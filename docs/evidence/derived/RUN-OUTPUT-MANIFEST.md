@@ -116,13 +116,131 @@ rows, which covers the whole guest suite.
 
 ---
 
-## G. `make -C qnx evidence` — everything except the QEMU run
+## G. `make -C qnx evidence-governor-vm-kill` — the kill / restart / resume transcript
+
+Boots QEMU AArch64 `virt` against the GOVERNOR IFS (~6 min) and drives
+the whole containment-and-recovery story on the real target: the guest
+VM is killed, the supervisor is shown to fail closed, the operator
+restarts the guest through the narrowly-typed lifecycle daemon, and
+the writer-session handoff is **observed** rather than timed.
+
+The harness writes the transcript DIRECTLY into the archive and exits
+non-zero WITHOUT touching the archive on failure, so a failed run can
+never replace good evidence with a partial transcript.
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/governor-vm-kill-resume.txt` | The full transcript: the security-type map, the kill, the fail-closed status, the observed handoff, the new writer session, and the privilege re-check |
+
+---
+
+## H. `make -C qnx evidence-governor-infer` — the EXPERIMENTAL in-guest language model
+
+Boots QEMU AArch64 `virt` against the **experimental in-guest inference**
+IFS twice (~10 min): once with the nominal prompt and once with the
+**attack** prompt. The model, the inference binary and the prompt live
+on a **read-only virtio-blk asset disk**; the initramfs carries only the
+freestanding policy, because qvm's blob loader cannot deliver a large
+initramfs to an upstream-Linux guest.
+
+The harness writes BOTH captures DIRECTLY into the archive and exits
+non-zero WITHOUT touching the archive unless **both** runs pass, so a
+failed run can never replace good evidence with a partial transcript.
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/infer-qemu.txt` | Both runs' structured reports: the model's own decision lines (read out of the guest console), the policy's kernel-stamped markers, the command event from the supervisor's event ring, the ring's fault statistics, the status snapshot before and after the 25 s lease hold, the contract sidecar verification, and the verdict |
+| 2 | `governor/infer-qemu-console.txt` | The raw guest console of both runs: the Linux boot, the asset-disk mount, the llama.cpp load, the model's decision line, and the policy's markers with the guest kernel's own timestamps |
+
+---
+
+## I. `make -C qnx evidence-governor-qemu` — the scripted GOVERNOR profile, on target
+
+Boots QEMU AArch64 `virt` against the **scripted GOVERNOR** IFS (~8 min)
+and captures the deadman proof: the guest goes silent for a scripted
+110 ms, the signed 100-tick lease expires **once**, the ladder demotes
+exactly one rung (HP → ADVISE), heartbeat-only traffic does **not** earn
+the clean-command recovery credit, 25 clean commands recover HP, and the
+final silence ratchets the ladder to LATCH with the HEARTBEAT fault.
+
+These two files used to be **orphans** in the archive — they had no
+generator anywhere in the tree, which is exactly how they went stale.
+This target is that generator. The archive is written ONLY when the run
+passes: a failed run exits non-zero WITHOUT touching `docs/evidence/`.
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/governor-qemu-verify.txt` | The banner, the structured runtime report (the A4 sample table, the recovery ladder, the final state, the on-target contract verification and the guest's own console), and the verifier's own output ending in `[GOVERNOR_QEMU PASS]` |
+| 2 | `governor/governor-qemu-console.txt` | The raw serial transcript of the session, verbatim |
+
+---
+
+## J. `make -C qnx evidence-secpol-audit` — the security-policy generation audit
+
+Boots QEMU AArch64 `virt` against the **DISPOSABLE, unrestricted**
+`secpolgenerate` audit image (~8 min) -- never the enforced deployment
+image -- lets the 235-frame scripted guest scenario run to completion,
+and captures what the generator observed:
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/secpol-audit.txt` | The banner, the process-type map under audit, the workload's completion, the five observation files (`policy` = the DELTA, `errors` = the failed ability checks, `unused` = the rules the workload did not exercise, plus the `request` and `control` channels), and the supervisor's final state under the generated policy |
+
+The archive is written ONLY when the run passes: a failed run exits
+non-zero WITHOUT touching `docs/evidence/`.
+
+**The capture is an OBSERVATION, not a rule set.** The disposition of
+every delta entry is the written review
+(`docs/secpol-audit-review.md`), which accepted **none** of them, and
+`qnx/latch.secpol` is untouched by the audit.
+
+---
+
+## K. `make -C qnx evidence-governor-feedback` — the LFBK feedback transport and the verdict control loop
+
+Boots QEMU AArch64 `virt` **twice** (~10 min) against the two
+feedback images:
+
+- **W4** (`qnx/latch_qemu_fbprobe.build`) asks whether a verdict
+  reaches the freestanding guest **at all**. The transport is a
+  **polled verdict file** on `vdev virtio-blk` — the vdev's own usage
+  is `hostdev [<]<pathname>`, and the `<` makes the backing file
+  **read-only to the guest**, enforced by the *hypervisor*, not by the
+  guest behaving. The pass bar is a **change**: the guest's own polling
+  must see the sequence number move, with every frame re-synchronised
+  on the magic and CRC-validated.
+- **W5** (`qnx/latch_qemu_fbverdict.build`) asks the question that
+  matters: when the **trusted supervisor** refuses the guest's
+  proposal, does the guest find out — and does it **stop asking**? The
+  W5 image contains **no synthetic publisher**: `latchd -f
+  /dev/latch/feedback_pub` is the only writer of the verdict file, and
+  the guest decodes the verdict, correlates it with the proposal it
+  answers (by sequence number **and** session epoch), and stops on a
+  `REJECT`. It reuses the W4 qvmconf **verbatim**, so the only
+  difference between the two measurements is who publishes and what the
+  guest does with it.
+
+The archive is written ONLY when **both** runs pass: a failed run exits
+non-zero WITHOUT touching `docs/evidence/`, so a broken build can never
+replace good evidence with a partial transcript. The failing run's own
+transcript and report are still written, into a temporary directory, so
+the failure can be diagnosed.
+
+| # | Output file | What it contains |
+|---|---|---|
+| 1 | `governor/feedback-transport.txt` | The banner, the **guest's own reports** for both runs (read back out of the raw transcripts, one line per **distinct** marker — the PL011 console echoes every record several times), both verifiers' own output ending in `[FB_QEMU PASS]` and `[FBVERDICT_QEMU PASS]`, and an explicit **WHAT THIS DOES NOT PROVE** section |
+| 2 | `governor/feedback-transport-console.txt` | The **raw** serial transcript of the W4 transport probe, verbatim |
+| 3 | `governor/feedback-verdict-console.txt` | The **raw** serial transcript of the W5 verdict watcher, verbatim |
+
+---
+
+## L. `make -C qnx evidence` — everything except the QEMU run
 
 Runs B, C, D, E and F in sequence (~20 s).
 
 ---
 
-## H. `make -C qnx evidence-check` — the anti-rot gate
+## M. `make -C qnx evidence-check` — the anti-rot gate
 
 Re-runs the host-sim capture and compares the signature against
 `derived/host-sim-signature.txt`. A mismatch fails CI, so the archive

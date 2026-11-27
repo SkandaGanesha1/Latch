@@ -1,0 +1,200 @@
+################################################################################
+# qnx/latch_qemu_fbprobe.qvmconf
+#
+# The HOST->GUEST FEEDBACK-TRANSPORT PROBE (W4).
+#
+# This is the GOVERNOR guest configuration with ONE addition: a
+# `vdev virtio-blk` whose backing file is the LFBK VERDICT FILE.  It is the
+# decisive experiment for the feedback channel, and it is a DISPOSABLE
+# profile: it exists to answer one question -- can a host-side verdict
+# reach a freestanding guest policy without a byte of guest write access
+# to the channel?
+#
+# THREE TRANSPORTS WERE REJECTED BY MEASUREMENT (2026-11-26).
+# -----------------------------------------------------------
+# 1. THE QNX PSEUDO-TERMINAL.  `devc-pty` delivers in the OPPOSITE
+#    direction to the documentation, and its open ORDER decides usability:
+#
+#        write(/dev/ptyp0) "CTRLMARK01"  ->  read(/dev/ttyp0)   0 bytes
+#        write(/dev/ttyp0) "PEERMARK02"  ->  read(/dev/ptyp0)  20 bytes
+#
+#    across two processes the reader must open the CONTROLLER FIRST, or its
+#    open is refused with EBUSY.  Since the hypervisor opens its host
+#    endpoint at qvm start and a hostdev that cannot be opened is FATAL to
+#    the VM start, the publisher would have to guess when the hypervisor
+#    had opened its end.  A pty also lets ANY process write into the
+#    channel, which is the wrong property for a channel whose whole value
+#    is "this verdict came from the trusted supervisor".
+#
+# 2. THE PL011 vdev's HOST->GUEST INJECTION.  The bytes DO reach the
+#    hypervisor's own buffer -- the mailbox's readcond() is served,
+#    `delivered=11`, and the vdev reads 1024/912/800-byte chunks -- and
+#    then stop: the guest's UART never receives a byte, because the vdev
+#    raises the guest interrupt only when a guest-visible register state
+#    says the receiver is enabled, and the state the vdev waits for is not
+#    one the Linux `amba-pl011` driver produces (byte 329 bit 4 never goes
+#    set).  CONFIG_STRICT_DEVMEM blocks /dev/mem poking, and there is no
+#    CONFIG_SERIAL_8250_DF/_OF.
+#
+# 3. THE virtio-console's INPUT DIRECTION.  `vdconsole_pulse` (0x1b54)
+#    requires byte 360 of the port state to be non-zero; that byte is set
+#    only at 0x1984 inside `vdconsole_vwrite`'s ERROR path, reachable only
+#    when `vio_write` returns exactly 0x10000 -- and both call sites add
+#    0x10000 + n, so it never happens.  The pulse is never raised, so no
+#    input byte is ever delivered.
+#
+# THE CHOSEN TRANSPORT: A POLLED VERDICT FILE ON virtio-blk.
+# ---------------------------------------------------------
+# `vdev virtio-blk` presents a host FILE to the guest as a block device.
+# Its usage text (read out of the installed
+# target/qnx/aarch64le/lib/dll/vdev-virtio-blk.so) is:
+#
+#     hostdev [<]<pathname>
+#         Host device to use for input/output. If "<" is present, device is
+#         read only.
+#
+# so `hostdev </dev/shmem/latch_feedback.img` makes the backing file
+# READ-ONLY AT THE DEVICE: the hypervisor opens it with
+# `open(path, O_RDONLY | O_NOCTTY)` and never with write access, the guest
+# sees a read-only block device, and NO BYTE of the channel can be written
+# by the guest at all.  That is the security statement of this transport,
+# and it is enforced by the hypervisor rather than by the guest behaving.
+#
+# The file is exactly 1 MiB (`FB_BLOCK_BYTES`), created 0600 by root
+# BEFORE `latch_fb_sink` registers its nodes, so the buildfile's existing
+# `waitfor /dev/latch/feedback 4` means "the node exists => the file
+# exists at its final size".  The 28-byte LFBK frame lives at SECTOR 0
+# (`FB_BLOCK_FRAME_OFFSET` = 0).  The file is written by EXACTLY ONE
+# process -- `latch_fb_sink`, which accepts a frame only on its one-sided
+# WRITE node -- and only the latest frame is kept, on a dedicated writer
+# thread, so the advisory channel can never stall the safety core.
+#
+# The guest POLLS the sector with pread64 (AArch64 syscall 67) and
+# correlates by seq + session_epoch.  A lost verdict is safe; silence is
+# fatal.  `loc 0x1c0d0000` / `intr gic:41` are the addresses the SDP's own
+# example guest configuration uses for virtio-blk, so they are known-good
+# on this hypervisor.
+#
+# WHY NOT A SECOND virtio-console
+# -------------------------------
+# A second `vdev virtio-console` was tried and is REJECTED BY
+# MEASUREMENT: it corrupted the frame channel (26 of 84 frames delivered;
+# the wire-fault count tripled) --
+# docs/evidence/resolution/05-rejected-2nd-virtio-console.txt.
+################################################################################
+
+system latch-fbprobe-policy-guest-qemu-virt
+
+logger error,fatal,internal,warn,info stderr
+
+set psci-supported on
+set pointer-authentication off
+set gic-hwassist off
+set linux-fdt-free on
+
+unsupported instruction ignore
+unsupported reference ignore
+unsupported register ignore
+
+# Guest-physical RAM (512 MB). Identical to the GOVERNOR profile, so the
+# 235-frame scenario is the same scenario.
+ram 0x80000000,0x20000000
+
+cpu
+    cluster _cpu-2
+    sched 8r
+cpu
+    cluster _cpu-3
+    sched 8r
+
+vdev gic
+    version 2
+    gicd 0x08000000
+    gicc 0x08010000
+
+# Black channel: guest /dev/hvc0 <-> host /proc/boot/latch-ingest over a
+# QNX pipe.  UNCHANGED from the GOVERNOR profile -- that is the point: the
+# 235-frame scenario must still pass with the feedback file present.
+#
+# There is NO `hostdev <` on this console.  Two host->guest inputs were
+# attempted here and both are dead by measurement: the PL011 injection
+# (the guest's RX-enable gate is never satisfied) and the virtio-console
+# input (its pulse is unreachable).  The feedback now travels on the
+# read-only block device below, so the black channel carries exactly what
+# it carried before -- proposals out, nothing in.
+vdev virtio-console
+    loc 0x1c0a0000
+    intr gic:42
+    sched 60
+    hostdev >"|on -T latch_ingest_t -C 1 -p 30f /proc/boot/latch-ingest -m /proc/boot/governor_servo.manifest"
+    name latch_console
+
+# Guest kernel console -> /dev/shmem/guest_console.log.
+#
+# THE DEVICE NAMES ARE NOT UNDER THE GUEST'S CONTROL.  The Linux PL011
+# driver takes each port's index from the guest device tree's `serial`
+# alias when there is one and from the driver's PROBE ORDER when there is
+# not (drivers/tty/serial/amba-pl011.c: `pl011_probe_dt_alias()`), and
+# neither is in the guest's hands.  MEASURED on the QEMU AArch64 target
+# (2026-11-26), with the console PL011 declared FIRST in this file:
+#
+#     1c0b0000.uart: ttyAMA0 at MMIO 0x1c0b0000   (the FEEDBACK port)
+#     1c090000.uart: ttyAMA1 at MMIO 0x1c090000   (the CONSOLE port)
+#
+# -- the REVERSE of the declaration order.  The guest-side probe therefore
+# tries EVERY candidate port and lets the DATA decide which one carries
+# the channel; it never trusts a name.  (This census is kept because the
+# kernel console itself is still a PL011; the feedback port it refers to
+# has since been removed -- see below.)
+vdev pl011
+    loc 0x1c090000
+    intr gic:33
+    hostdev >/dev/shmem/guest_console.log
+
+# THE FEEDBACK DEVICE: host -> guest, READ-ONLY TO THE GUEST.
+#
+# 0x1c0d0000 / IRQ 41 (SPI 9) -- the SDP's own known-good virtio-blk pair,
+# the same one the experimental inference profile uses for its asset disk.
+#
+# `hostdev </dev/shmem/latch_feedback.img` opens the backing file
+# O_RDONLY in the hypervisor.  Reads are POSITIONED `_io_read` calls with
+# the 64-bit offset in x4, the size comes from `fstat`/`fstatvfs`, and
+# `devctl(fd, 0x8018c1a, buf, 24)` (the partition entry) has a failure
+# fallback that zeroes the partition info and continues -- so a plain
+# 1 MiB regular file with no partition table is a valid backing store.
+# The reads are buffered, positioned and coherent with the host page
+# cache, so a `pwrite` by `latch_fb_sink` on the same inode is visible to
+# the guest's next `pread64`.  (Contract read out of
+# target/qnx/aarch64le/lib/dll/vdev-virtio-blk.so, 2026-11-26.)
+#
+# The file is created by the buildfile BEFORE this qvm is launched, so
+# the open cannot lose a race: a hostdev that cannot be opened is FATAL
+# to the VM start.
+vdev virtio-blk
+    loc 0x1c0d0000
+    intr gic:41
+    hostdev </dev/shmem/latch_feedback.img
+    name latch_feedback
+
+# THE KERNEL CONSOLE MUST NOT SIT ON A SECOND PL011.
+#
+# MEASURED on the QEMU AArch64 target (2026-11-26): with
+# `console=ttyAMA0`, the guest's printk output went to the FEEDBACK
+# PL011's OUTPUT direction -- the mailbox's DISCARD node counted
+# `out_bytes=6984` -- because ttyAMA0 IS the feedback port (0x1c0b0000,
+# measured: `1c0b0000.uart: ttyAMA0 at MMIO 0x1c0b0000`).  So the
+# console was competing with the feedback channel for the same UART,
+# and the guest's console output was being thrown away instead of
+# reaching /dev/shmem/guest_console.log.
+#
+# The console is therefore on ttyAMA1 -- the port at 0x1c090000, whose
+# hostdev IS /dev/shmem/guest_console.log -- and `keep_bootcon` is
+# dropped so the earlycon and the real console do not write every line
+# twice to the same port.
+#
+# The device names are not under the guest's control (see the note above
+# the console PL011 declaration), so the guest-side probe tries EVERY
+# candidate port and lets the DATA decide which one carries the channel.
+load 0x80080000,/proc/boot/linux-guest.Image
+initrd load /proc/boot/governor-linux-guest.initrd
+cmdline "earlycon=pl011,0x1c090000 console=ttyAMA1,115200 root=/dev/ram0 rw rdinit=/init loglevel=8"

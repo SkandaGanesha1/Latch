@@ -10,7 +10,7 @@
 
 1. **Untrusted Guest Channel:** Linux 6.12 guest VM running LLM / neural planning policy (SOUP).
 2. **Black Channel Transport:** virtio-console serial port emitting 32-byte binary wire frames.
-3. **Ingestion Bridge (`latch-ingest`):** Unprivileged worker validating CRC32 and translating wire frames to 48-byte `LPR2` IPC messages.
+3. **Ingestion Bridge (`latch-ingest`):** Unprivileged worker validating CRC32 and translating wire frames to 56-byte `LPR2` IPC messages.
 4. **Safety Supervisor (`latchd`):** Privileged QNX microkernel resource manager (`/dev/latch/proposal`, `/dev/latch/actuator`) on `_cpu-0`, `SCHED_FIFO 63`.
 5. **Decision & Precheck Gate (`gov_gate_precheck.c`):** Evaluates units, rate burst, confidence shrinkage, keep-out barrier, and medical dose limits.
 6. **Blackbox Flight Recorder (`latchlog` / `gov_replay.py`):** 4096-entry `.bss` circular memory ring with offline rolling SHA-256 seal.

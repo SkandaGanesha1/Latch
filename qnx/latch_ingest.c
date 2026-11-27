@@ -26,6 +26,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <inttypes.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -238,9 +239,37 @@ int main(int argc, char *argv[]) {
      * rather than as the owner.
      */
     uint16_t producer_tag     = 1u;
+    /*
+     * Session epoch (RT-02).
+     *
+     * The producer chooses the epoch of the session it opens, and stamps it
+     * on every frame it forwards.  The supervisor binds the epoch of the
+     * session it is running and rejects any frame carrying a different one,
+     * so a frame captured in an earlier session cannot be replayed into a
+     * later one (the supervisor's sequence baseline is re-based on every
+     * session open, so without the epoch a stale frame with a high sequence
+     * number would be accepted as the new session's first frame).
+     *
+     * The DEFAULT is a FRESH epoch for every process: two bridge instances
+     * that start at the same moment must not collide, and a restarted bridge
+     * must not silently resume the previous session's identity.  The value
+     * is derived from the monotonic clock, the wall clock and the pid, so it
+     * is unique per process in practice -- it is an IDENTIFIER, not a
+     * secret, and it is not an authentication mechanism.
+     *
+     * `-e N` / `--session-epoch N` pins it, which is what the regression
+     * tests use to prove that a REUSED epoch is rejected.
+     */
+    uint32_t session_epoch   = 0u;
+    bool session_epoch_pinned = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "i:o:m:c:t:v")) != -1) {
+    static const struct option long_options[] = {
+        { "session-epoch", required_argument, NULL, 'e' },
+        { "producer-tag",  required_argument, NULL, 't' },
+        { NULL, 0, NULL, 0 }
+    };
+    while ((opt = getopt_long(argc, argv, "i:o:m:c:t:e:v", long_options, NULL)) != -1) {
         switch (opt) {
             case 'i':
                 input_path = optarg;
@@ -258,13 +287,19 @@ int main(int argc, char *argv[]) {
             case 't':
                 producer_tag = (uint16_t)strtoul(optarg, NULL, 10);
                 break;
+            case 'e':
+                session_epoch = (uint32_t)strtoul(optarg, NULL, 0);
+                session_epoch_pinned = true;
+                break;
             case 'v':
                 verbose = true;
                 break;
             default:
                 fprintf(stderr, "Usage: %s [-i input_dev] [-o /dev/latch/proposal|-] "
-                                "[-m latch.manifest] [-c cpu] [-t producer_tag] [-v]\n",
-                        argv[0]);
+                                "[-m latch.manifest] [-c cpu] [-t producer_tag] "
+                                "[-e session_epoch] [-v]\n"
+                                "       %s --session-epoch N --producer-tag N\n",
+                        argv[0], argv[0]);
                 return EXIT_FAILURE;
         }
     }
@@ -273,6 +308,50 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "latch-ingest: FATAL: producer tag 0 is reserved (a v2 frame "
                         "must name its producer); refusing to start (Fail-Closed)\n");
         return EXIT_FAILURE;
+    }
+
+    if (!session_epoch_pinned) {
+        /*
+         * Derive a FRESH epoch for this process.
+         *
+         * The epoch is an IDENTIFIER, not a secret and not an authentication
+         * mechanism: it says "this frame belongs to the session I opened",
+         * and the supervisor checks it against the session it is running.
+         * It therefore only has to be UNIQUE per session and not REUSABLE,
+         * which is why it is derived from three independent sources -- the
+         * monotonic clock (never repeats), the wall clock (never repeats
+         * across a reboot) and the pid (never repeats among live peers).
+         *
+         * The mixing is a bijective scramble of the low bits so that two
+         * processes starting in the same nanosecond still differ.
+         */
+        struct timespec mono;
+        struct timespec wall;
+        (void)clock_gettime(CLOCK_MONOTONIC, &mono);
+        (void)clock_gettime(CLOCK_REALTIME, &wall);
+        uint64_t mixed = (uint64_t)mono.tv_nsec;
+        mixed ^= (uint64_t)mono.tv_sec * 0x9E3779B97F4A7C15ULL;
+        mixed ^= (uint64_t)wall.tv_nsec * 0xC2B2AE3D27D4EB4FULL;
+        mixed ^= (uint64_t)wall.tv_sec * 0x165667B19E3779F9ULL;
+        mixed ^= (uint64_t)(unsigned)getpid() * 0x27D4EB2F165667C5ULL;
+        mixed ^= (mixed >> 29);
+        session_epoch = (uint32_t)(mixed & 0xFFFFFFFFULL);
+        if (session_epoch == LATCH_SESSION_EPOCH_NONE) {
+            /* 0 is RESERVED: it means "this frame names no session". */
+            session_epoch = 1u;
+        }
+    }
+
+    if (session_epoch == LATCH_SESSION_EPOCH_NONE) {
+        fprintf(stderr, "latch-ingest: FATAL: session epoch 0 is reserved (a v2 frame "
+                        "must name its session); refusing to start (Fail-Closed)\n");
+        return EXIT_FAILURE;
+    }
+
+    if (verbose) {
+        fprintf(stderr, "[latch-ingest] producer_tag=%u session_epoch=0x%08X%s\n",
+                (unsigned int)producer_tag, (unsigned int)session_epoch,
+                session_epoch_pinned ? " (pinned)" : " (fresh)");
     }
 
     if (!explicit_manifest && access(manifest_path, F_OK) != 0) {
@@ -331,15 +410,11 @@ int main(int argc, char *argv[]) {
                                 PROCMGR_AID_EOL);
     if (ab_rc != EOK) {
         int err = (ab_rc > 0) ? ab_rc : errno;
-        fprintf(stderr, "latch-ingest: WARNING: procmgr_ability() failed (%s)\n", strerror(err));
-        /* DESIGN NOTE: privilege drop is best-effort for the ingest bridge.
-         * The bridge only FORWARDS validated frames to /dev/latch/proposal;
-         * it cannot write the actuator (no latch/actuator ability) and has
-         * no path to hardware. Failure to drop root/abilities does not
-         * compromise the safety argument — the supervisor (latchd) is the
-         * sole ability holder and the seqlock ring is the trust boundary.
-         * We WARN so the operator sees it; we continue so the bridge does
-         * not become a denial-of-service vector against the data path. */
+        fprintf(stderr, "latch-ingest: FATAL: procmgr_ability() failed (%s) (Fail-Closed)\n", strerror(err));
+        if (in_fd != STDIN_FILENO) {
+            close(in_fd);
+        }
+        return EXIT_FAILURE;
     }
     if (manifest.paths.ability[0] != '\0') {
         int custom_aid = procmgr_ability_lookup(manifest.paths.ability);
@@ -347,8 +422,12 @@ int main(int argc, char *argv[]) {
             int custom_rc = procmgr_ability(0, drop_flags | (unsigned)custom_aid, PROCMGR_AID_EOL);
             if (custom_rc != EOK) {
                 int err = (custom_rc > 0) ? custom_rc : errno;
-                fprintf(stderr, "latch-ingest: WARNING: procmgr_ability(%s) failed (%s)\n",
+                fprintf(stderr, "latch-ingest: FATAL: procmgr_ability(%s) failed (%s) (Fail-Closed)\n",
                         manifest.paths.ability, strerror(err));
+                if (in_fd != STDIN_FILENO) {
+                    close(in_fd);
+                }
+                return EXIT_FAILURE;
             }
         }
     }
@@ -369,16 +448,37 @@ int main(int argc, char *argv[]) {
 
         uint16_t wire_version = (uint16_t)((uint16_t)wire_bytes[4] |
                                            ((uint16_t)wire_bytes[5] << 8u));
+        bool contract_v2 = (manifest.schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
+                            manifest.protocol.version == 2u && manifest.governor.enabled != 0u);
         const void *ipc_data = &ipc_prop;
         size_t ipc_size = sizeof(ipc_prop);
-        if (wire_version == 2u && manifest.schema_version == LATCH_MANIFEST_GOVERNOR_SCHEMA_VERSION &&
-            manifest.protocol.version == 2u && manifest.governor.enabled != 0u) {
-            latch_parse_wire_v2_frame(wire_bytes, &ipc_prop_v2);
+        if (contract_v2) {
+            if (wire_version == 2u) {
+                latch_parse_wire_v2_frame(wire_bytes, &ipc_prop_v2);
+            } else {
+                /* Active v2 contract: never fall back to 24B LPRP on v1/unknown
+                 * wire frames. Emit a sanitized 56B LPR2 fault frame instead. */
+                memset(&ipc_prop_v2, 0, sizeof(ipc_prop_v2));
+                ipc_prop_v2.ipc_magic = LATCH_IPC_PROPOSAL_V2_MAGIC;
+                ipc_prop_v2.ipc_version = 2u;
+                ipc_prop_v2.wire_version = 2u;
+                ipc_prop_v2.kind = GOVERNOR_WIRE_CMD;
+                ipc_prop_v2.wire_flags = (uint16_t)GOVERNOR_WIRE_CMD;
+                ipc_prop_v2.pre_fault_bits = LATCH_FAULT_MAGIC;
+                ipc_prop_v2.ingest_cycles = latch_ingest_cycles();
+            }
             ipc_data = &ipc_prop_v2;
             ipc_size = sizeof(ipc_prop_v2);
             /* Stamp the producer identity (L-2): the supervisor's lease is
              * scoped to the producer that established the session. */
             ipc_prop_v2.producer_tag = producer_tag;
+            /* Stamp the session epoch (RT-02): every frame this bridge
+             * forwards belongs to the session the bridge opened. The
+             * supervisor binds that epoch and rejects any frame carrying a
+             * different one, so a frame captured in an earlier session
+             * cannot be replayed into this one. */
+            ipc_prop_v2.session_epoch = session_epoch;
+            ipc_prop_v2.reserved1 = 0u;
             if (ipc_prop_v2.pre_fault_bits != 0u) wire_faults++;
         } else {
             latch_wire_frame_t wire_frame;

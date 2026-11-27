@@ -99,12 +99,20 @@ def collect_attack_rows() -> List[Dict[str, Any]]:
         all_rows.append(r)
 
     # A4: Deadman Lease Trip & Recovery (79 ticks)
+    m4 = dict(manifest_dict)
+    m4["governor"]["deadman"]["warmup_heartbeats"] = 4
+    m4["governor"]["deadman"]["lease_ticks"] = 4
+    m4["governor"]["ladder"]["promote_clean_frames"] = 25
+    m4["governor"]["ladder"]["demote_faults_per_rung"] = 3
+    m4["governor"]["ladder"]["advise_fault_mask"] = (1 << 12) | (1 << 15)
     c = GovernorClient()
     for _ in range(4):
         c.send_heartbeat(advance_coherence=True)
     c.send_command(u_mrad=10, confidence_q8=255, unit_id=1, advance_coherence=True)
+    # Host simulation advances on IPC records; valid v2 shrink requests do not
+    # renew the deadman lease and provide deterministic unrenewed ticks.
     for _ in range(4):
-        c.send_silence()
+        c.send_shrink_request(shrink_v=m4["envelope"]["v_max"], shrink_scale_q8=255)
     c.send_command(u_mrad=15, confidence_q8=255, unit_id=1, advance_coherence=True)
     for _ in range(15):
         c.send_heartbeat(advance_coherence=True)
@@ -113,13 +121,7 @@ def collect_attack_rows() -> List[Dict[str, Any]]:
     for _ in range(5):
         c.send_command(u_mrad=40, confidence_q8=255, unit_id=1, advance_coherence=True)
     for _ in range(24):
-        c.send_silence()
-    m4 = dict(manifest_dict)
-    m4["governor"]["deadman"]["warmup_heartbeats"] = 4
-    m4["governor"]["deadman"]["lease_ticks"] = 4
-    m4["governor"]["ladder"]["promote_clean_frames"] = 25
-    m4["governor"]["ladder"]["demote_faults_per_rung"] = 3
-    m4["governor"]["ladder"]["advise_fault_mask"] = (1 << 12) | (1 << 15)
+        c.send_shrink_request(shrink_v=m4["envelope"]["v_max"], shrink_scale_q8=255)
     a4_rows = run_attack_pipeline(b"".join(c.emitted_frames), m4, name="tape_a4")
     for r in a4_rows:
         global_tick += 1

@@ -1,11 +1,156 @@
 ================================================================================
  QNX HYPERVISOR 8.0 — GUEST VM TERMINATION & FAIL-CLOSED CONTAINMENT DEMO (G2)  
- Platform: QNX OS for Safety 8.0 (procnto-smp-instr) on ARMv8-A QEMU virt       
+ Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)     
  Architecture: Mixed-Criticality Microkernel Partitioning (Zero Shared-Fate)   
+ Note: the QNX host runs under QEMU TCG software emulation, so any timing  
+       in this transcript is an emulation observation, not a target timing.  
 ================================================================================
 [PHASE 1] QNX SDP 8.0 Microkernel booted successfully.
 
 [PHASE 2] Inspecting Microkernel Process and Scheduling Topology (pidin)...
+pidin
+     pid tid name                         prio STATE          Blocked                     
+       1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
+       1   2 /proc/boot/procnto-smp-instr   0f READY                                      
+       1   3 /proc/boot/procnto-smp-instr   0f READY                                      
+       1   4 /proc/boot/procnto-smp-instr   0f RUNNING                                    
+       1   5 /proc/boot/procnto-smp-instr 255i INTR                                       
+       1   6 /proc/boot/procnto-smp-instr 255i INTR                                       
+       1   7 /proc/boot/procnto-smp-instr 255i INTR                                       
+       1   8 /proc/boot/procnto-smp-instr 255i INTR                                       
+       1   9 /proc/boot/procnto-smp-instr 254i INTR                                       
+       1  10 /proc/boot/procnto-smp-instr 254i INTR                                       
+       1  11 /proc/boot/procnto-smp-instr 254i INTR                                       
+       1  12 /proc/boot/procnto-smp-instr 254i INTR                                       
+       1  13 /proc/boot/procnto-smp-instr   1f NANOSLEEP                                  
+       1  14 /proc/boot/procnto-smp-instr  10r ???                                        
+       1  15 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  16 /proc/boot/procnto-smp-instr  10r RUNNING                                    
+       1  17 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  18 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  19 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  20 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  21 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  22 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  23 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  24 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  27 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  29 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
+       1  30 /proc/boot/procnto-smp-instr  10r RUNNING                                    
+       2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
+       2   2 proc/boot/devc-serpl011      254i INTR                                       
+    4099   1 proc/boot/slogger2            10r RECEIVE        1                           
+    4099   2 proc/boot/slogger2            10r RECEIVE        2                           
+    8196   1 proc/boot/pipe                10r SIGWAITINFO                                
+    8196   2 proc/boot/pipe                10r RECEIVE        1                           
+    8196   3 proc/boot/pipe                10r RECEIVE        1                           
+    8196   4 proc/boot/pipe                10r RECEIVE        1                           
+   12293   1 proc/boot/latchd              10f RECEIVE        1                           
+   12293   2 proc/boot/latchd              63f RECEIVE        2                           
+   16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
+   16391   1 proc/boot/latch_guestd        10r RECEIVE        1                           
+   24584   1 proc/boot/qvm                 10r REPLY          1                           
+   24584   2 proc/boot/qvm                 10r SEM            0                           
+   24585   1 proc/boot/ksh                 10r SIGSUSPEND                                 
+   28682   1 proc/boot/pidin               10r REPLY          1                           
+#
+  [VERIFIED] procnto-smp-instr, latchd (SCHED_FIFO 63), and qvm (hypervisor) running.
+
+[PHASE 2b] Security Type Map (pidin -F "%a %b %_ %28n")...
+pidin -F "%a %b %_ %28n"
+     pid tid type             name                        
+       1   1 -                /proc/boot/procnto-smp-instr
+       1   2 -                /proc/boot/procnto-smp-instr
+       1   3 -                /proc/boot/procnto-smp-instr
+       1   4 -                /proc/boot/procnto-smp-instr
+       1   5 -                /proc/boot/procnto-smp-instr
+       1   6 -                /proc/boot/procnto-smp-instr
+       1   7 -                /proc/boot/procnto-smp-instr
+       1   8 -                /proc/boot/procnto-smp-instr
+       1   9 -                /proc/boot/procnto-smp-instr
+       1  10 -                /proc/boot/procnto-smp-instr
+       1  11 -                /proc/boot/procnto-smp-instr
+       1  12 -                /proc/boot/procnto-smp-instr
+       1  13 -                /proc/boot/procnto-smp-instr
+       1  14 -                /proc/boot/procnto-smp-instr
+       1  15 -                /proc/boot/procnto-smp-instr
+       1  16 -                /proc/boot/procnto-smp-instr
+       1  17 -                /proc/boot/procnto-smp-instr
+       1  18 -                /proc/boot/procnto-smp-instr
+       1  19 -                /proc/boot/procnto-smp-instr
+       1  20 -                /proc/boot/procnto-smp-instr
+       1  21 -                /proc/boot/procnto-smp-instr
+       1  22 -                /proc/boot/procnto-smp-instr
+       1  23 -                /proc/boot/procnto-smp-instr
+       1  24 -                /proc/boot/procnto-smp-instr
+       1  25 -                /proc/boot/procnto-smp-instr
+       1  26 -                /proc/boot/procnto-smp-instr
+       1  27 -                /proc/boot/procnto-smp-instr
+       1  28 -                /proc/boot/procnto-smp-instr
+       1  29 -                /proc/boot/procnto-smp-instr
+       1  30 -                /proc/boot/procnto-smp-instr
+       2   1 -                proc/boot/devc-serpl011     
+       2   2 -                proc/boot/devc-serpl011     
+    4099   1 slogger2_t       proc/boot/slogger2          
+    4099   2 slogger2_t       proc/boot/slogger2          
+    8196   1 pipe_t           proc/boot/pipe              
+    8196   2 pipe_t           proc/boot/pipe              
+    8196   3 pipe_t           proc/boot/pipe              
+    8196   4 pipe_t           proc/boot/pipe              
+   12293   1 latchd_t         proc/boot/latchd            
+   12293   2 latchd_t         proc/boot/latchd            
+   16390   1 latchlog_t       proc/boot/latchlog          
+   16391   1 latch_guestd_t   proc/boot/latch_guestd      
+   24584   1 qvm_host_t       proc/boot/qvm               
+   24584   2 qvm_host_t       proc/boot/qvm               
+   24585   1 operator_shell_t proc/boot/ksh               
+   36874   1 operator_shell_t proc/boot/pidin             
+#
+  [VERIFIED] qvm=qvm_host_t, latch_guestd=latch_guestd_t, latchd=latchd_t, operator shell=operator_shell_t.
+
+[PHASE 3] Waiting for Linux guest VM to boot and stream telemetry (rx >= 5)...
+  [GUEST ACTIVE] Successfully received 196 proposals from Linux guest VM.
+/proc/boot/latchctl status
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 10923 ticks
+Current Mode         : HP (High Performance)
+Actuator Angle       : 100 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : 100 mrad (seq=196)
+Decision Latency     : last = 115 cyc (1840 ns) | max = 67303 cyc (1076848 ns)
+Proposals Received   : 196
+Wire Faults Caught   : 0
+Envelope Vetoes      : 0
+Ring Drops / WCET    : 0 drops | 2 overruns
+Proposal Backlog     : peak 3 frames | 0 over limit
+EPERM Rejections     : 0
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0000 (NONE)
+Latched Fault Bits   : 0x0000 (NONE)
+Clean Streak         : 0 frames
+GOVERNOR             : enabled | rung=HP (0)
+V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
+Warm-up / Agent      : 154 heartbeats | state 1
+Recovery Clean       : 16 accepted commands
+Deadline Misses      : 1 overruns
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+Lease Owner          : valid | producer tag 1 | session dead NO
+Foreign / Takeovers  : 0 frames | 0 takeovers
+Session Epoch        : bound | 0x3AB6D5F6
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+Coherence            : valid | counter=196
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+#
+
+[PHASE 4] Executing Catastrophic Guest Termination: 'slay -9 qvm'...
+slay -9 qvm
+#
+
+[PHASE 5] Verifying Process Table: Guest VM Purged From Memory...
+[latch-ingest] Completed: 204 frames processed (204 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
 pidin
      pid tid name                         prio STATE          Blocked                     
        1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
@@ -35,8 +180,8 @@ pidin
        1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  27 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  29 /proc/boot/procnto-smp-instr  10r RUNNING                                    
+       1  28 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
+       1  29 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  30 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
        2   2 proc/boot/devc-serpl011      254i INTR                                       
@@ -45,111 +190,27 @@ pidin
     8196   1 proc/boot/pipe                10r SIGWAITINFO                                
     8196   2 proc/boot/pipe                10r RECEIVE        1                           
     8196   3 proc/boot/pipe                10r RECEIVE        1                           
-    8196   4 proc/boot/pipe                10r RECEIVE        1                           
-   12293   1 proc/boot/latchd              10f RECEIVE        1                           
-   12293   2 proc/boot/latchd              63f RECEIVE        2                           
-   16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
-   16391   1 proc/boot/qvm                 10r REPLY          1                           
-   16391   2 proc/boot/qvm                 10r SEM            0                           
-   16392   1 proc/boot/ksh                 10r SIGSUSPEND                                 
-   28681   1 proc/boot/pidin               10r REPLY          1                           
-#
-  [VERIFIED] procnto-smp-instr, latchd (SCHED_FIFO 63), and qvm (hypervisor) running.
-
-[PHASE 3] Waiting for Linux guest VM to boot and stream telemetry (rx >= 5)...
-  [GUEST ACTIVE] Successfully received 37 proposals from Linux guest VM.
-/proc/boot/latchctl status
-=== LATCH Simplex Supervisor Status ===
-Tick Counter         : 12493 ticks
-Current Mode         : HP (High Performance)
-Actuator Angle       : 100 mrad
-Velocity / Omega     : 0 mrad/tick | 0 mrad/s
-Last Proposed Angle  : 100 mrad (seq=37)
-Decision Latency     : last = 137 cyc (2192 ns) | max = 74628 cyc (1194048 ns)
-Proposals Received   : 37
-Wire Faults Caught   : 0
-Envelope Vetoes      : 0
-Ring Drops / WCET    : 0 drops | 2 overruns
-Proposal Backlog     : peak 2 frames | 0 over limit
-EPERM Rejections     : 0
-Operator Hold Locked : NO
-Active Fault Bits    : 0x0000 (NONE)
-Latched Fault Bits   : 0x0000 (NONE)
-Clean Streak         : 0 frames
-GOVERNOR             : enabled | rung=ADVISE (1)
-V2 Session / Lease   : active | 91 ticks left | lease age 9 ticks
-Warm-up / Agent      : 36 heartbeats | state 1
-Recovery Clean       : 0 accepted commands
-Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=37
-Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
-#
-
-[PHASE 4] Executing Catastrophic Guest Termination: 'slay -9 qvm'...
-slay -9 qvm
-#
-
-[PHASE 5] Verifying Process Table: Guest VM Purged From Memory...
-[latch-ingest] Completed: 45 frames processed (45 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
-pidin
-     pid tid name                         prio STATE          Blocked                     
-       1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
-       1   2 /proc/boot/procnto-smp-instr   0f READY                                      
-       1   3 /proc/boot/procnto-smp-instr   0f RUNNING                                    
-       1   4 /proc/boot/procnto-smp-instr   0f RUNNING                                    
-       1   5 /proc/boot/procnto-smp-instr 255i INTR                                       
-       1   6 /proc/boot/procnto-smp-instr 255i INTR                                       
-       1   7 /proc/boot/procnto-smp-instr 255i INTR                                       
-       1   8 /proc/boot/procnto-smp-instr 255i INTR                                       
-       1   9 /proc/boot/procnto-smp-instr 254i INTR                                       
-       1  10 /proc/boot/procnto-smp-instr 254i INTR                                       
-       1  11 /proc/boot/procnto-smp-instr 254i INTR                                       
-       1  12 /proc/boot/procnto-smp-instr 254i INTR                                       
-       1  13 /proc/boot/procnto-smp-instr   1f NANOSLEEP                                  
-       1  14 /proc/boot/procnto-smp-instr  10r ???                                        
-       1  15 /proc/boot/procnto-smp-instr   8r RECEIVE        1                           
-       1  16 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  17 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  18 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  19 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  20 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  21 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  22 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  23 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  24 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  27 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
-       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  29 /proc/boot/procnto-smp-instr  10r RUNNING                                    
-       1  30 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
-       2   2 proc/boot/devc-serpl011      254i INTR                                       
-    4099   1 proc/boot/slogger2            10r RECEIVE        1                           
-    4099   2 proc/boot/slogger2            10r RECEIVE        2                           
-    8196   1 proc/boot/pipe                10r SIGWAITINFO                                
-    8196   2 proc/boot/pipe                10r RECEIVE        1                           
-    8196   3 proc/boot/pipe                30r RECEIVE        1                           
     8196   4 proc/boot/pipe                30r RECEIVE        1                           
-    8196   5 proc/boot/pipe                10r RECEIVE        1                           
+    8196   5 proc/boot/pipe                 8r RECEIVE        1                           
    12293   1 proc/boot/latchd              10f RECEIVE        1                           
    12293   2 proc/boot/latchd              63f RECEIVE        2                           
    16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
-   16392   1 proc/boot/ksh                 10r SIGSUSPEND                                 
-  262151   1 proc/boot/pidin               10r REPLY          1                           
+   16391   1 proc/boot/latch_guestd        10r RECEIVE        1                           
+   24585   1 proc/boot/ksh                 10r SIGSUSPEND                                 
+  245768   1 proc/boot/pidin               10r REPLY          1                           
 #
   [VERIFIED] qvm is completely purged from memory. Safety supervisor remains active.
 
 [PHASE 6] Verifying Supervisor State After Guest Loss...
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 14095 ticks
-Current Mode         : HP (High Performance)
+Tick Counter         : 12519 ticks
+Current Mode         : HOLD (High Assurance 1)
 Actuator Angle       : 0 mrad
 Velocity / Omega     : 0 mrad/tick | -10000 mrad/s
-Last Proposed Angle  : 100 mrad (seq=45)
-Decision Latency     : last = 5497 cyc (87952 ns) | max = 74628 cyc (1194048 ns)
-Proposals Received   : 45
+Last Proposed Angle  : 100 mrad (seq=204)
+Decision Latency     : last = 4362 cyc (69792 ns) | max = 67303 cyc (1076848 ns)
+Proposals Received   : 204
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
 Ring Drops / WCET    : 0 drops | 5 overruns
@@ -160,28 +221,115 @@ Active Fault Bits    : 0x0000 (NONE)
 Latched Fault Bits   : 0x2000 (HEARTBEAT)
 Clean Streak         : 0 frames
 GOVERNOR             : enabled | rung=LATCH (5)
-V2 Session / Lease   : active | 42 ticks left | lease age 1557 ticks
-Warm-up / Agent      : 44 heartbeats | state 1
+V2 Session / Lease   : active | 42 ticks left | lease age 1555 ticks
+Warm-up / Agent      : 154 heartbeats | state 1
 Recovery Clean       : 0 accepted commands
+Deadline Misses      : 1 overruns
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+Lease Owner          : valid | producer tag 1 | session dead YES
+Foreign / Takeovers  : 0 frames | 0 takeovers
+Session Epoch        : bound | 0x3AB6D5F6
 Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=45
+Coherence            : valid | counter=204
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
   Current Rung   : LATCH
   Latched Faults : 0x2000 (HEARTBEAT)
-  Supervisor Mode: HP (High Performance)
+  Supervisor Mode: HOLD (High Assurance 1)
   Actuator Angle : 0 mrad
 
 [PHASE 7] Running Integrity & Ability Verification (latchctl grant-check)...
 /proc/boot/latchctl grant-check
 [AUTH] DENIED: Process lacks 'latch/actuator' ability (EPERM). Fail-closed.
 #
+  [VERIFIED] The operator shell still holds NO actuator ability (DENIED).
+
+[PHASE 8] Writer-Session State Before The Restart:
+/proc/boot/latchctl session-status
+=== LATCH Session Status ===
+Writer Held      : 0 (no writer OCB is open)
+Session Gen      : 1
+#
+
+[PHASE 9] Restarting The Guest VM (latchctl guest-restart)...
+/proc/boot/latchctl guest-restart --timeout 60
+latchctl: guest VM stopped (generation 1, running=NO)
+latchctl: writer-session handoff OBSERVED (no writer OCB is open)
+latch_guestd: guest VM started (pid 282634, generation 2) argv: '/proc/boot/qvm' '@/proc/boot/latch_qemu_governor.qvmconf'
+latchctl: guest VM started (pid 282634, generation 2)
+latchctl: The guest must boot and re-establish its session before it streams again; the supervisor stays in LATCH until then.
+#
+  [VERIFIED] Writer-session handoff OBSERVED (polled, not timed); guest re-launched.
+
+[PHASE 10] Guest Lifecycle State After The Restart:
+/proc/boot/latchctl guest-status
+=== LATCH Guest VM Status ===
+Guest Running    : YES
+Guest PID        : 282634
+Launch Generation: 2
+Last Exit Status : 0x9
+#
+  [VERIFIED] qvm is back, with no zombie left in the process table.
+
+[PHASE 11] Waiting For A NEW Writer Session To Be Established...
+/proc/boot/latchctl session-status
+=== LATCH Session Status ===
+Writer Held      : 1 (exclusive writer OCB is OPEN)
+Session Gen      : 2
+#
+  [VERIFIED] A NEW writer session is established (generation 1 -> 2, writer held).
+
+[PHASE 12] Waiting For The New Session To Stream...
+/proc/boot/latchctl status
+=== LATCH Simplex Supervisor Status ===
+Tick Counter         : 23898 ticks
+Current Mode         : HOLD (High Assurance 1)
+Actuator Angle       : 0 mrad
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : 37 mrad (seq=235)
+Decision Latency     : last = 92 cyc (1472 ns) | max = 67303 cyc (1076848 ns)
+Proposals Received   : 439
+Wire Faults Caught   : 0
+Envelope Vetoes      : 0
+Ring Drops / WCET    : 0 drops | 6 overruns
+Proposal Backlog     : peak 4 frames | 0 over limit
+EPERM Rejections     : 1
+Operator Hold Locked : NO
+Active Fault Bits    : 0x0000 (NONE)
+Latched Fault Bits   : 0x7800 (EPERM|UNIT|HEARTBEAT|WIDEN)
+Clean Streak         : 0 frames
+GOVERNOR             : enabled | rung=LATCH (5)
+V2 Session / Lease   : active | 26 ticks left | lease age 374 ticks
+Warm-up / Agent      : 154 heartbeats | state 1
+Recovery Clean       : 0 accepted commands
+Deadline Misses      : 1 overruns
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+Lease Owner          : valid | producer tag 1 | session dead YES
+Foreign / Takeovers  : 0 frames | 0 takeovers
+Session Epoch        : bound | 0x00E9042E
+Rate / Shrink        : 40 tokens | active=1 v_max=12 scale_q8=128
+Coherence            : valid | counter=235
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+#
+  [VERIFIED] The new session is streaming (rx 208 -> 439).
+
+[PHASE 13] Writer-Session State After The Restart:
+/proc/boot/latchctl session-status
+=== LATCH Session Status ===
+Writer Held      : 1 (exclusive writer OCB is OPEN)
+Session Gen      : 2
+#
+  [VERIFIED] The restart opened a NEW writer session (generation 1 -> 2).
+
+[PHASE 14] Re-Checking Operator Privileges After The Restart:
+/proc/boot/latchctl grant-check
+[AUTH] DENIED: Process lacks 'latch/actuator' ability (EPERM). Fail-closed.
+#
+  [VERIFIED] The operator shell still holds NO actuator ability (DENIED).
 
 ================================================================================
- [DEMO RESULT] GUEST VM TERMINATION EXPERIMENT: SUCCESS (100% CONTAINMENT)      
-   1. Hypervisor guest killed instantly without affecting safety microkernel   
-   2. LATCH detected channel EOF and deadman lease silence within deadline       
-   3. Graded ladder dropped directly into fail-closed LATCH (HEARTBEAT fault)   
-   4. Physical plant held locked at 0 mrad (0.0% keep-out breaches)             
-   5. QNX 8.0 microkernel continues 1 kHz loop with zero deadline misses         
+ [DEMO RESULT] Guest termination observed; status reports LATCH and HEARTBEAT.
+ The restart OBSERVED the writer-session handoff and opened a NEW session;
+ the guest resumed streaming and the supervisor recovered.
+ Mock actuator reports zero angle. Recovery and timing bounds were not tested.
 ================================================================================

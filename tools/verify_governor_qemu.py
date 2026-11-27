@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Boot the opt-in GOVERNOR IFS and verify its guest-to-QNX runtime path."""
+"""Boot the opt-in GOVERNOR IFS and verify its guest-to-QNX runtime path.
+
+Two artefacts can be written out, so the evidence archive is GENERATED and
+never hand-edited:
+
+    GOVERNOR_QEMU_TRANSCRIPT   the raw serial transcript, verbatim
+    GOVERNOR_QEMU_REPORT       the structured report: every sample the
+                               verifier took, the A4 observation, the
+                               recovery observation and the final state
+
+Both are written even when the run FAILS, so a failing run still leaves
+the evidence that explains why it failed.  The evidence generator refuses
+to replace a good archive with a failing run.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +27,53 @@ import time
 from pathlib import Path
 
 
+def format_report(report: dict) -> str:
+    """The structured, human-readable report the evidence archive carries."""
+    out: list[str] = []
+    add = out.append
+    add("=" * 78)
+    add("LATCH GOVERNOR -- ON-TARGET RUNTIME REPORT")
+    add("=" * 78)
+    add("IFS                 : %s" % report.get("ifs", ""))
+    add("Signed contract    : qnx/contracts/governor_servo.manifest")
+    add("Lease (deadman)    : %s ticks" % report.get("lease_ticks", ""))
+    add("Verdict            : %s" % report.get("verdict", "FAIL"))
+    add("")
+
+    add("--- THE A4 DEADMAN WINDOW (heartbeat-only traffic) ---")
+    add("The guest goes silent for a scripted 110 ms -- long enough to expire the")
+    add("100-tick lease ONCE and demote the ladder exactly one rung.  Every")
+    add("sample below must show rung=ADVISE, because heartbeat-only traffic")
+    add("does NOT earn the clean-command recovery credit.")
+    add("")
+    add("%-10s %-10s %-12s %-10s %-10s" % ("received", "rung", "lease_age", "coherence", "recovery"))
+    for s in report.get("a4_samples", []):  # type: ignore[union-attr]
+        add("%-10s %-10s %-12s %-10s %-10s" % (
+            s.get("received"), s.get("rung"), s.get("lease_age"),
+            s.get("coherence"), s.get("recovery")))
+    add("")
+
+    add("--- THE RECOVERY AND THE FINAL LADDER ---")
+    add("%-10s %-10s %-12s %-28s %-10s" % ("received", "rung", "lease_age", "latched_faults", "recovery"))
+    for s in report.get("runtime_samples", []):  # type: ignore[union-attr]
+        add("%-10s %-10s %-12s %-28s %-10s" % (
+            s.get("received"), s.get("rung"), s.get("lease_age"),
+            s.get("faults", ""), s.get("recovery")))
+    add("")
+    final = report.get("final")
+    add("FINAL STATE        : %s" % json.dumps(final, sort_keys=True))
+    add("")
+
+    add("--- THE SIGNED CONTRACT, VERIFIED ON THE TARGET ---")
+    add((report.get("manifest_verify", "") or "").rstrip())
+    add("")
+
+    add("--- THE GUEST'S OWN CONSOLE (from /dev/shmem/guest_console.log) ---")
+    add((report.get("guest_console", "") or "").rstrip())
+    add("")
+    return "\n".join(out) + "\n"
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     ifs = Path(os.environ.get(
@@ -24,6 +84,32 @@ def main() -> int:
         return 1
     contract = json.loads((root / "qnx/contracts/governor_servo.manifest").read_text(encoding="utf-8"))
     lease_ticks = int(contract["governor"]["deadman"]["lease_ticks"])
+
+    # The transcript goes to a FILE.  A pty in memory is fine for a short
+    # run, but this one lasts minutes; capturing to disk means a killed run
+    # still leaves the evidence behind.
+    transcript_path = os.environ.get("GOVERNOR_QEMU_TRANSCRIPT")
+    transcript_file = None
+    if transcript_path is not None:
+        transcript_file = open(transcript_path, "wb")
+    report_path = os.environ.get("GOVERNOR_QEMU_REPORT")
+    report: dict[str, object] = {
+        "ifs": str(ifs),
+        "lease_ticks": lease_ticks,
+        "contract_sha256": contract.get("_sidecar_sha256", ""),
+        "a4_samples": [],
+        "runtime_samples": [],
+        "final": None,
+        "guest_console": "",
+        "manifest_verify": "",
+        "verdict": "FAIL",
+    }
+
+    def write_report() -> None:
+        if not report_path:
+            return
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(format_report(report))
 
     qemu = os.environ.get("QEMU_SYSTEM_AARCH64", "qemu-system-aarch64")
     cmd = [qemu, "-M", "virt,virtualization=on,gic-version=2", "-cpu", "cortex-a76",
@@ -47,6 +133,9 @@ def main() -> int:
                 if not chunk:
                     break
                 transcript.extend(chunk)
+                if transcript_file is not None:
+                    transcript_file.write(chunk)
+                    transcript_file.flush()
                 if transcript.endswith(b"# "):
                     break
         return bytes(transcript[start:])
@@ -91,6 +180,8 @@ def main() -> int:
             time.sleep(0.05 if not samples else 0.003)
 
         a4_samples = [s for s in samples if 5 <= s["received"] <= 155]
+        report["a4_samples"] = [
+            {k: v for k, v in s.items() if k != "text"} for s in a4_samples[:64]]
         if not a4_samples or any(s["rung"] != "ADVISE" for s in a4_samples):
             observed = [(s["received"], s["rung"], s["lease_age"], s["coherence"], s["recovery"])
                         for s in samples]
@@ -159,11 +250,13 @@ def main() -> int:
             return 1
 
         manifest = command("/proc/boot/latchctl manifest-verify /proc/boot/governor_servo.manifest")
+        report["manifest_verify"] = manifest.decode("utf-8", errors="replace")
         if b"admissibility SATISFIED" not in manifest:
             print("[GOVERNOR_QEMU FAIL] target did not verify the schema-3 manifest sidecar", file=sys.stderr)
             return 1
         guest_log = command("/proc/boot/latchctl console", timeout=4.0)
         guest_text = guest_log.decode("utf-8", errors="replace")
+        report["guest_console"] = guest_text
         # The QEMU guest serial reliably captures kernel boot and init handoff,
         # while later /dev/kmsg phase markers are best-effort under this TCG
         # setup. Runtime status assertions above are the authoritative evidence
@@ -174,11 +267,19 @@ def main() -> int:
                 print(f"[GOVERNOR_QEMU FAIL] guest console lacks marker {marker!r}; output={guest_text[-3000:]!r}", file=sys.stderr)
                 return 1
 
+        report["final"] = final
+        report["runtime_samples"] = runtime_detail[-64:]
+        report["verdict"] = "PASS"
         print(f"[GOVERNOR_QEMU PASS] schema-3 sidecar valid; {expected_frames} v2 proposals; "
               "A4 demotion held through heartbeat-only traffic; clean-command recovery observed; "
               "final lease expiry reached LATCH")
         return 0
     finally:
+        # The report is written even when the run FAILED: a failing run must
+        # still leave the evidence that explains why it failed.
+        write_report()
+        if transcript_file is not None:
+            transcript_file.close()
         proc.terminate()
         try:
             proc.wait(timeout=3)

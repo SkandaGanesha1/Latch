@@ -1,0 +1,67 @@
+================================================================================
+ LINUX SYNTHETIC PYTHON-LOOP BASELINE (synthetic; not GPOS; not a WCET)   
+ Current Linux host; synthetic Python loop; inherited scheduler          
+================================================================================
+
+Host              : Linux-7.3.4-300.fc45.x86_64-x86_64-with-glibc2.44
+Machine           : x86_64
+CPU model         : AMD Ryzen 5 5625U with Radeon Graphics
+Logical CPUs      : 12
+Python            : 3.15.2 (CPython)
+Kernel            : 7.3.4-300.fc45.x86_64
+Scheduler policy  : SCHED_OTHER (the INHERITED default -- this is the point)
+CPU affinity      : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+Load average      : 0.90, 0.93, 1.11 (at capture time)
+
+WORKLOAD
+  A Python loop that emulates the SHAPE of a periodic control task: a
+  12 microsecond busy-loop 'control tick' followed by a sleep to the
+  next 1000 microsecond period boundary. The busy loop is an integer
+  recurrence; the sleep uses the ordinary time.sleep(), so the wake-up
+  goes through the normal Linux scheduler -- no SCHED_FIFO, no priority,
+  no CPU pinning, no real-time policy.
+
+  Samples per configuration : 1500
+  Total samples             : 3000
+  Idle configuration        : no background load
+  Stress configuration      : 11 Python threads spinning on a sin/cos workload
+
+SUMMARY RESULTS TABLE (microseconds; loop wake-up latency):
++-----------------------------------+---------+---------+---------+---------+-----------+
+| Benchmark Configuration           | Median  | p95     | p99     | Max loop| Deadlines |
++-----------------------------------+---------+---------+---------+---------+-----------+
+| Linux Python (Idle)             | 1058.42 | 1076.81 | 1086.72 | 1345.15 |    0/1500 |
+| Linux Python (Thread Stress)      | 139057.64 | 1087228.28 | 1146474.04 | 1160285.96 | 1470/1500 |
++-----------------------------------+---------+---------+---------+---------+-----------+
+
+HOW TO READ THIS
+  * These are OBSERVED loop wake-up latencies on THIS machine, under
+    THIS load, with THIS scheduler. The Max column is the largest
+    sample that was taken -- it is NOT a worst-case execution time
+    and it is not a bound of any kind.
+  * 'Deadlines' counts iterations that were already past their
+    deadline BEFORE the sleep began, so the sleep could not recover
+    them. It is a count of observed late iterations, not a rate
+    guarantee.
+  * The numbers move with the machine's load. Re-running this script
+    will produce DIFFERENT numbers. That is the point of measuring
+    rather than quoting.
+
+WHAT THIS IS NOT
+  * Not the LATCH control loop: LATCH's supervisor is a purpose-built
+    C process on QNX OS. This is Python on Linux.
+  * Not a 'Linux GPOS' figure. There is no GPOS in this measurement.
+  * Not a WCET, and not a deadline-miss guarantee.
+  * NOT a QNX-vs-Linux comparison. The QNX side of that comparison was
+    a fabricated number and has been withdrawn; no QNX figure is
+    quoted here, because there is no honest one to quote. The
+    honest QNX-side numbers are the TCG observations in
+    docs/evidence/governor/, and they are labelled as TCG
+    observations, not WCETs either.
+  * The withdrawn artefact this replaces is in
+    docs/evidence/quarantine/REJECTED-linux-baseline/; nothing from
+    that directory may be quoted.
+
+REPRODUCE
+  python3 tools/benchmark_linux_native.py --iterations 1500
+================================================================================

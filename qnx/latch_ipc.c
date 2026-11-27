@@ -2,6 +2,18 @@
 
 #include <string.h>
 
+int latch_ipc_decode_contract(const void *bytes, size_t length,
+                              unsigned int protocol_version,
+                              latch_proposal_t *out) {
+    if ((protocol_version == 1u && length != sizeof(latch_ipc_proposal_t)) ||
+        (protocol_version == 2u && length != sizeof(latch_ipc_proposal_v2_t)) ||
+        (protocol_version != 1u && protocol_version != 2u)) {
+        if (out != NULL) memset(out, 0, sizeof(*out));
+        return -1;
+    }
+    return latch_ipc_decode(bytes, length, out);
+}
+
 static int valid_pre_faults(uint16_t bits) {
     return (bits & (uint16_t)~LATCH_FAULT_WIRE_MASK) == 0u;
 }
@@ -62,6 +74,14 @@ int latch_ipc_decode(const void *bytes, size_t length, latch_proposal_t *out) {
              * about, so it is rejected here -- fail closed at the boundary
              * rather than silently treating it as "the owner". */
             v2.producer_tag == LATCH_PRODUCER_TAG_NONE ||
+            /* RT-02: a v2 frame MUST name the session it belongs to. An
+             * unscoped frame (epoch 0) cannot be checked against the
+             * session's epoch, which is exactly the frame a cross-session
+             * replay would be. Rejected at the boundary. */
+            v2.session_epoch == LATCH_SESSION_EPOCH_NONE ||
+            /* The reserved word must be zero: a non-zero value means the
+             * sender is using a layout this supervisor does not know. */
+            v2.reserved1 != 0u ||
             (v2.coherence_ctr & 0xFF000000u) != 0u ||
             !valid_pre_faults(v2.pre_fault_bits) || !valid_v2_payload(&v2)) return -1;
 
@@ -80,6 +100,7 @@ int latch_ipc_decode(const void *bytes, size_t length, latch_proposal_t *out) {
         out->unit_id = v2.unit_id;
         out->shrink_v = v2.shrink_v;
         out->shrink_scale_q8 = v2.shrink_scale_q8;
+        out->session_epoch = v2.session_epoch;
         return 0;
     }
     return -1;

@@ -1,0 +1,143 @@
+################################################################################
+# qnx/latch_qemu_latency.build
+#
+# The DECISION-LATENCY MEASUREMENT image (U-4).
+#
+# This is the GOVERNOR image with ONE difference that matters for a
+# measurement: there is NO EVIDENCE LOGGER in it.
+#
+# WHY NO `latchlog`
+# -----------------
+# `latchlog` polls the supervisor every 100 ms, dumps the governor event
+# ring and the evidence tape, and writes every tick to a CSV.  Over a
+# 35-minute soak at 1 kHz that is ~2 million CSV rows (tens of megabytes
+# of /dev/shmem) and a continuous background reader of the very state the
+# measurement is about.
+#
+# A measurement image must not carry a logger that perturbs what it
+# measures.  The soak's evidence is the latency HISTOGRAM itself, read back
+# through the output-only devctl (`latchctl latency`), together with the
+# supervisor's own status snapshot -- not a per-tick tape.
+#
+# EVERYTHING ELSE IS THE GOVERNOR PROFILE, UNCHANGED
+# --------------------------------------------------
+#   * the SAME signed contract: qnx/contracts/governor_servo.manifest, with
+#     its sidecar.  No safety parameter is relaxed for the measurement.
+#   * the SAME security policy: qnx/latch.secpol -> build/secpol.bin.  No
+#     experiment-specific rule is added.
+#   * the SAME guest configuration: latch_qemu_governor.qvmconf, verbatim.
+#     The static vCPU pins (_cpu-2/_cpu-3 for the guest, latchd on _cpu-0
+#     at SCHED_FIFO 63) are the property that makes the number mean
+#     anything, so they are not re-derived here.
+#   * the SAME supervisor: `latchd -m ... -n` (mock I2C; there is no
+#     PCA9685 on the QEMU virt take).  The verdict publisher is NOT
+#     enabled (`-f` is absent): the advisory feedback channel is not part
+#     of this measurement, and a publisher thread would be another
+#     concurrent writer of the supervisor's own state.
+#
+# The guest policy is the same freestanding binary with ONE extra compile
+# flag (`-DLATCH_GOVERNOR_LATENCY_SOAK`): it streams in-envelope CMD_V2
+# frames at a fixed rate for 35 minutes so the supervisor has something to
+# decide on every tick.
+################################################################################
+
+[image=0x40080000]
+[virtual=aarch64le,raw] boot = {
+    startup-qemu-virt -v -Q enable
+    PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/lib/dll/qvm
+    procnto-smp-instr -v
+}
+
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/ldqnx-64.so.2 /usr/lib/ldqnx-64.so.2
+
+    # 1. Serial console (PL011 UART at 0x09000000, IRQ 33 on QEMU virt)
+    devc-serpl011 -e -F -b115200 0x09000000,33
+    waitfor /dev/ser1 4
+    reopen /dev/ser1
+
+    display_msg "================================================================"
+    display_msg " LATCH -- DECISION-LATENCY MEASUREMENT (U-4, experimental)"
+    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2"
+    display_msg "================================================================"
+
+    # 2. Push compiled QNX 8.0 Security Policy into procnto
+    secpolpush /proc/boot/secpol.bin
+
+    # 3. Start system logger and pipe resource manager (required for qvm hostdev >"|...")
+    on -T slogger2_t -C 1 /proc/boot/slogger2 &
+    waitfor /dev/slog2 4
+
+    on -T pipe_t -C 1 /proc/boot/pipe &
+    waitfor /dev/pipe 4
+
+    # 4. Start latchd on _cpu-0 in mock I2C mode (-n).
+    #
+    #    No `-f`: the verdict publisher is OFF, so nothing but the decision
+    #    loop writes the supervisor's state during the measurement.
+    on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/governor_servo.manifest -n &
+    waitfor /dev/latch/proposal 4
+    waitfor /dev/latch/actuator 4
+
+    # 5. NO `latchlog` HERE.  See the note at the top of this file: the
+    #    evidence logger is a perturbation, and this image measures.
+
+    # 6. Launch the QNX Hypervisor 8.0 guest VM through the typed
+    #    lifecycle daemon, with the GOVERNOR profile's qvmconf verbatim.
+    #
+    #    The runmask is deliberately NOT constrained: `on -C <n>` and
+    #    `on -R <mask>` both resolve to a predefined single-CPU cluster and
+    #    no predefined cluster covers CPUs 2+3 together.  The isolation is
+    #    enforced by the qvmconf's static vCPU pins.
+    on -T latch_guestd_t /proc/boot/latch_guestd -q /proc/boot/qvm -c /proc/boot/latch_qemu_governor.qvmconf &
+    waitfor /dev/latch/guestctl 4
+
+    # 7. Interactive operator shell on _cpu-1
+    [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
+}
+
+[type=link] /bin/sh = /proc/boot/ksh
+[type=link] /dev/console = /dev/ser1
+[type=link] /tmp = /dev/shmem
+
+ldqnx-64.so.2
+libc.so
+libm.so
+libgcc_s.so.1
+libsecpol.so.1
+libqh.so.1
+libslog2.so.1
+libslog2parse.so.1
+libfdt.so.1
+
+[perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
+[perms=0755] /lib/dll/qvm/vdev-shmem.so = vdev-shmem.so
+[perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
+
+[perms=0755] secpolpush
+[perms=0755] slogger2
+[perms=0755] slog2info
+[perms=0755] pipe
+[perms=0755] devc-serpl011
+[perms=0755] /proc/boot/qvm = qvm
+[perms=0755] on
+[perms=0755] ability
+[perms=0755] pidin
+[perms=0755] slay
+[perms=0755] ksh
+[perms=0755] waitfor
+
+[uid=0 gid=0 perms=0750] /proc/boot/latchd = build/nto-aarch64-le/latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latchctl = build/nto-aarch64-le/latchctl
+[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = build/nto-aarch64-le/latch-ingest
+[uid=0 gid=0 perms=0755] /proc/boot/latch_guestd = build/nto-aarch64-le/latch_guestd
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest = ./contracts/governor_servo.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest.sha256 = ./contracts/governor_servo.manifest.sha256
+# The GOVERNOR profile's qvmconf, VERBATIM.  The static vCPU pins are the
+# property that makes the measured number mean anything, so this image
+# reuses the file instead of deriving a second one.
+[uid=0 gid=0 perms=0644] /proc/boot/latch_qemu_governor.qvmconf = ./latch_qemu_governor.qvmconf
+[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = build/secpol.bin
+[perms=0644] /proc/boot/linux-guest.Image = ${GUEST_IMAGE}
+[perms=0644] /proc/boot/governor-linux-guest.initrd = ${GOVERNOR_GUEST_INITRD}

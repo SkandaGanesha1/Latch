@@ -13,6 +13,10 @@ Demonstrates:
      and enforces 0.0% keep-out breaches.
   5. Microkernel Independence: latchd and the QNX OS continue ticking flawlessly at 1 kHz
      without crashing, resetting, or leaking unvalidated actuation.
+  6. Observed Recovery (U-1): the operator restarts the guest through the narrowly-typed
+     guest-lifecycle daemon. The restart is STOP -> OBSERVE the writer-session handoff ->
+     START: the writer handoff is a supervisor fact that is POLLED, never timed, and the
+     guest is not started again if the handoff was not observed.
 """
 
 from __future__ import annotations
@@ -86,7 +90,10 @@ def main() -> int:
     try:
         log("================================================================================")
         log(" QNX HYPERVISOR 8.0 — GUEST VM TERMINATION & FAIL-CLOSED CONTAINMENT DEMO (G2)  ")
-        log(" Platform: QNX OS 8.0 (procnto-smp-instr) on ARMv8-A QEMU TCG               ")
+        log(" Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)     ")
+        log(" Architecture: Mixed-Criticality Microkernel Partitioning (Zero Shared-Fate)   ")
+        log(" Note: the QNX host runs under QEMU TCG software emulation, so any timing  ")
+        log("       in this transcript is an emulation observation, not a target timing.  ")
         log("================================================================================")
 
         # 1. Wait for QNX boot prompt
@@ -107,11 +114,40 @@ def main() -> int:
             return 1
         log("  [VERIFIED] procnto-smp-instr, latchd (SCHED_FIFO 63), and qvm (hypervisor) running.")
 
+        # 2b. The SECURITY TYPE of every process.  This is the privilege
+        #     boundary in one picture: the guest VM runs as `qvm_host_t`
+        #     (which holds the hypervisor abilities), the guest-lifecycle
+        #     daemon that owns it runs as `latch_guestd_t` (which holds
+        #     only `spawn` + `settypeid:qvm_host_t`), and the operator
+        #     shell runs as `operator_shell_t` (which holds no actuator
+        #     ability and no type-transition ability).
+        log("\n[PHASE 2b] Security Type Map (pidin -F \"%a %b %_ %28n\")...")
+        type_map = command('pidin -F "%a %b %_ %28n"', timeout=3.0)
+        log(type_map.strip())
+        for expected_type, expected_name in (
+            ("qvm_host_t", "proc/boot/qvm"),
+            ("latch_guestd_t", "proc/boot/latch_guestd"),
+            ("latchd_t", "proc/boot/latchd"),
+            ("operator_shell_t", "proc/boot/ksh"),
+        ):
+            line = next((ln for ln in type_map.splitlines()
+                         if expected_name in ln and expected_type in ln), None)
+            if line is None:
+                log(f"[FAIL] '{expected_name}' is not typed '{expected_type}'.")
+                return 1
+        log("  [VERIFIED] qvm=qvm_host_t, latch_guestd=latch_guestd_t, "
+            "latchd=latchd_t, operator shell=operator_shell_t.")
+
         # 3. Wait for guest to boot and begin streaming proposals
         log("\n[PHASE 3] Waiting for Linux guest VM to boot and stream telemetry (rx >= 5)...")
         rx_before = 0
         pre_kill_status = ""
-        deadline = time.monotonic() + 35.0
+        # The guest's boot time under QEMU TCG is not bounded, so the wait
+        # is generous.  The ASSERTION is unchanged: the guest must reach
+        # rx >= 5 before it is killed.  A longer wait cannot make a failing
+        # guest look like a passing one -- it only stops a slow boot from
+        # being reported as a dead guest.
+        deadline = time.monotonic() + 180.0
         while time.monotonic() < deadline:
             pre_kill_status = command("/proc/boot/latchctl status", timeout=2.0)
             rx_match = re.search(r"Proposals Received\s*:\s*(\d+)", pre_kill_status)
@@ -190,9 +226,145 @@ def main() -> int:
         log("\n[PHASE 7] Running Integrity & Ability Verification (latchctl grant-check)...")
         grant_check = command("/proc/boot/latchctl grant-check", timeout=2.0)
         log(grant_check.strip())
+        if "DENIED" not in grant_check:
+            log("[FAIL] The operator shell must NOT hold 'latch/actuator' (expected DENIED).")
+            return 1
+        log("  [VERIFIED] The operator shell still holds NO actuator ability (DENIED).")
+
+        # 7b. Record the writer-session state BEFORE the restart.  The
+        #     restart must open a NEW writer session: the session generation
+        #     has to increase, otherwise the "restart" did not actually
+        #     re-establish the guest's session.
+        pre_restart_session = command("/proc/boot/latchctl session-status", timeout=2.0)
+        log("\n[PHASE 8] Writer-Session State Before The Restart:")
+        log(pre_restart_session.strip())
+        gen_match = re.search(r"Session Gen\s*:\s*(\d+)", pre_restart_session)
+        gen_before = int(gen_match.group(1)) if gen_match else -1
+
+        # 8. Restart the guest through the narrowly-typed lifecycle daemon.
+        #
+        #    This is STOP -> OBSERVE the writer handoff -> START.  The
+        #    handoff is POLLED from the supervisor's session status, not
+        #    timed: a fixed sleep is exactly the assumption that made the
+        #    legacy verifier fail with an unrelated EBUSY.
+        log("\n[PHASE 9] Restarting The Guest VM (latchctl guest-restart)...")
+        restart_out = command("/proc/boot/latchctl guest-restart --timeout 60", timeout=90.0)
+        log(restart_out.strip())
+        if "handoff OBSERVED" not in restart_out:
+            log("[FAIL] The restart did not OBSERVE the writer-session handoff.")
+            return 1
+        if "guest VM started" not in restart_out:
+            log("[FAIL] The restart did not report a new guest launch.")
+            return 1
+        log("  [VERIFIED] Writer-session handoff OBSERVED (polled, not timed); guest re-launched.")
+
+        # 9. Verify the guest is genuinely running, not merely spawned.
+        post_restart_guest = command("/proc/boot/latchctl guest-status", timeout=3.0)
+        log("\n[PHASE 10] Guest Lifecycle State After The Restart:")
+        log(post_restart_guest.strip())
+        if "Guest Running    : YES" not in post_restart_guest:
+            log("[FAIL] The guest VM is not running after the restart.")
+            return 1
+
+        post_restart_pidin = command("pidin", timeout=3.0)
+        if "proc/boot/qvm" not in post_restart_pidin:
+            log("[FAIL] qvm is not in the process table after the restart.")
+            return 1
+        if "(Zombie)" in post_restart_pidin:
+            log("[FAIL] A zombie process is left behind after the restart.")
+            return 1
+        log("  [VERIFIED] qvm is back, with no zombie left in the process table.")
+
+        # 10. Wait for the NEW writer session to be established.
+        #
+        #     This is the observation that matters, and it is NOT the same
+        #     thing as "the frame counter moved".  The old ingest drains the
+        #     last frames it had already read from the pipe before it sees
+        #     EOF and exits, so the counter keeps ticking for a while after
+        #     the guest is dead.  The session-level fact that proves the NEW
+        #     guest is live is:
+        #
+        #         writer_held == 1            (a writer OCB is open again)
+        #         session_generation > before (it is a DIFFERENT session)
+        #
+        #     Both come from the supervisor's own session status, so they
+        #     are observed, never timed.
+        log("\n[PHASE 11] Waiting For A NEW Writer Session To Be Established...")
+        new_session = False
+        gen_after = gen_before
+        deadline = time.monotonic() + 300.0
+        while time.monotonic() < deadline:
+            sess = command("/proc/boot/latchctl session-status", timeout=2.0)
+            held_m = re.search(r"Writer Held\s*:\s*(\d+)", sess)
+            gen_m = re.search(r"Session Gen\s*:\s*(\d+)", sess)
+            held = int(held_m.group(1)) if held_m else -1
+            gen_after = int(gen_m.group(1)) if gen_m else -1
+            if held == 1 and gen_after > gen_before:
+                new_session = True
+                break
+            time.sleep(1.0)
+        log(sess.strip())
+        if not new_session:
+            log(f"[FAIL] No NEW writer session was established within the timeout "
+                f"(generation {gen_before} -> {gen_after}, writer_held={held}).")
+            return 1
+        log(f"  [VERIFIED] A NEW writer session is established "
+            f"(generation {gen_before} -> {gen_after}, writer held).")
+
+        # 11. Now -- and only now -- the frame counter is a valid measure of
+        #     the NEW session streaming.  The baseline is taken AFTER the
+        #     new session exists, so the old session's tail cannot be
+        #     mistaken for the new session's traffic.
+        log("\n[PHASE 12] Waiting For The New Session To Stream...")
+        rx_base = -1
+        status_out = command("/proc/boot/latchctl status", timeout=2.0)
+        m = re.search(r"Proposals Received\s*:\s*(\d+)", status_out)
+        if m:
+            rx_base = int(m.group(1))
+        rx_after = rx_base
+        resumed = False
+        deadline = time.monotonic() + 120.0
+        while time.monotonic() < deadline:
+            status_out = command("/proc/boot/latchctl status", timeout=2.0)
+            m = re.search(r"Proposals Received\s*:\s*(\d+)", status_out)
+            if m:
+                rx_after = int(m.group(1))
+                if rx_after > rx_base:
+                    resumed = True
+                    break
+            time.sleep(1.0)
+        log(status_out.strip())
+        if not resumed:
+            log(f"[FAIL] The new session did not stream (rx {rx_base} -> {rx_after}).")
+            return 1
+        log(f"  [VERIFIED] The new session is streaming (rx {rx_base} -> {rx_after}).")
+
+        post_restart_session = command("/proc/boot/latchctl session-status", timeout=2.0)
+        log("\n[PHASE 13] Writer-Session State After The Restart:")
+        log(post_restart_session.strip())
+        gen_match = re.search(r"Session Gen\s*:\s*(\d+)", post_restart_session)
+        gen_final = int(gen_match.group(1)) if gen_match else -1
+        if gen_final <= gen_before:
+            log(f"[FAIL] The restart did not open a NEW writer session "
+                f"(generation {gen_before} -> {gen_final}).")
+            return 1
+        log(f"  [VERIFIED] The restart opened a NEW writer session "
+            f"(generation {gen_before} -> {gen_final}).")
+
+        # 14. The operator shell must STILL be unable to actuate after the
+        #     restart.  A restart must not widen any privilege.
+        post_restart_grant = command("/proc/boot/latchctl grant-check", timeout=2.0)
+        log("\n[PHASE 14] Re-Checking Operator Privileges After The Restart:")
+        log(post_restart_grant.strip())
+        if "DENIED" not in post_restart_grant:
+            log("[FAIL] The operator shell gained actuator ability after the restart.")
+            return 1
+        log("  [VERIFIED] The operator shell still holds NO actuator ability (DENIED).")
 
         log("\n================================================================================")
         log(" [DEMO RESULT] Guest termination observed; status reports LATCH and HEARTBEAT.")
+        log(" The restart OBSERVED the writer-session handoff and opened a NEW session;")
+        log(" the guest resumed streaming and the supervisor recovered.")
         log(" Mock actuator reports zero angle. Recovery and timing bounds were not tested.")
         log("================================================================================")
 

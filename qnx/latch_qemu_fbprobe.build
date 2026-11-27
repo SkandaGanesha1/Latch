@@ -1,0 +1,228 @@
+################################################################################
+# qnx/latch_qemu_fbprobe.build
+#
+# The HOST->GUEST FEEDBACK-TRANSPORT PROBE image (W4).
+#
+# This is the GOVERNOR image with ONE addition: the LFBK VERDICT FILE and
+# the two development-only processes that feed it --
+#
+#     `latch_fb_sink`   the only WRITER of the file.  It accepts a frame
+#                       on its one-sided WRITE node (/dev/latch/feedback_pub)
+#                       and copies the latest one to sector 0 of
+#                       /dev/shmem/latch_feedback.img on a dedicated
+#                       writer thread, so the advisory channel can never
+#                       stall the safety core.  It CREATES the file at its
+#                       final size BEFORE it registers its nodes, so the
+#                       `waitfor /dev/latch/feedback 4` below means
+#                       "node exists => file exists at final size".
+#     `latch_fb_pump`   publishes the production LFBK frames (magic
+#                       "LFBK", version 2) into that WRITE node.
+#
+# The guest reads sector 0 of the SAME file through a read-only
+# `vdev virtio-blk` (qvm opens it `hostdev <`, i.e. O_RDONLY), polling
+# with pread64.  The guest cannot write the channel at all: it is a
+# read-only block device, and the hypervisor's open has no write access.
+#
+# It is a DISPOSABLE experimental profile: its only job is to answer the
+# question "does a host-side verdict reach a freestanding guest policy,
+# and does the black channel survive it?".
+#
+# The scenario is the UNCHANGED 235-frame GOVERNOR scenario, so
+# `tools/verify_fb_qemu.py` can assert two things from ONE boot:
+#   1. the guest's poll of the verdict file saw a CRC-valid LFBK frame
+#      whose sequence number CHANGED while it watched (the transport
+#      delivers), and
+#   2. the 235-frame scenario still completed (the frame channel is intact).
+#
+# Three other transports were tried first and are REJECTED BY MEASUREMENT
+# -- a QNX pseudo-terminal (open ORDER decides usability, and any process
+# could write it), the PL011 vdev's host->guest injection (the guest's
+# RX-enable gate is never satisfied by Linux amba-pl011), and the
+# virtio-console's input direction (its pulse is unreachable).  See the
+# qvmconf's header and AGENTS.md §4c.
+#
+# Nothing here is a deployment image: `latch_fb_sink` and `latch_fb_pump`
+# are development-only, exactly like `secpolgenerate` in the audit image.
+################################################################################
+
+[image=0x40080000]
+[virtual=aarch64le,raw] boot = {
+    startup-qemu-virt -v -Q enable
+    PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/lib/dll/qvm
+    procnto-smp-instr -v
+}
+
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/ldqnx-64.so.2 /usr/lib/ldqnx-64.so.2
+
+    # 1. Serial console (PL011 UART at 0x09000000, IRQ 33 on QEMU virt)
+    devc-serpl011 -e -F -b115200 0x09000000,33
+    waitfor /dev/ser1 4
+    reopen /dev/ser1
+
+    display_msg "================================================================"
+    display_msg " LATCH -- FEEDBACK TRANSPORT PROBE (W4, experimental)"
+    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2"
+    display_msg "================================================================"
+
+    # 2. Push compiled QNX 8.0 Security Policy into procnto.
+    #
+    #    This is the DEPLOYMENT policy plus the experiment's two additions
+    #    (the feedback mailbox resource manager and the publisher that
+    #    writes into it), assembled by tools/generate_fbprobe_secpol.py.
+    #    The deployment policy qnx/latch.secpol is NOT modified.
+    #
+    #    The file is installed at the conventional path /proc/boot/secpol.bin
+    #    because that is where the `on` utility looks for the policy when it
+    #    resolves a type name (its own `-S path` option overrides it, but the
+    #    default is what every other profile uses).  Its CONTENT is the
+    #    experiment's policy -- see qnx/latch_fbprobe.secpol.inc.
+    secpolpush /proc/boot/secpol.bin
+
+    # 3. System logger + pipe resource manager (the pipe RM is required by
+    #    the qvm hostdev >"|..." form).
+    on -T slogger2_t -C 1 /proc/boot/slogger2 &
+    waitfor /dev/slog2 4
+
+    on -T pipe_t -C 1 /proc/boot/pipe &
+    waitfor /dev/pipe 4
+
+    # 3b. The LFBK VERDICT FILE's writer.
+    #
+    #     `latch_fb_sink` is the ONLY process that may write the verdict
+    #     file.  It has three one-sided nodes:
+    #
+    #         /dev/latch/feedback       READ side.  Exercised by the
+    #                                     readcond self-test below; nothing
+    #                                     in the deployment path reads it.
+    #         /dev/latch/feedback_pub   WRITE side.  The publisher (and,
+    #                                     in W5, latchd) writes here.
+    #         /dev/latch/feedback_out   DISCARD side.  Unused by the
+    #                                     transport; kept so the sink's
+    #                                     three-node shape does not change
+    #                                     under the gates.
+    #
+    #     IT CREATES THE VERDICT FILE BEFORE IT REGISTERS ITS NODES:
+    #     `fb_open_block_file()` runs first and ftruncates
+    #     /dev/shmem/latch_feedback.img to its final 1 MiB, so the
+    #     `waitfor /dev/latch/feedback 4` below is a proof that the FILE
+    #     exists at final size as well -- which is what makes the qvm
+    #     start safe (a hostdev that cannot be opened is FATAL to the VM).
+    #
+    #     The pseudo-terminal was tried first and is REJECTED BY
+    #     MEASUREMENT: its open ORDER decides whether the pair can be used
+    #     at all (the reader must open the CONTROLLER first, and a hostdev
+    #     that cannot be opened is FATAL to the VM start), and it lets any
+    #     process write into the channel.  See the qvmconf's header.
+    on -T latch_fb_sink_t -C 1 /proc/boot/latch_fb_sink /dev/latch/feedback /dev/latch/feedback_pub /dev/latch/feedback_out /dev/shmem/latch_feedback.img &
+    waitfor /dev/latch/feedback 4
+
+    # 3c. THE READCOND SELF-TEST -- a RECORDED QNX-SIDE MEASUREMENT.
+    #
+    #     This runs BEFORE the hypervisor exists, and it is the measurement
+    #     that separates the two hypotheses that look identical from the
+    #     outside:
+    #
+    #       H1  the resource manager's readcond() contract is wrong, so a
+    #           client's readcond() never gets a byte;
+    #       H2  the contract is right and the CALLER's trigger path is
+    #           the thing that is not firing.
+    #
+    #     The self-test publishes one frame on the WRITE node and reads it
+    #     back from the READ node with the SAME client library the
+    #     hypervisor uses, then checks the magic and the CRC.  A PASS proves
+    #     the resource manager's side of the contract end to end -- which is
+    #     what let the PL011 and virtio-console dead ends be blamed on the
+    #     hypervisor's trigger path rather than on the RM.
+    #
+    #     It is NOT part of the chosen transport: the verdict file does not
+    #     use readcond() at all.  It stays in the image so the recorded
+    #     measurement can be re-run at any boot.
+    #
+    #     It runs BEFORE the continuous publisher below, so the mailbox is
+    #     empty when it starts and its own frame is the one it reads back.
+    on -T latch_fbpump_t -C 1 /proc/boot/latch_fb_pump --read-selftest /dev/latch/feedback /dev/latch/feedback_pub
+
+    # 3d. The probe publisher.  It opens the WRITE side of the mailbox and
+    #     writes the PRODUCTION LFBK frames (magic "LFBK", version 2), so
+    #     the transport test exercises the real wire format.  Every frame
+    #     is handed to the sink's writer thread, which copies the LATEST
+    #     one to sector 0 of the verdict file.
+    #
+    #     `-n 0` means "write CONTINUOUSLY": the publisher starts before qvm
+    #     and the Linux guest polls many seconds later, so a finite burst
+    #     would be written long before anybody could read it.  The
+    #     publisher never blocks (the node is O_NONBLOCK), so a full
+    #     mailbox drops a frame rather than stalling anything -- and a
+    #     dropped verdict is SAFE, because the guest correlates by sequence
+    #     number and only silence is fatal.
+    on -T latch_fbpump_t -C 1 /proc/boot/latch_fb_pump -d /dev/latch/feedback_pub -n 0 -i 250 &
+
+    # 4. Start latchd on _cpu-0 in mock I2C mode (-n)
+    on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/governor_servo.manifest -n &
+    waitfor /dev/latch/proposal 4
+    waitfor /dev/latch/actuator 4
+
+    # 5. Start background evidence logger on _cpu-1
+    on -T latchlog_t -C 1 /proc/boot/latchlog -m /proc/boot/governor_servo.manifest -d /dev/latch/actuator -o /dev/shmem/governor_tape.csv &
+
+    # 6. Launch the QNX Hypervisor 8.0 guest VM (via the typed lifecycle
+    #    daemon, exactly as the GOVERNOR profile does).
+    on -T latch_guestd_t /proc/boot/latch_guestd -q /proc/boot/qvm -c /proc/boot/latch_qemu_fbprobe.qvmconf &
+    waitfor /dev/latch/guestctl 4
+
+    # 7. Interactive operator shell on _cpu-1
+    [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
+}
+
+[type=link] /bin/sh = /proc/boot/ksh
+[type=link] /dev/console = /dev/ser1
+[type=link] /tmp = /dev/shmem
+
+ldqnx-64.so.2
+libc.so
+libm.so
+libgcc_s.so.1
+libsecpol.so.1
+libqh.so.1
+libslog2.so.1
+libslog2parse.so.1
+libfdt.so.1
+
+[perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
+[perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
+# The verdict file's device.  The qvmconf declares `vdev virtio-blk`, and a
+# vdev the IFS does not carry cannot be opened at qvm start -- a FATAL
+# failure.  Same form as the inference profile's asset disk.
+[perms=0755] /lib/dll/qvm/vdev-virtio-blk.so = vdev-virtio-blk.so
+
+[perms=0755] secpolpush
+[perms=0755] slogger2
+[perms=0755] slog2info
+[perms=0755] pipe
+[perms=0755] devc-serpl011
+[perms=0755] /proc/boot/qvm = qvm
+[perms=0755] on
+[perms=0755] ability
+[perms=0755] pidin
+[perms=0755] slay
+[perms=0755] ksh
+[perms=0755] waitfor
+
+[uid=0 gid=0 perms=0750] /proc/boot/latchd = build/nto-aarch64-le/latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = build/nto-aarch64-le/latch_verify
+[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = build/nto-aarch64-le/latch-ingest
+[uid=0 gid=0 perms=0750] /proc/boot/latchctl = build/nto-aarch64-le/latchctl
+[uid=0 gid=0 perms=0755] /proc/boot/latchlog = build/nto-aarch64-le/latchlog
+[uid=0 gid=0 perms=0755] /proc/boot/latch_guestd = build/nto-aarch64-le/latch_guestd
+[uid=0 gid=0 perms=0755] /proc/boot/latch_fb_pump = build/nto-aarch64-le/latch_fb_pump
+[uid=0 gid=0 perms=0755] /proc/boot/latch_fb_sink = build/nto-aarch64-le/latch_fb_sink
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest = ./contracts/governor_servo.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest.sha256 = ./contracts/governor_servo.manifest.sha256
+[uid=0 gid=0 perms=0644] /proc/boot/latch_qemu_fbprobe.qvmconf = ./latch_qemu_fbprobe.qvmconf
+# The EXPERIMENT's policy, installed at the conventional path: the `on`
+# utility resolves a type name by reading /proc/boot/secpol.bin.
+[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = build/secpol_fbprobe.bin
+[perms=0644] /proc/boot/linux-guest.Image = ${GUEST_IMAGE}
+[perms=0644] /proc/boot/governor-linux-guest.initrd = ${GOVERNOR_GUEST_INITRD}

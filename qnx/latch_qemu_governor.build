@@ -45,7 +45,22 @@
     # 5. Start background evidence logger on _cpu-1
     on -T latchlog_t -C 1 /proc/boot/latchlog -m /proc/boot/governor_servo.manifest -d /dev/latch/actuator -o /dev/shmem/governor_tape.csv &
 
-    # 6. Launch QNX Hypervisor 8.0 guest VM.
+    # 6. Launch the QNX Hypervisor 8.0 guest VM.
+    #
+    #    The VM is started by `latch_guestd`, a narrowly-typed guest-lifecycle
+    #    daemon, NOT directly by the boot script.  The reason is measured
+    #    (2026-11-25, QEMU AArch64 target): `slay -9 qvm` from the operator
+    #    shell works, but `on -T qvm_host_t ... qvm @qvmconf` is REFUSED with
+    #    "on: Operation not permitted", because `operator_shell_t` holds no
+    #    `settypeid` and no `spawn`.  Granting the operator shell that
+    #    ability would collapse the "the operator shell is deliberately
+    #    unprivileged" property, so the power to start the guest lives in
+    #    one dedicated typed domain instead -- one that holds no actuator
+    #    ability and no proposal-write right.
+    #
+    #    latch_guestd spawns the VM as a CHILD of type `qvm_host_t`, so the
+    #    hypervisor gets exactly the abilities it got when the boot script
+    #    started it directly.
     #
     #    CPU affinity: deliberately NOT constrained here.
     #    `on -C <n>` resolves to the predefined single-CPU cluster _cpu-<n>, and
@@ -64,7 +79,8 @@
     #    itself to _cpu-0 with ThreadCtl at SCHED_FIFO 63, and latch-ingest /
     #    latchlog / ksh stay on _cpu-1, so the guest cannot reach the decision
     #    core. The guest vCPUs run at priority 8, far below latchd's 63.
-    on -T qvm_host_t /proc/boot/qvm @/proc/boot/latch_qemu_governor.qvmconf &
+    on -T latch_guestd_t /proc/boot/latch_guestd -q /proc/boot/qvm -c /proc/boot/latch_qemu_governor.qvmconf &
+    waitfor /dev/latch/guestctl 4
 
     # 7. Interactive operator shell on _cpu-1
     [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
@@ -106,6 +122,7 @@ libfdt.so.1
 [uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = build/nto-aarch64-le/latch-ingest
 [uid=0 gid=0 perms=0750] /proc/boot/latchctl = build/nto-aarch64-le/latchctl
 [uid=0 gid=0 perms=0755] /proc/boot/latchlog = build/nto-aarch64-le/latchlog
+[uid=0 gid=0 perms=0755] /proc/boot/latch_guestd = build/nto-aarch64-le/latch_guestd
 [uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest = ./contracts/governor_servo.manifest
 [uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest.sha256 = ./contracts/governor_servo.manifest.sha256
 [uid=0 gid=0 perms=0644] /proc/boot/latch_qemu_governor.qvmconf = ./latch_qemu_governor.qvmconf

@@ -62,6 +62,8 @@ extern "C" {
 #define LATCH_DEV_PROPOSAL       "/dev/latch/proposal"
 #define LATCH_DEV_ACTUATOR       "/dev/latch/actuator"
 #define LATCH_DEV_GOVERNOR       "/dev/governor"
+/* Guest-lifecycle control node. Served by latch_guestd, NOT by latchd. */
+#define LATCH_DEV_GUESTCTL       "/dev/latch/guestctl"
 #define LATCH_ABILITY_ACTUATOR   "latch/actuator"
 
 #define LATCH_I2C_DEFAULT_BUS    "/dev/i2c1"
@@ -232,18 +234,41 @@ typedef struct __attribute__((packed)) latch_ipc_proposal_v2 {
      *
      * 0 (LATCH_PRODUCER_TAG_NONE) is RESERVED and REJECTED on a v2 frame:
      * an unscoped frame must not be able to slip past the lease authority.
-     * The struct size is unchanged (48 bytes), so the wire ABI does not
-     * move -- only the meaning of two bytes does.
+     * Repurposing this field did not change the struct size on its own; the
+     * struct is 56 bytes now because the session epoch was appended below
+     * (RT-02), and the 32-byte WIRE frame is untouched either way.
      */
     uint16_t producer_tag;
     uint32_t coherence_ctr;
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
     uint32_t unit_id;
+    /*
+     * Session epoch (RT-02).
+     *
+     * The producer chooses a FRESH epoch for every session it opens and
+     * stamps it on every frame it forwards.  The supervisor binds the epoch
+     * of the session it is running and rejects any frame that carries a
+     * different one.
+     *
+     * Why this exists: the supervisor's sequence baseline is re-based when a
+     * session opens, and the FIRST frame of a session was accepted with any
+     * non-zero sequence number.  A frame captured in an earlier session --
+     * say one carrying `seq = 999999` -- was therefore accepted as the first
+     * frame of the new session, became the new baseline, and could move the
+     * plant.  The epoch makes the session's identity explicit: a stale frame
+     * carries the OLD epoch, and the supervisor knows the old epoch.
+     *
+     * `reserved1` MUST be zero.  It is the room this structure needs to keep
+     * a fixed size and a fixed field order, and a non-zero value means the
+     * sender is using a layout this supervisor does not understand.
+     */
+    uint32_t session_epoch;
+    uint32_t reserved1;
 } latch_ipc_proposal_v2_t;
 
-_Static_assert(sizeof(latch_ipc_proposal_v2_t) == 48u,
-               "latch_ipc_proposal_v2_t must be exactly 48 bytes");
+_Static_assert(sizeof(latch_ipc_proposal_v2_t) == 56u,
+               "latch_ipc_proposal_v2_t must be exactly 56 bytes");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, ipc_version) == 24u,
                "LPR2 ipc_version offset changed");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, producer_tag) == 30u,
@@ -252,6 +277,17 @@ _Static_assert(offsetof(latch_ipc_proposal_v2_t, coherence_ctr) == 32u,
                "LPR2 coherence counter offset changed");
 _Static_assert(offsetof(latch_ipc_proposal_v2_t, unit_id) == 44u,
                "LPR2 unit_id offset changed");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, session_epoch) == 48u,
+               "LPR2 session_epoch offset changed");
+_Static_assert(offsetof(latch_ipc_proposal_v2_t, reserved1) == 52u,
+               "LPR2 reserved1 offset changed");
+
+/* Session epoch constants (RT-02). */
+#define LATCH_SESSION_EPOCH_NONE 0u   /* RESERVED: rejected on a v2 frame */
+/* How many spent epochs the supervisor remembers. A producer that restarts
+ * and reuses one of these is rejected instead of resuming the old session's
+ * identity. */
+#define LATCH_SESSION_EPOCH_RING 16u
 
 /* Producer identity constants (L-2). */
 #define LATCH_PRODUCER_TAG_NONE  0u   /* RESERVED: rejected on a v2 frame */
@@ -274,6 +310,7 @@ typedef struct latch_proposal {
     uint32_t shrink_v;
     uint32_t shrink_scale_q8;
     uint32_t unit_id;
+    uint32_t session_epoch;  /* 0 for a v1 (unscoped) frame (RT-02)          */
 } latch_proposal_t;
 
 /* ==========================================================================
@@ -312,6 +349,94 @@ typedef struct latch_hold_status {
     uint32_t release_deferred_ticks;  /* Ticks the release has waited          */
     uint32_t reserved;
 } latch_hold_status_t;
+
+/*
+ * Session status (output-only, L-2 handoff).
+ *
+ * `writer_held` says whether the EXCLUSIVE proposal writer OCB is currently
+ * open.  The proposal node admits one writer at a time (L-2): a second
+ * writer is refused with EBUSY rather than being allowed to interleave
+ * frames with the session that owns the plant.
+ *
+ * That exclusivity is what made the legacy QEMU verification ambiguous.  The
+ * harness used to kill the guest's ingest and then WAIT A FIXED TWO SECONDS
+ * before starting the verifier, on the assumption that the resource manager
+ * would have processed the ingest's disconnect by then.  When it had not, the
+ * verifier's own open was refused with EBUSY and the run failed for a reason
+ * that had nothing to do with the invariants it was checking.  A fixed sleep
+ * is not a handoff: it is a hope.
+ *
+ * This reply is the observable handoff point.  The harness now polls it and
+ * starts the verifier only after the supervisor itself reports that the
+ * writer OCB is released -- so the ordering is enforced by observed state
+ * instead of by a timer, and a genuine failure to release shows up as
+ * "writer still held" instead of as a confusing EBUSY from the verifier.
+ *
+ * `session_generation` counts the writer sessions the supervisor has seen.
+ * It increments on every 0 -> 1 writer transition, so a harness can assert
+ * that the verifier runs in a DIFFERENT session from the guest's -- which is
+ * a stronger statement than "the handle was free at that instant".
+ *
+ * This is a READ-ONLY view of internal state.  It grants no authority: it
+ * cannot open, write, or release anything, and it is served from the
+ * actuator node like every other status reply.
+ */
+typedef struct latch_session_status {
+    uint32_t struct_size;
+    uint32_t writer_held;             /* 1 = an exclusive writer OCB is open    */
+    uint32_t session_generation;      /* Writer sessions seen so far           */
+    uint32_t reserved;
+} latch_session_status_t;
+
+/* ==========================================================================
+ * Guest lifecycle control (U-1: latchctl guest-restart)
+ * ==========================================================================
+ *
+ * The guest VM is a CHILD of `latch_guestd`, a narrowly-typed process whose
+ * only job is to own that child and to expose exactly two mutating
+ * operations on a dedicated channel (`/dev/latch/guestctl`, channel type
+ * `guest_ctl_t`).
+ *
+ * WHY THIS EXISTS.  Measured on the QEMU AArch64 target on 2026-11-25:
+ *
+ *   - `slay -9 qvm` from the operator shell WORKS, and the writer-session
+ *     handoff is observable (the ingest sees EOF, exits, and the supervisor
+ *     reports `Writer Held : 0`).
+ *   - `on -T qvm_host_t ... qvm @qvmconf` is REFUSED with
+ *     `on: Operation not permitted`, because `operator_shell_t` holds no
+ *     `settypeid` and no `spawn`.
+ *
+ * So the operator shell can stop the guest but cannot start it.  Granting
+ * the operator shell `settypeid:qvm_host_t` would fix that and would also
+ * collapse the "the operator shell is deliberately unprivileged" property
+ * that the EPERM demonstration depends on.  A dedicated lifecycle process
+ * keeps the hypervisor-spawning privilege in ONE typed domain that holds no
+ * actuator ability and no proposal-write right.
+ *
+ * WHY STOP AND START ARE SEPARATE OPERATIONS.  A server-side "restart"
+ * that killed the guest and immediately respawned it would RACE the writer
+ * handoff: the new guest's ingest opens the proposal node, and if the old
+ * ingest has not yet released the exclusive writer OCB, that open is
+ * refused with EBUSY and the guest silently never streams again.  A
+ * handoff must be OBSERVED, never timed (see AGENTS.md).  So the client
+ * performs the sequence:
+ *
+ *     STOP  ->  poll the supervisor's session status until the writer is
+ *               released  ->  START
+ *
+ * and refuses to START if the handoff was not observed.  There is
+ * deliberately NO single-shot server-side "restart" operation that skips
+ * that observation: an operation that can silently produce a guest that
+ * never streams is worse than no operation at all.
+ */
+typedef struct latch_guest_status {
+    uint32_t struct_size;
+    uint32_t running;            /* 1 = a guest VM child is alive right now   */
+    uint32_t generation;         /* successful launches since latch_guestd    */
+    uint32_t last_exit_status;   /* raw wait status of the last child to exit */
+    int32_t  pid;                /* pid of the live guest VM, or -1           */
+    uint32_t reserved;
+} latch_guest_status_t;
 
 typedef struct latch_status_reply {
     uint64_t tick;
@@ -386,9 +511,161 @@ typedef struct latch_governor_status_reply {
     uint32_t session_dead;
     uint32_t foreign_frames;
     uint32_t producer_takeovers;
+    /* Session-epoch telemetry (extension_version >= 6, RT-02).
+     *
+     * `session_epoch` is the epoch the supervisor has BOUND to the session
+     * it is running, and `session_epoch_valid` is 0 when no epoch is bound
+     * yet.  Reporting it makes the session's identity observable from
+     * outside, so an operator can tell two sessions apart instead of
+     * inferring it from a sequence number. */
+    uint32_t session_epoch;
+    uint32_t session_epoch_valid;
 } latch_governor_status_reply_t;
 
 #define LATCH_DUMP_MAX_ENTRIES   128u
+
+/* ==========================================================================
+ * 4b. THE LATENCY DISTRIBUTION (U-4: the honest latency measurement)
+ * ==========================================================================
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The project's rejected latency document claimed a bounded "WCET" from a
+ * generator that INSERTED FIXED VALUES.  The replacement has to be a real
+ * measurement of the supervisor's decision loop over a large sample, and
+ * the sample has to be aggregated ON THE TARGET: ten-to-the-six ticks
+ * cannot be shipped across a 115200-baud serial console, and a host-side
+ * sample of a host-side run is not a measurement of the target at all.
+ *
+ * So the supervisor keeps a HISTOGRAM of its own per-tick decision latency,
+ * and this payload is the readout.  It is OUTPUT-ONLY and grants no
+ * authority, exactly like every other status reply.
+ *
+ * WHAT IS MEASURED
+ * ----------------
+ * The decision latency is the time from the entry to the exit of
+ * `latch_simplex_tick()` -- the same quantity the existing "Decision
+ * Latency" telemetry reports as `last` and `max`.  One sample is taken per
+ * tick.
+ *
+ * TWO HISTOGRAMS, NOT ONE
+ * -----------------------
+ * A tick that CONSUMES A PROPOSAL runs the whole decision path: the frame is
+ * parsed, the envelope is evaluated, the governor ladder is updated and the
+ * actuation is published.  A tick with an EMPTY queue runs none of that.
+ * Averaging the two together would produce a number that describes neither,
+ * so the two are counted separately:
+ *
+ *   hist_decision : ticks that DEQUEUED A PROPOSAL  (the proposal path)
+ *   hist_idle     : ticks with an EMPTY proposal queue (the supervisor's cost
+ *                   when it has nothing to decide)
+ *
+ * `samples_motion` counts the subset of the decision-path ticks on which a
+ * MOTION proposal was actually evaluated -- the ones that ran the governor
+ * gate and the kinematic envelope.  A heartbeat, a foreign frame or a
+ * proposal refused before the envelope did less work than a real command,
+ * so a reader can tell how much of the decision-path sample was the
+ * decision path proper.
+ *
+ * `mode_ticks` counts the ticks per supervisor mode, so a reader can
+ * see whether the sample was taken while the supervisor was following the
+ * guest (HP) or had already failed closed.
+ *
+ * THE BUCKET SCHEME
+ * -----------------
+ * Buckets 0..63 are EXACT cycle counts.  Above that, every octave of the
+ * cycle count is split into three sub-buckets, so the resolution inside an
+ * octave is 25%:
+ *
+ *     bucket = LATCH_LATENCY_EXACT + 3 * (k - 6) + sub
+ *     k      = floor(log2(cycles))                 (k >= 6)
+ *     sub    = ((cycles >> (k - 2)) & 3) - 4        (0, 1 or 2)
+ *
+ * so octave k covers [1.00, 1.25), [1.25, 1.50) and [1.50, 2.00) times 2^k.
+ * A percentile is therefore reported as a RANGE, never as a fabricated
+ * point estimate: the reader is told the bucket the sample fell into.
+ * `min_cycles` and `max_cycles` are EXACT.
+ * ========================================================================== */
+
+#define LATCH_LATENCY_EXACT     64u   /* buckets 0..63 are exact cycle counts */
+#define LATCH_LATENCY_BUCKETS  112u   /* 64 exact + 3 per octave up to 2^22    */
+#define LATCH_LATENCY_MODES     8u    /* latch_mode_t has 3; the rest are slack */
+
+/*
+ * The bucket of a latency, in cycles.  Kept here -- and not in the
+ * supervisor -- because the READER has to compute the SAME bucket to turn a
+ * count back into a range, and two implementations of the scheme would be
+ * two chances to disagree.
+ */
+static inline unsigned latch_latency_bucket(uint64_t cycles) {
+    if (cycles < (uint64_t)LATCH_LATENCY_EXACT) {
+        return (unsigned)cycles;
+    }
+    unsigned k = 63u - (unsigned)__builtin_clzll(cycles);   /* floor(log2) */
+    unsigned sub = (unsigned)((cycles >> (k - 2u)) & 3u) - 4u;  /* 0..2 */
+    unsigned idx = LATCH_LATENCY_EXACT + 3u * (k - 6u) + sub;
+    if (idx >= LATCH_LATENCY_BUCKETS) {
+        idx = LATCH_LATENCY_BUCKETS - 1u;
+    }
+    return idx;
+}
+
+/* The inclusive lower and exclusive upper cycle bound of a bucket. */
+static inline void latch_latency_bucket_range(unsigned bucket,
+                                              uint64_t *lo, uint64_t *hi) {
+    if (bucket < LATCH_LATENCY_EXACT) {
+        *lo = (uint64_t)bucket;
+        *hi = (uint64_t)bucket + 1u;
+        return;
+    }
+    unsigned idx = bucket - LATCH_LATENCY_EXACT;
+    unsigned k = 6u + idx / 3u;
+    unsigned sub = idx % 3u;
+    uint64_t octave = (uint64_t)1u << k;
+    uint64_t quarter = octave / 4u;
+    switch (sub) {
+        case 0u:  *lo = octave;       *hi = octave + quarter;     break;
+        case 1u:  *lo = octave + quarter; *hi = octave + 2u * quarter; break;
+        default:  *lo = octave + 2u * quarter; *hi = 2u * octave;  break;
+    }
+}
+
+/* How many buckets of a histogram are non-empty.  A diagnostic that shows
+ * the SHAPE of a distribution without dumping a hundred lines of it. */
+static inline unsigned latch_latency_nonzero_buckets(const uint64_t *hist,
+                                                     unsigned n) {
+    unsigned count = 0u;
+    if (hist == NULL) return 0u;
+    for (unsigned i = 0u; i < n; ++i) {
+        if (hist[i] != 0u) count++;
+    }
+    return count;
+}
+
+typedef struct latch_latency_stats {
+    uint32_t struct_size;
+    uint32_t buckets;              /* LATCH_LATENCY_BUCKETS                    */
+    uint32_t modes;                /* LATCH_LATENCY_MODES                      */
+    uint32_t reserved0;
+    uint64_t cycles_per_sec;       /* the target's own cycle rate              */
+    uint64_t samples_total;        /* every tick sampled                        */
+    uint64_t samples_decision;     /* ticks that dequeued a proposal            */
+    uint64_t samples_idle;         /* ticks with an empty proposal queue        */
+    uint64_t samples_motion;       /* of those: ticks that evaluated a motion   */
+    uint64_t min_cycles;           /* EXACT, over EVERY sample                  */
+    uint64_t max_cycles;           /* EXACT, over EVERY sample                  */
+    uint64_t sum_cycles;           /* the sum over EVERY sample                */
+    uint64_t sum_decision_cycles;  /* the sum over the DECISION-path samples   */
+    uint64_t min_decision_cycles;  /* EXACT, over the DECISION-path samples    */
+    uint64_t max_decision_cycles;  /* EXACT, over the DECISION-path samples    */
+    uint64_t first_tick;           /* the tick of the first sample             */
+    uint64_t last_tick;            /* the tick of the most recent sample       */
+    uint64_t over_budget;          /* samples over the manifest's budget       */
+    uint64_t over_period;          /* samples over the tick period             */
+    uint32_t mode_ticks[LATCH_LATENCY_MODES];
+    uint64_t hist_decision[LATCH_LATENCY_BUCKETS];
+    uint64_t hist_idle[LATCH_LATENCY_BUCKETS];
+} latch_latency_stats_t;
 
 /*
  * The tape dump's cursor is 64-BIT.
@@ -464,6 +741,21 @@ typedef struct latch_gov_event_dump {
 /* Operator-release acknowledgement (L-5). Output-only, like GET_STATUS. */
 #define DCMD_LATCH_GET_HOLD_STATUS \
     __DIOF(_DCMD_MISC, 0x46, latch_hold_status_t)
+/* Writer-session status (L-2 handoff). Output-only; grants no authority. */
+#define DCMD_LATCH_GET_SESSION_STATUS \
+    __DIOF(_DCMD_MISC, 0x47, latch_session_status_t)
+/* Guest lifecycle (U-1). Served by latch_guestd on /dev/latch/guestctl,
+ * NOT by latchd: the supervisor that enforces the envelope must never hold
+ * the power to start or stop the guest that it is supervising. */
+#define DCMD_LATCH_GUEST_STOP \
+    __DIOF(_DCMD_MISC, 0x48, latch_guest_status_t)
+#define DCMD_LATCH_GUEST_START \
+    __DIOF(_DCMD_MISC, 0x49, latch_guest_status_t)
+#define DCMD_LATCH_GET_GUEST_STATUS \
+    __DIOF(_DCMD_MISC, 0x4A, latch_guest_status_t)
+/* Latency distribution (U-4). Output-only; grants no authority. */
+#define DCMD_LATCH_GET_LATENCY_STATS \
+    __DIOF(_DCMD_MISC, 0x4B, latch_latency_stats_t)
 
 /* ==========================================================================
  * Cross-Process Payload Layout Asserts
@@ -526,6 +818,81 @@ _Static_assert(sizeof(latch_hold_status_t) == 24u,
                "latch_hold_status_t must be 24 bytes");
 _Static_assert(offsetof(latch_hold_status_t, struct_size) == 0u,
                "latch_hold_status_t: struct_size must be the first field");
+_Static_assert(sizeof(latch_session_status_t) == 16u,
+               "latch_session_status_t must be 16 bytes");
+_Static_assert(offsetof(latch_session_status_t, struct_size) == 0u,
+               "latch_session_status_t: struct_size must be the first field");
+_Static_assert(offsetof(latch_session_status_t, writer_held) == 4u,
+               "latch_session_status_t: writer_held must follow struct_size");
+_Static_assert(offsetof(latch_session_status_t, session_generation) == 8u,
+               "latch_session_status_t: session_generation must follow writer_held");
+_Static_assert(sizeof(latch_guest_status_t) == 24u,
+               "latch_guest_status_t must be 24 bytes");
+_Static_assert(offsetof(latch_guest_status_t, struct_size) == 0u,
+               "latch_guest_status_t: struct_size must be the first field");
+_Static_assert(offsetof(latch_guest_status_t, running) == 4u,
+               "latch_guest_status_t: running must follow struct_size");
+_Static_assert(offsetof(latch_guest_status_t, generation) == 8u,
+               "latch_guest_status_t: generation must follow running");
+_Static_assert(offsetof(latch_guest_status_t, last_exit_status) == 12u,
+               "latch_guest_status_t: last_exit_status must follow generation");
+_Static_assert(offsetof(latch_guest_status_t, pid) == 16u,
+               "latch_guest_status_t: pid must follow last_exit_status");
+
+/* The latency-statistics payload is a devctl payload, so its SIZE and its
+ * FIELD OFFSETS are part of the ABI exactly like the wire frame and the IPC
+ * proposal are.  A mismatch between the supervisor and a client built from a
+ * different revision is diagnosed as "random garbage" rather than as a
+ * layout error, so the layout is pinned here. */
+_Static_assert(sizeof(latch_latency_stats_t) % 8u == 0u,
+               "latch_latency_stats_t must be a multiple of its 8-byte alignment");
+_Static_assert(offsetof(latch_latency_stats_t, struct_size) == 0u,
+               "latch_latency_stats_t: struct_size must be the first field");
+_Static_assert(offsetof(latch_latency_stats_t, cycles_per_sec) == 16u,
+               "latch_latency_stats_t: cycles_per_sec must follow the header");
+_Static_assert(offsetof(latch_latency_stats_t, samples_total) == 24u,
+               "latch_latency_stats_t: samples_total must follow cycles_per_sec");
+_Static_assert(offsetof(latch_latency_stats_t, min_cycles) == 56u,
+               "latch_latency_stats_t: min_cycles must follow the sample counts");
+_Static_assert(offsetof(latch_latency_stats_t, max_cycles) == 64u,
+               "latch_latency_stats_t: max_cycles must follow min_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, sum_cycles) == 72u,
+               "latch_latency_stats_t: sum_cycles must follow max_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, sum_decision_cycles) == 80u,
+               "latch_latency_stats_t: sum_decision_cycles must follow sum_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, min_decision_cycles) == 88u,
+               "latch_latency_stats_t: min_decision_cycles must follow sum_decision_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, max_decision_cycles) == 96u,
+               "latch_latency_stats_t: max_decision_cycles must follow min_decision_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, first_tick) == 104u,
+               "latch_latency_stats_t: first_tick must follow max_decision_cycles");
+_Static_assert(offsetof(latch_latency_stats_t, last_tick) == 112u,
+               "latch_latency_stats_t: last_tick must follow first_tick");
+_Static_assert(offsetof(latch_latency_stats_t, over_budget) == 120u,
+               "latch_latency_stats_t: over_budget must follow last_tick");
+_Static_assert(offsetof(latch_latency_stats_t, over_period) == 128u,
+               "latch_latency_stats_t: over_period must follow over_budget");
+_Static_assert(offsetof(latch_latency_stats_t, mode_ticks) == 136u,
+               "latch_latency_stats_t: mode_ticks must follow the counters");
+_Static_assert(offsetof(latch_latency_stats_t, hist_decision) ==
+                    offsetof(latch_latency_stats_t, mode_ticks) +
+                    sizeof(((latch_latency_stats_t *)0)->mode_ticks),
+               "latch_latency_stats_t: hist_decision must follow mode_ticks");
+_Static_assert(offsetof(latch_latency_stats_t, hist_decision) % 8u == 0u,
+               "latch_latency_stats_t: hist_decision must be 8-byte aligned");
+_Static_assert(offsetof(latch_latency_stats_t, hist_idle) ==
+                    offsetof(latch_latency_stats_t, hist_decision) +
+                    sizeof(((latch_latency_stats_t *)0)->hist_decision),
+               "latch_latency_stats_t: hist_idle must follow hist_decision");
+_Static_assert(offsetof(latch_latency_stats_t, hist_idle) +
+                    sizeof(((latch_latency_stats_t *)0)->hist_idle) ==
+                sizeof(latch_latency_stats_t),
+               "latch_latency_stats_t: the histograms must be the last fields");
+/* The bucket scheme has to stay inside the array it indexes. */
+_Static_assert(LATCH_LATENCY_BUCKETS >= LATCH_LATENCY_EXACT + 3u * 16u,
+               "LATCH_LATENCY_BUCKETS must cover 16 octaves above the exact range");
+_Static_assert(LATCH_LATENCY_MODES > (unsigned)LATCH_MODE_HOME,
+               "LATCH_LATENCY_MODES must cover every supervisor mode");
 #define DCMD_LATCH_PROBE_ABILITY \
     __DION(_DCMD_MISC, 0x45)
 

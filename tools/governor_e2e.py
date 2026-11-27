@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import pathlib
+import re
 import struct
 import subprocess
 import sys
@@ -14,6 +15,24 @@ import zlib
 
 MAGIC = 0x4C415448
 CMD, HEARTBEAT, CMD_V2, SHRINK_REQ = range(4)
+
+
+def lpr2_size() -> int:
+    """The LPR2 IPC frame size, READ FROM THE PROTOCOL HEADER.
+
+    A literal here would let this test keep passing after the IPC ABI
+    changed -- which is exactly how the 48 -> 56 byte growth (RT-02's
+    session epoch) could have gone unnoticed. The header is the ABI's
+    single source of truth, so the test reads it from there.
+    """
+    header = pathlib.Path(__file__).resolve().parent.parent / "qnx" / "latch_protocol.h"
+    text = header.read_text(encoding="utf-8")
+    match = re.search(
+        r"_Static_assert\(\s*sizeof\(latch_ipc_proposal_v2_t\)\s*==\s*(\d+)u", text)
+    if not match:
+        raise SystemExit(
+            "[GOVERNOR_E2E] FAIL could not read the LPR2 size from latch_protocol.h")
+    return int(match.group(1))
 
 # Fault bits defined in latch_protocol.h
 MAGIC_FAULT = 1 << 0
@@ -47,13 +66,6 @@ def frame_v2(kind, seq, coherence, u=0, confidence=0, agent_state=1, unit_id=0):
                 coherence.to_bytes(3, "little") + unit_id.to_bytes(4, "little"))
     crc = zlib.crc32(header + metadata) & 0xFFFFFFFF
     return header + struct.pack("<I", crc) + metadata
-
-
-def frame_v1(flags, seq, u=0):
-    """32-byte wire v1 frame with CRC over [0..16) and 12 zero reserved bytes."""
-    header = struct.pack("<IHBBii", MAGIC, 1, 0, flags, seq, u)
-    crc = zlib.crc32(header) & 0xFFFFFFFF
-    return header + struct.pack("<I", crc) + (b"\x00" * 12)
 
 
 def run_pipeline(latchctl, ingest, latchd, manifest_dict, raw_frames, tempdir, name="governor"):
@@ -103,7 +115,7 @@ def main():
 
         # ---------------------------------------------------------------------
         # Primary Pipeline Run: Warmup, commands, anomalies, WIDEN veto,
-        # heartbeat non-recovery, and v1 SILENCE lease expiry.
+        # heartbeat non-recovery, and v2 shrink traffic without lease renewal.
         # ---------------------------------------------------------------------
         main_config = json.loads(json.dumps(base_config))
         main_config["governor"]["enabled"] = 1
@@ -137,13 +149,12 @@ def main():
             frame_v2(HEARTBEAT, 13, 13),
             frame_v2(HEARTBEAT, 14, 14),
             frame_v2(HEARTBEAT, 15, 15),
-            # Ticks 16..20: Protocol v1 SILENCE frames (flags=0x80).
-            # Treated as has_new=false, never read as HEARTBEAT, lease expires, graded demotion!
-            frame_v1(flags=0x80, seq=16, u=0),
-            frame_v1(flags=0x80, seq=17, u=0),
-            frame_v1(flags=0x80, seq=18, u=0),
-            frame_v1(flags=0x80, seq=19, u=0),
-            frame_v1(flags=0x80, seq=20, u=0),
+            # SHRINK requests do not renew a producer's deadman lease.
+            frame_v2(SHRINK_REQ, 16, 16, u=12, confidence=128),
+            frame_v2(SHRINK_REQ, 17, 17, u=12, confidence=128),
+            frame_v2(SHRINK_REQ, 18, 18, u=12, confidence=128),
+            frame_v2(SHRINK_REQ, 19, 19, u=12, confidence=128),
+            frame_v2(SHRINK_REQ, 20, 20, u=12, confidence=128),
         ]
         raw_main = b"".join(frames_main)
         rows_main = run_pipeline(latchctl, ingest, latchd, main_config, raw_main, tempdir, "main")
@@ -204,24 +215,33 @@ def main():
         pass_s4 = "[GOVERNOR_SCENARIO_4] PASS: deadman lease expiry enforces deterministic graded ladder demotion"
 
         # ---------------------------------------------------------------------
-        # Scenario 2: v1 SILENCE=0x80 Fail-Closed & v2 0x80 Rejection
+        # Scenario 2: v2 rejects the legacy SILENCE flag
         # ---------------------------------------------------------------------
-        # Part A: v1 SILENCE frames were never read as heartbeat, so lease was never renewed
-        # and expired fail-closed at tick 19.
-        # Part B: verify wire v2 decoder rejects flags=0x80 with MAGIC_FAULT.
+        # Verify wire v2 decoder rejects flags=0x80 with MAGIC_FAULT.
         v2_bad_hdr = struct.pack("<IHBBIi", MAGIC, 2, 0, 0x80, 99, 0)
         v2_bad_meta = b"\x00" * 12
         v2_bad_crc = zlib.crc32(v2_bad_hdr + v2_bad_meta) & 0xFFFFFFFF
         v2_bad_kind = v2_bad_hdr + struct.pack("<I", v2_bad_crc) + v2_bad_meta
         ing_bad = subprocess.run([str(ingest), "-m", str(tempdir / "main.manifest"), "-o", "-"],
                                  input=v2_bad_kind, capture_output=True)
-        # Ingest output is a 48-byte IPC proposal whose pre_fault_bits has MAGIC_FAULT
-        if len(ing_bad.stdout) != 48:
-            raise SystemExit(f"[GOVERNOR_E2E] FAIL ingest did not emit 48-byte IPC proposal for rejected v2 frame (got {len(ing_bad.stdout)})")
+        # Ingest output is one LPR2 IPC proposal whose pre_fault_bits has MAGIC_FAULT
+        expected_lpr2 = lpr2_size()
+        if len(ing_bad.stdout) != expected_lpr2:
+            raise SystemExit(f"[GOVERNOR_E2E] FAIL ingest did not emit {expected_lpr2}-byte "
+                             f"IPC proposal for rejected v2 frame (got {len(ing_bad.stdout)})")
         pre_faults = struct.unpack("<H", ing_bad.stdout[14:16])[0]
         if pre_faults & MAGIC_FAULT == 0:
             raise SystemExit(f"[GOVERNOR_E2E] FAIL v2 decoder did not reject flags=0x80 with MAGIC fault (got pre_faults=0x{pre_faults:04X})")
-        pass_s2 = "[GOVERNOR_SCENARIO_2] PASS: v1 SILENCE=0x80 is fail-closed (never read as HEARTBEAT) and v2 rejects 0x80"
+        # Bypass ingestion to exercise latchd's independent IPC trust boundary.
+        # A structurally valid v1 LPRP must not enter a v2 manifest session.
+        legacy_ipc = struct.pack("<IIiHHQ", 0x4C505250, 1, 10, 0, 0, 0)
+        legacy = subprocess.run(
+            [str(latchd), "-m", str(tempdir / "main.manifest"), "--pipe-in",
+             "--csv", str(tempdir / "rejected-v1.csv")],
+            input=legacy_ipc, capture_output=True)
+        if legacy.returncode == 0:
+            raise SystemExit("[GOVERNOR_E2E] FAIL v2 contract accepted LPRP v1 IPC")
+        pass_s2 = "[GOVERNOR_SCENARIO_2] PASS: v2 rejects legacy SILENCE flag and LPRP v1 IPC"
 
         # ---------------------------------------------------------------------
         # Scenario 1: KEEPOUT -> HOLD not ADVISE
@@ -283,7 +303,7 @@ def main():
         pass_s3 = "[GOVERNOR_SCENARIO_3] PASS: global assertion verified: u=370000 and all commands never land theta in keepout [250, 650]"
 
         # ---------------------------------------------------------------------
-        # Scenario 7: Medical Syringe Governor DOSE Fault & Degradation
+        # Scenario 7: Medical Syringe Governor DOSE Fault & Hard-Fault Latch
         # ---------------------------------------------------------------------
         pass_s7 = None
         syringe_path = fixture.parent / "syringe_governor.manifest"
@@ -294,6 +314,8 @@ def main():
             s_config["governor"]["deadman"]["warmup_heartbeats"] = 2
             s_config["governor"]["deadman"]["lease_ticks"] = 10
             s_config["governor"]["ladder"]["demote_faults_per_rung"] = 3
+            # Option B: medical DOSE is strictly non-advisory (UNIT only in advise_fault_mask).
+            s_config["governor"]["ladder"]["advise_fault_mask"] = UNIT_FAULT
             s_config["medical"]["min_bolus_interval_ticks"] = 1
             frames_s = [
                 # Ticks 1..2: Warmup heartbeats -> completes warmup and enters HP
@@ -307,16 +329,15 @@ def main():
                 frame_v2(CMD_V2, 6, 6, u=40, confidence=255, unit_id=999),
                 frame_v2(CMD_V2, 7, 7, u=40, confidence=255, unit_id=999),
                 # Ticks 8..11: In CLAMP (rung 2, clamp_max_step=50 uL).
-                # Excessive rate proposals raise DOSE fault (0x8000), clamp step to 50 uL,
-                # and after 3 DOSE faults demote from CLAMP to SLOW (rung 3)!
+                # Excessive bolus / dose proposals raise LATCH_FAULT_DOSE (0x8000),
+                # which is strictly non-advisory and hard-faults to HOLD / LATCH (rung 5).
                 frame_v2(CMD_V2, 8, 8, u=150, confidence=255, unit_id=1),
                 frame_v2(CMD_V2, 9, 9, u=200, confidence=255, unit_id=1),
                 frame_v2(CMD_V2, 10, 10, u=300, confidence=255, unit_id=1),
                 frame_v2(CMD_V2, 11, 11, u=400, confidence=255, unit_id=1),
-                # Tick 12: In SLOW (rung 3): step clamped to 25% of 50 = 12 uL!
+                # Ticks 12..13: Already latched in HOLD / LATCH; further commands (even a
+                # valid rational unit-3 nL conversion: 261000 nL = 261 uL) remain held.
                 frame_v2(CMD_V2, 12, 12, u=500, confidence=255, unit_id=1),
-                # Tick 13: Compliant command in unit 3 (nL): 261000 nL = 261 uL (step = 10 uL <= 12 uL).
-                # Valid rational conversion, within rung limit -> NO DOSE fault!
                 frame_v2(CMD_V2, 13, 13, u=261000, confidence=255, unit_id=3),
             ]
             raw_s = b"".join(frames_s)
@@ -324,18 +345,26 @@ def main():
             all_tape_rows.extend(rows_s)
             by_seq_s = {int(r["seq"]): r for r in rows_s if int(r["seq"]) in range(1, 14)}
 
-            # Assert nominal move in HP
+            # Assert nominal move in HP and UNIT demotion to CLAMP
             if int(by_seq_s[3]["theta_applied"]) != 40 or int(by_seq_s[3]["fault_bits"], 16) != 0:
                 raise SystemExit("[GOVERNOR_E2E] FAIL syringe nominal injection command failed")
+            if int(by_seq_s[7]["rung"]) != RUNG_CLAMP:
+                raise SystemExit(f"[GOVERNOR_E2E] FAIL UNIT faults did not reach CLAMP (got rung {by_seq_s[7]['rung']})")
 
-            # A dose fault in a medical contract must freeze motion in HOLD.
+            # A medical DOSE fault is strictly non-advisory: it must immediately
+            # hard-fault into HOLD (mode 1) and LATCH (rung 5), freezing prior position.
             first = next((i for i in range(4, 14)
                           if int(by_seq_s[i]["fault_bits"], 16) & DOSE_FAULT), None)
             if first is None:
                 raise SystemExit("[GOVERNOR_E2E] FAIL no medical DOSE fault observed")
             row = by_seq_s[first]
-            if int(row["mode"]) != 1 or int(row["theta_applied"]) != int(by_seq_s[first - 1]["theta_applied"]):
-                raise SystemExit("[GOVERNOR_E2E] FAIL DOSE fault did not hold the prior position")
+            held_pos = int(by_seq_s[first - 1]["theta_applied"])
+            if int(row["mode"]) != MODE_HOLD or int(row["rung"]) != RUNG_LATCH or int(row["theta_applied"]) != held_pos:
+                raise SystemExit("[GOVERNOR_E2E] FAIL DOSE fault did not enter HOLD/LATCH at prior position")
+            for later in range(first + 1, 14):
+                r_later = by_seq_s[later]
+                if int(r_later["mode"]) != MODE_HOLD or int(r_later["rung"]) != RUNG_LATCH or int(r_later["theta_applied"]) != held_pos:
+                    raise SystemExit(f"[GOVERNOR_E2E] FAIL plant moved or left HOLD/LATCH after DOSE at seq {later}")
             pass_s7 = "[GOVERNOR_SCENARIO_7] PASS: medical DOSE fault holds the plant"
 
         # Print all scenario pass lines in numerical order

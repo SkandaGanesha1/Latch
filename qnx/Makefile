@@ -29,21 +29,29 @@ ifeq ($(TARGET),rpi4)
     CFLAGS     := -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
     LDFLAGS    := -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
     OUT_DIR    := $(BUILD_DIR)/nto-aarch64-le
+    GUESTD_OK  := 1
+    STACK_USAGE_FLAG := -Wc,-fstack-usage
 else ifeq ($(TARGET),aarch64)
     CC         := qcc
     CFLAGS     := -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
     LDFLAGS    := -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
     OUT_DIR    := $(BUILD_DIR)/nto-aarch64-le
+    GUESTD_OK  := 1
+    STACK_USAGE_FLAG := -Wc,-fstack-usage
 else ifeq ($(TARGET),x86_64)
     CC         := qcc
     CFLAGS     := -Vgcc_ntox86_64 -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
     LDFLAGS    := -Vgcc_ntox86_64 -Wl,-z,relro,-z,now
     OUT_DIR    := $(BUILD_DIR)/nto-x86_64-o
+    GUESTD_OK  := 1
+    STACK_USAGE_FLAG := -Wc,-fstack-usage
 else ifeq ($(TARGET),native)
     CC         := gcc
     CFLAGS     := -std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE
     LDFLAGS    := -lm
     OUT_DIR    := $(BUILD_DIR)/native
+    GUESTD_OK  := 0
+    STACK_USAGE_FLAG := -fstack-usage
 else ifeq ($(TARGET),host-sim)
     CC         := gcc
     # The host-sim is the glibc/POSIX harness, so it can use glibc's
@@ -57,6 +65,12 @@ else ifeq ($(TARGET),host-sim)
                   -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM
     LDFLAGS    := -lpthread -lrt -lm
     OUT_DIR    := $(BUILD_DIR)/host-sim
+    # The guest lifecycle daemon is a QNX resource manager: it uses
+    # <sys/resmgr.h>, <sys/iofunc.h> and the libsecpol spawn-attribute API,
+    # none of which exist on a POSIX host. It is therefore NOT part of the
+    # host-sim build, and the host-sim tests never link it.
+    GUESTD_OK  := 0
+    STACK_USAGE_FLAG := -fstack-usage
 else
     $(error Unknown TARGET '$(TARGET)'. Use rpi4, aarch64, x86_64, native, or host-sim)
 endif
@@ -66,12 +80,17 @@ INGEST_BIN    := $(OUT_DIR)/latch-ingest
 LATCHCTL_BIN  := $(OUT_DIR)/latchctl
 LATCHLOG_BIN  := $(OUT_DIR)/latchlog
 VERIFY_BIN    := $(OUT_DIR)/latch_verify
+GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor clean dirs qemu guest-initrd guest-governor-initrd check-guest-initrd check-governor-initrd governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-manifest-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt stack-usage
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit
 
+ifeq ($(GUESTD_OK),1)
+all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
+else
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN)
+endif
 
 dirs:
 	@mkdir -p $(OUT_DIR)
@@ -82,8 +101,8 @@ $(MANIFEST_OBJ): latch_manifest.c latch_manifest.h | dirs
 $(IPC_OBJ): latch_ipc.c latch_ipc.h latch_protocol.h | dirs
 	$(CC) $(CFLAGS) -c latch_ipc.c -o $@
 
-$(LATCHD_BIN): latchd.c latch_protocol.h latch_ipc.h governor_policy.c governor_policy.h gov_gate_precheck.c gov_gate_precheck.h gov_homeostat.c gov_homeostat.h $(MANIFEST_OBJ) $(IPC_OBJ) | dirs
-	$(CC) $(CFLAGS) latchd.c governor_policy.c gov_gate_precheck.c gov_homeostat.c $(MANIFEST_OBJ) $(IPC_OBJ) -o $@ $(LDFLAGS)
+$(LATCHD_BIN): latchd.c latch_protocol.h latch_ipc.h governor_policy.c governor_policy.h gov_gate_precheck.c gov_gate_precheck.h gov_homeostat.c gov_homeostat.h latch_feedback.c latch_feedback.h latch_feedback_pub.c latch_feedback_pub.h $(MANIFEST_OBJ) $(IPC_OBJ) | dirs
+	$(CC) $(CFLAGS) latchd.c governor_policy.c gov_gate_precheck.c gov_homeostat.c latch_feedback.c latch_feedback_pub.c $(MANIFEST_OBJ) $(IPC_OBJ) -o $@ $(LDFLAGS)
 
 $(INGEST_BIN): latch_ingest.c latch_protocol.h governor_wire.c governor_wire.h $(MANIFEST_OBJ) | dirs
 	$(CC) $(CFLAGS) latch_ingest.c governor_wire.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
@@ -96,6 +115,14 @@ $(LATCHLOG_BIN): latchlog.c latch_protocol.h latch_manifest.h $(MANIFEST_OBJ) | 
 
 $(VERIFY_BIN): latch_verify.c latch_protocol.h $(MANIFEST_OBJ) | dirs
 	$(CC) $(CFLAGS) latch_verify.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
+
+# The guest lifecycle daemon (U-1).  A QNX resource manager: it owns the
+# guest VM child process and serves the guest-control channel.  It links
+# libsecpol for the documented spawn-attribute type transition.
+ifeq ($(GUESTD_OK),1)
+$(GUESTD_BIN): latch_guestd.c latch_protocol.h | dirs
+	$(CC) $(CFLAGS) latch_guestd.c -o $@ $(LDFLAGS) -lsecpol
+endif
 
 rpi4:
 	@$(MAKE) --no-print-directory TARGET=rpi4 all
@@ -125,14 +152,22 @@ host-sim:
 # what the QNX/AArch64 compiler will emit. The AArch64 numbers must be
 # measured with the QNX toolchain (`make -C qnx stack-usage TARGET=aarch64`
 # with the SDP environment sourced).
+STACK_USAGE_DIR := $(BUILD_DIR)/stack-usage/$(TARGET)
+ifeq ($(TARGET),host-sim)
+    STACK_USAGE_REPORT := $(BUILD_DIR)/stack-usage/host-static-stack-usage.txt
+else
+    STACK_USAGE_REPORT := $(BUILD_DIR)/stack-usage/$(TARGET)-static-stack-usage.txt
+endif
+
 stack-usage:
-	@mkdir -p $(BUILD_DIR)/stack-usage
-	@rm -f $(BUILD_DIR)/stack-usage/*.su $(BUILD_DIR)/stack-usage/*.o
+	@mkdir -p $(STACK_USAGE_DIR)
+	@rm -f $(STACK_USAGE_DIR)/*.su $(STACK_USAGE_DIR)/*.o
 	@for f in latchd governor_policy gov_gate_precheck gov_homeostat latch_manifest latch_ipc; do \
-	    $(CC) $(CFLAGS) -fstack-usage -c $$f.c -o $(BUILD_DIR)/stack-usage/$$f.o || exit 1; \
+	    $(CC) $(CFLAGS) $(STACK_USAGE_FLAG) -c $$f.c -o $(STACK_USAGE_DIR)/$$f.o || exit 1; \
+	    if [ -f "$$f.su" ]; then mv -f "$$f.su" $(STACK_USAGE_DIR)/; fi; \
 	done
-	@cat $(BUILD_DIR)/stack-usage/*.su > $(BUILD_DIR)/stack-usage/host-static-stack-usage.txt
-	@echo "[STACK-USAGE] wrote $(BUILD_DIR)/stack-usage/host-static-stack-usage.txt"
+	@cat $(STACK_USAGE_DIR)/*.su > $(STACK_USAGE_REPORT)
+	@echo "[STACK-USAGE] wrote $(STACK_USAGE_REPORT)"
 	@echo "[STACK-USAGE] compiler-reported static frame estimate -- NOT a runtime high-water mark"
 
 # The host-sim pipeline.
@@ -152,6 +187,8 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory governor-gate-check
 	$(MAKE) --no-print-directory governor-homeostat-check
 	$(MAKE) --no-print-directory latch-feedback-check
+	$(MAKE) --no-print-directory latch-fb-decode-check
+	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/syringe_governor.manifest
@@ -160,6 +197,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory governor-e2e-check
 	$(MAKE) --no-print-directory homeostat-e2e-check
 	$(MAKE) --no-print-directory gov-replay-check
+	$(MAKE) --no-print-directory latch-action-check
 
 check: host-sim
 	$(MAKE) --no-print-directory check-governor
@@ -167,6 +205,20 @@ check: host-sim
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify latch.manifest
 	python3 ../guest/liar.py suite --raw-stdout --manifest latch.manifest | ./$(BUILD_DIR)/host-sim/latch-ingest -m latch.manifest -o - | ./$(BUILD_DIR)/host-sim/latchd -m latch.manifest --pipe-in --csv $(BUILD_DIR)/host-sim/suite_tape.csv
 	python3 ../tools/embed_default_tape.py --check
+
+# The MUTATION BATTERY for the consistency gates (~6 s, no QNX licence, no
+# QEMU).
+#
+# A gate that cannot fail is a gate that proves nothing.  This target
+# mutates every property `tools/consistency_check.py` checks and requires
+# the checker to FAIL on each one -- 41 mutations, each written against a
+# REAL measured defect.  It runs against a scratch COPY of the repository,
+# so the tree it checks is never written to, and it proves that at the end.
+#
+# It is NOT part of `check`: `check` is the safety gate, and this is the
+# gate on the gate.  Run it when a consistency gate is added or changed.
+mutation-check:
+	python3 ../tools/mutation_check.py
 
 # AddressSanitizer & UndefinedBehaviorSanitizer.
 #
@@ -275,6 +327,28 @@ $(BUILD_DIR)/host-sim/latch_feedback_test: latch_feedback.c latch_feedback.h lat
 latch-feedback-check: $(BUILD_DIR)/host-sim/latch_feedback_test
 	./$(BUILD_DIR)/host-sim/latch_feedback_test
 
+# The GUEST-SIDE LFBK decoder and correlator (W5).  It lives in
+# guest/latch_fb_decode.h because the guest policy is freestanding and
+# cannot include the QNX tree -- so the test includes the SAME header and
+# puts the production codec's bytes through the guest's decoder.  That is
+# the cross-implementation check that keeps the two copies of the frame
+# format from drifting.
+$(BUILD_DIR)/host-sim/latch_fb_decode_test: ../guest/latch_fb_decode.h latch_feedback.c latch_feedback.h latch_fb_decode_test.c latch_protocol.h | dirs
+	$(CC) $(CFLAGS) latch_feedback.c latch_fb_decode_test.c -o $@ $(LDFLAGS)
+
+latch-fb-decode-check: $(BUILD_DIR)/host-sim/latch_fb_decode_test
+	./$(BUILD_DIR)/host-sim/latch_fb_decode_test
+
+# The HOST-SIDE FEEDBACK PUBLISHER (W5).  It is the thing that carries the
+# supervisor's verdict to the transport without ever letting the transport
+# delay the safety core, so the test checks the frame arrives unchanged,
+# that a burst does not block the caller, and that every loss is counted.
+$(BUILD_DIR)/host-sim/latch_feedback_pub_test: latch_feedback.c latch_feedback.h latch_feedback_pub.c latch_feedback_pub.h latch_feedback_pub_test.c | dirs
+	$(CC) $(CFLAGS) latch_feedback.c latch_feedback_pub.c latch_feedback_pub_test.c -o $@ $(LDFLAGS)
+
+latch-feedback-pub-check: $(BUILD_DIR)/host-sim/latch_feedback_pub_test
+	./$(BUILD_DIR)/host-sim/latch_feedback_pub_test
+
 # The manifest parser is the SAFETY FRONT DOOR: every plant limit, timing
 # budget and calibration constant enters the supervisor through it. This test
 # asserts that a well-formed document loads AND that every malformed one is
@@ -284,6 +358,122 @@ $(BUILD_DIR)/host-sim/latch_manifest_test: latch_manifest.c latch_manifest.h lat
 
 latch-manifest-check: $(BUILD_DIR)/host-sim/latch_manifest_test
 	./$(BUILD_DIR)/host-sim/latch_manifest_test
+
+# The in-guest action schema validator (W6).  It is the gate between a
+# language model and the safety-relevant channel: the model's JSON is
+# re-validated by an INDEPENDENT parser before it is allowed to become a
+# frame.  The parser has no llama.cpp dependency, so CI can run it on any
+# host -- the AArch64 inference binary itself needs a cross toolchain and
+# is covered by the on-target transcript instead.
+$(BUILD_DIR)/host-sim/latch_action_test: ../tools/latch_action_test.c ../guest/latch_action.c ../guest/latch_action.h | dirs
+	$(CC) $(CFLAGS) ../tools/latch_action_test.c ../guest/latch_action.c -o $@ $(LDFLAGS)
+
+latch-action-check: $(BUILD_DIR)/host-sim/latch_action_test
+	./$(BUILD_DIR)/host-sim/latch_action_test
+
+# The EXPERIMENTAL inference profile's initramfs (W6).
+#
+# It differs from the scripted GOVERNOR initramfs in ONE way: the policy is
+# compiled with -DLATCH_GOVERNOR_INFER, which adds the pipe + clone/execve
+# relay for the in-guest language model.
+#
+# It does NOT contain the inference binary or the model.  Both travel on the
+# read-only virtio-blk asset disk (see guest-disk-image below), and that is
+# not a style choice:
+#
+#   QNX Hypervisor 8.0's qvm loads a guest blob into guest memory through
+#   load_blob().  A small blob is copied straight into guest memory; a blob
+#   above a size threshold is transferred in 64 KiB message-block chunks
+#   that the GUEST has to service, and that service code lives in the QNX
+#   guest BSP, not in upstream Linux.  Measured on the QEMU AArch64 target
+#   (2026-11-26): with the inference binary in the initramfs (8.9 MiB) the
+#   guest kernel printed "Initramfs unpacking failed: invalid magic at
+#   start of compressed archive" after 30 ms -- the bytes never arrived.
+#   The scripted profile's 3.3 KiB initramfs goes through the direct-copy
+#   path and works.
+#
+# So the initramfs stays tiny -- the policy only, a few KiB -- and the
+# assets travel over the virtio protocol, which does not go through qvm's
+# blob loader at all.
+#
+# The SCRIPTED profiles are untouched by this: guest/linux-guest.initrd is
+# a TRACKED binary and must stay byte-identical.  Verified after this
+# target was added: the tracked initrd's SHA-256 was unchanged.
+#
+# The inference binary itself is built by `make -C guest infer`, which
+# needs the AArch64 cross toolchain (tools/build_aarch64_sysroot.sh).
+INFER_BIN ?= ../build/guest/latch_infer
+INFER_INITRD ?= $(BUILD_DIR)/governor-linux-guest-infer.initrd
+
+guest-governor-infer-initrd:
+	@rm -rf $(BUILD_DIR)/guest-governor-infer-initramfs
+	@mkdir -p $(BUILD_DIR)/guest-governor-infer-initramfs/dev $(BUILD_DIR)/guest-governor-infer-initramfs/proc $(BUILD_DIR)/guest-governor-infer-initramfs/sys
+	aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -DLATCH_GOVERNOR_INFER -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror ../guest/latch_guest_init.c ../guest/latch_action.c -o $(BUILD_DIR)/guest-governor-infer-initramfs/init
+	chmod +x $(BUILD_DIR)/guest-governor-infer-initramfs/init
+	(cd $(BUILD_DIR)/guest-governor-infer-initramfs && find . -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > $(abspath $(INFER_INITRD))
+	@ls -lh $(INFER_INITRD)
+
+# The guest's read-only ASSET DISK: the language model, the inference
+# program, and (optionally) the experiment's prompt parameters.
+#
+# The model is NOT in this repository -- it is a build input, like the guest
+# kernel Image.  MODEL points at the GGUF file; INFER_BIN at the
+# cross-compiled inference program.
+#
+# EXAMPLE_U and PROMPT are the PROMPT, not the safety envelope: the
+# envelope is in the signed manifest and is enforced by the trusted QNX
+# supervisor, which never sees any of this.  They are what an experiment
+# varies:
+#
+#     make guest-disk-image EXAMPLE_U=400 \
+#          PROMPT=../guest/prompts/injection_keepout.txt
+#
+# builds the disk whose model asks for 400 mrad -- straight through the
+# signed PERSON keep-out -- so the supervisor can be shown refusing it.
+MODEL ?= /home/skanda/models/SmolLM2-135M-Instruct-Q8_0.gguf
+EXAMPLE_U ?=
+PROMPT ?=
+
+# The NOMINAL disk: the model's own (in-envelope) decision, -20 mrad.
+GUEST_DISK ?= ../build/latch_guest_disk.img
+GUEST_DISK_ARGS := $(if $(EXAMPLE_U),--example-u $(EXAMPLE_U),) \
+                   $(if $(PROMPT),--prompt $(abspath $(PROMPT)),)
+
+# The ATTACK disk: the same binary, the same model, the same grammar; only
+# the PROMPT differs, and the prompt is the model's input, not a safety
+# parameter.  The model asks for 400 mrad, which is straight through the
+# signed PERSON keep-out.
+GUEST_DISK_ATTACK ?= ../build/latch_guest_disk_attack.img
+ATTACK_EXAMPLE_U ?= 400
+ATTACK_PROMPT ?= ../guest/prompts/injection_keepout.txt
+GUEST_DISK_ATTACK_ARGS := --example-u $(ATTACK_EXAMPLE_U) \
+                          --prompt $(abspath $(ATTACK_PROMPT))
+
+guest-disk-image:
+	@test -f "$(MODEL)" || { \
+		echo "ERROR: the language model is missing ($(MODEL))."; \
+		echo "       It is a BUILD INPUT and is not in this repository."; \
+		exit 1; \
+	}
+	@test -f "$(INFER_BIN)" || { \
+		echo "ERROR: the in-guest inference binary is missing ($(INFER_BIN))."; \
+		echo "       Build it with: make -C guest infer"; \
+		exit 1; \
+	}
+	../tools/build_guest_disk.sh --model "$(MODEL)" --infer "$(INFER_BIN)" --out "$(GUEST_DISK)" $(GUEST_DISK_ARGS)
+
+guest-disk-image-attack:
+	@test -f "$(MODEL)" || { \
+		echo "ERROR: the language model is missing ($(MODEL))."; \
+		echo "       It is a BUILD INPUT and is not in this repository."; \
+		exit 1; \
+	}
+	@test -f "$(INFER_BIN)" || { \
+		echo "ERROR: the in-guest inference binary is missing ($(INFER_BIN))."; \
+		echo "       Build it with: make -C guest infer"; \
+		exit 1; \
+	}
+	../tools/build_guest_disk.sh --model "$(MODEL)" --infer "$(INFER_BIN)" --out "$(GUEST_DISK_ATTACK)" $(GUEST_DISK_ATTACK_ARGS)
 
 # Regenerate the committed evidence tape and re-sync the offline viewer's
 # embedded copy. Run this deliberately: it changes two tracked files.
@@ -353,20 +543,272 @@ check-governor-initrd:
 	fi
 	python3 ../tools/verify_guest_initrd.py $(GOVERNOR_GUEST_INITRD)
 
-ifs-rpi4: rpi4 secpol check-guest-image
-	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" mkifs -v latch_rpi4.build $(BUILD_DIR)/nto-aarch64-le/latch_rpi4.ifs
+ifs-rpi4: rpi4 secpol check-guest-image check-guest-initrd
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GUEST_INITRD="$(abspath $(GUEST_INITRD))" mkifs -v latch_rpi4.build $(BUILD_DIR)/nto-aarch64-le/latch_rpi4.ifs
 
 ifs-qemu-aarch64: aarch64 secpol guest-initrd check-guest-image check-guest-initrd
 	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GUEST_INITRD="$(abspath $(GUEST_INITRD))" mkifs -v latch_qemu.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu.ifs
+
+# Disposable verification image: startup launches the fixed verifier trigger
+# as latch_verify_t; normal policy and the operator shell are not elevated.
+ifs-qemu-legacy-verify: aarch64 secpol guest-initrd check-guest-image check-guest-initrd
+	qcc -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE latch_verify_trigger.c -o $(BUILD_DIR)/nto-aarch64-le/latch_verify_trigger -Wl,-z,relro,-z,now
+	python3 ../tools/generate_legacy_verify_build.py latch_qemu.build $(BUILD_DIR)/latch_qemu_legacy_verify.build
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GUEST_INITRD="$(abspath $(GUEST_INITRD))" mkifs -v $(BUILD_DIR)/latch_qemu_legacy_verify.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_legacy_verify.ifs
 
 # Experimental: QNX Hypervisor under QEMU TCG is not documented by QNX as a
 # supported Hypervisor host platform. This target is a bring-up profile only.
 ifs-qemu-governor: aarch64 secpol guest-governor-initrd check-guest-image check-governor-initrd
 	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs -v latch_qemu_governor.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_governor.ifs
 
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL: the DECISION-LATENCY MEASUREMENT profile (U-4).
+#
+# This is the profile that replaces the withdrawn "61 us WCET" claim with a
+# MEASUREMENT: the trusted supervisor's own per-tick decision latency,
+# sampled once per tick over more than a million ticks, aggregated in a
+# histogram ON THE TARGET and read back through an output-only devctl
+# (`latchctl latency`).
+#
+# The guest policy is the same freestanding binary with ONE extra compile
+# flag (`-DLATCH_GOVERNOR_LATENCY_SOAK`): it streams in-envelope CMD_V2
+# frames at a fixed rate for 25 minutes so the supervisor has something to
+# decide on every tick.
+#
+# The IFS is built from qnx/latch_qemu_latency.build, which is the GOVERNOR
+# image WITHOUT the evidence logger: `latchlog` polls the supervisor every
+# 100 ms and writes every tick to a CSV, and a measurement image must not
+# carry a logger that perturbs what it measures.  The signed contract, the
+# security policy and the qvmconf are the GOVERNOR profile's, unchanged.
+# ---------------------------------------------------------------------------
+LATENCY_INITRD ?= $(BUILD_DIR)/governor-linux-guest-latency.initrd
+
+# The soak's two knobs.  They are OVERRIDABLE so the profile can be
+# CALIBRATED on the target (a 60-second run measures the achieved frame
+# rate and the tick rate) without editing the guest source.  The defaults
+# are the guest source's own defaults, and tools/consistency_check.py
+# asserts that the two agree -- so the value that was measured is the
+# value in the source.
+SOAK_TARGET_HZ    ?= 900
+SOAK_DURATION_MS  ?= 2100000
+
+guest-governor-latency-soak-initrd:
+	@mkdir -p $(BUILD_DIR)/guest-governor-latency-initramfs/dev $(BUILD_DIR)/guest-governor-latency-initramfs/proc $(BUILD_DIR)/guest-governor-latency-initramfs/sys
+	aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -DLATCH_GOVERNOR_LATENCY_SOAK -DLATCH_GOVERNOR_SOAK_TARGET_HZ=$(SOAK_TARGET_HZ) -DLATCH_GOVERNOR_SOAK_DURATION_MS=$(SOAK_DURATION_MS) -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror ../guest/latch_guest_init.c -o $(BUILD_DIR)/guest-governor-latency-initramfs/init
+	chmod +x $(BUILD_DIR)/guest-governor-latency-initramfs/init
+	(cd $(BUILD_DIR)/guest-governor-latency-initramfs && find . -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > $(abspath $(LATENCY_INITRD))
+	@ls -lh $(LATENCY_INITRD)
+
+check-latency-initrd:
+	@if [ ! -f "$(LATENCY_INITRD)" ]; then \
+		echo "ERROR: LATENCY_INITRD is missing ('$(LATENCY_INITRD)'). Run 'make guest-governor-latency-soak-initrd' first."; \
+		exit 1; \
+	fi
+	python3 ../tools/verify_guest_initrd.py $(LATENCY_INITRD) soak
+
+ifs-qemu-latency: aarch64 secpol guest-governor-latency-soak-initrd check-guest-image check-latency-initrd
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" \
+	GOVERNOR_GUEST_INITRD="$(abspath $(LATENCY_INITRD))" \
+	mkifs -v latch_qemu_latency.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_latency.ifs
+
+verify-latency-qemu: ifs-qemu-latency
+	python3 ../tools/verify_latency_qemu.py
+
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL: the HOST->GUEST FEEDBACK-TRANSPORT PROBE (W4).
+#
+# This is the DISPOSABLE profile that answers one question with a
+# measurement: does the QNX Hypervisor carry host->guest bytes on a second
+# PL011 without disturbing the black channel?
+#
+# It is the scripted GOVERNOR profile with three additions:
+#
+#   1. a second `vdev pl011` whose `hostdev` reads from the READ node of a
+#      purpose-built QNX feedback MAILBOX (the guest sees it as one of the
+#      /dev/ttyAMA* nodes -- the guest does not control the names);
+#   2. `latch_fb_sink` (the mailbox resource manager) and `latch_fb_pump`,
+#      which create the mailbox and publish the production LFBK frames
+#      into it;
+#   3. a guest policy compiled with -DLATCH_GOVERNOR_FEEDBACK, which reads
+#      the port, re-synchronises on the frame MAGIC, validates the CRC and
+#      reports the outcome ONCE -- BEFORE the session opens, so the
+#      supervisor's dead-man never sees the probe's silence and the
+#      console-drain discipline still holds.
+#
+# The scenario is the UNCHANGED 235-frame GOVERNOR scenario, so
+# tools/verify_fb_qemu.py can assert BOTH from ONE boot: the transport
+# works, and the black channel is undisturbed.
+#
+# The deployment policy qnx/latch.secpol is NOT modified.  The experiment's
+# two additions live in qnx/latch_fbprobe.secpol.inc and are appended to a
+# COPY of the deployment policy by tools/generate_fbprobe_secpol.py.
+# ---------------------------------------------------------------------------
+FBPUMP_BIN        := $(BUILD_DIR)/nto-aarch64-le/latch_fb_pump
+FBSINK_BIN        := $(BUILD_DIR)/nto-aarch64-le/latch_fb_sink
+FBPROBE_INITRD    ?= $(BUILD_DIR)/governor-linux-guest-feedback.initrd
+FBPROBE_SECPOL    := $(BUILD_DIR)/latch_fbprobe.secpol
+FBPROBE_SECPOL_BIN := $(BUILD_DIR)/secpol_fbprobe.bin
+
+fb-pump: aarch64
+	qcc -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE latch_fb_pump.c -o $(FBPUMP_BIN) -Wl,-z,relro,-z,now
+
+# The feedback resource manager (`latch_fb_sink`): the ONLY process that
+# may write the verdict file.  It accepts a frame on its one-sided WRITE
+# node and copies the LATEST one to sector 0 of the verdict file on a
+# dedicated writer thread, and it creates that file at its final size
+# BEFORE it registers its nodes -- so the buildfile's `waitfor
+# /dev/latch/feedback` proves the file exists when the hypervisor opens
+# it.  The pseudo-terminal that was tried first is the deterministic
+# rejection (its open ORDER decides whether it can be used at all -- see
+# the measurement record at the top of latch_fb_sink.c).
+fb-sink: aarch64
+	qcc -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE latch_fb_sink.c -o $(FBSINK_BIN) -Wl,-z,relro,-z,now
+
+$(FBPROBE_SECPOL): latch.secpol latch_fbprobe.secpol.inc ../tools/generate_fbprobe_secpol.py | dirs
+	python3 ../tools/generate_fbprobe_secpol.py $@
+
+fbprobe-secpol: $(FBPROBE_SECPOL) | dirs
+	$(SECPOLC) -o $(FBPROBE_SECPOL_BIN) $(FBPROBE_SECPOL)
+
+# The feedback-transport guest policy: the scripted GOVERNOR policy plus
+# the transport probe.  The probe runs BEFORE the session opens.
+guest-governor-feedback-initrd:
+	@mkdir -p $(BUILD_DIR)/guest-governor-feedback-initramfs/dev $(BUILD_DIR)/guest-governor-feedback-initramfs/proc $(BUILD_DIR)/guest-governor-feedback-initramfs/sys
+	aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -DLATCH_GOVERNOR_FEEDBACK -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror ../guest/latch_guest_init.c -o $(BUILD_DIR)/guest-governor-feedback-initramfs/init
+	chmod +x $(BUILD_DIR)/guest-governor-feedback-initramfs/init
+	(cd $(BUILD_DIR)/guest-governor-feedback-initramfs && find . -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > $(abspath $(FBPROBE_INITRD))
+	@ls -lh $(FBPROBE_INITRD)
+
+ifs-qemu-fbprobe: aarch64 fb-pump fb-sink fbprobe-secpol guest-governor-feedback-initrd check-guest-image
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" \
+	GOVERNOR_GUEST_INITRD="$(abspath $(FBPROBE_INITRD))" \
+	mkifs -v latch_qemu_fbprobe.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_fbprobe.ifs
+
+verify-fb-qemu: ifs-qemu-fbprobe
+	python3 ../tools/verify_fb_qemu.py
+
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL: the HOST->GUEST VERDICT WATCHER profile (W5).
+#
+# This is the GOVERNOR image with ONE addition: the LFBK VERDICT FILE, and
+# the supervisor PUBLISHES ITS VERDICTS on it.  There is no `latch_fb_pump`
+# in this image -- the publisher is `latchd` itself, which is the whole
+# point of the profile: the verdict on the wire is the verdict of the
+# TRUSTED SUPERVISOR, not a synthetic frame from a development-only tool.
+#
+# The guest policy is the same freestanding binary with ONE extra compile
+# flag (`-DLATCH_GOVERNOR_FEEDBACK_VERDICT`): it decodes the verdict,
+# correlates it with the proposal it answers, and stops proposing when the
+# supervisor says no.
+#
+# `-fno-stack-protector` is requested DEFENSIVELY: the cross-gcc does not
+# enable it (verified: `-fstack-protector [disabled]`, no `stack_chk`
+# symbols), but the watcher thread runs on its own stack and a
+# stack-protector epilogue would need the TLS canary to be set up on that
+# stack.  The flag makes the property explicit instead of incidental.
+# ---------------------------------------------------------------------------
+FBVERDICT_INITRD    ?= $(BUILD_DIR)/governor-linux-guest-feedback-verdict.initrd
+
+guest-governor-feedback-verdict-initrd:
+	@mkdir -p $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs/dev $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs/proc $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs/sys
+	aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -DLATCH_GOVERNOR_FEEDBACK_VERDICT -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror -fno-stack-protector ../guest/latch_guest_init.c -o $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs/init
+	chmod +x $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs/init
+	(cd $(BUILD_DIR)/guest-governor-feedback-verdict-initramfs && find . -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > $(abspath $(FBVERDICT_INITRD))
+	@ls -lh $(FBVERDICT_INITRD)
+
+ifs-qemu-fbverdict: aarch64 fb-sink fbprobe-secpol guest-governor-feedback-verdict-initrd check-guest-image
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" \
+	GOVERNOR_GUEST_INITRD="$(abspath $(FBVERDICT_INITRD))" \
+	mkifs -v latch_qemu_fbverdict.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_fbverdict.ifs
+
+verify-fbverdict-qemu: ifs-qemu-fbverdict
+	python3 ../tools/verify_fbverdict_qemu.py
+
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL: the in-guest language-model profile (W6).
+#
+# This profile is the scripted GOVERNOR profile with ONE difference in what
+# drives the plant: the proposals come from a llama.cpp model running INSIDE
+# the guest, not from a compiled-in sequence.  Everything else -- the signed
+# contract, the supervisor, the evidence logger, the security policy -- is
+# the SAME.  The manifest is `contracts/governor_servo.manifest`, byte for
+# byte: no safety parameter is relaxed for the experiment.
+#
+# The model is NOT in the repository.  It travels as a read-only virtio-blk
+# disk image:
+#
+#     tools/build_model_image.sh --model /path/to/model.gguf
+#
+# which produces build/latch_model.img.  The Makefile target below only
+# checks that the image is present; building it needs the model.
+#
+# The IFS this produces is ~190 MB (it carries the 187 MiB model disk), so
+# the QEMU launcher needs headroom: the inner guest takes 768 MB of the
+# outer machine's pool.
+# ---------------------------------------------------------------------------
+# The model image lives in the REPOSITORY-ROOT build directory (the same one
+# `tools/build_guest_disk.sh` writes to by default), not in qnx/build.
+INFER_GUEST_INITRD ?= $(BUILD_DIR)/governor-linux-guest-infer.initrd
+
+check-guest-disk:
+	@if [ ! -f "$(GUEST_DISK)" ]; then \
+		echo "ERROR: the guest asset disk image is missing ('$(GUEST_DISK)')."; \
+		echo "       Build it with: make guest-disk-image"; \
+		exit 1; \
+	fi
+	@echo "[guest-disk] $(GUEST_DISK)"
+
+check-guest-disk-attack:
+	@if [ ! -f "$(GUEST_DISK_ATTACK)" ]; then \
+		echo "ERROR: the guest ATTACK asset disk image is missing ('$(GUEST_DISK_ATTACK)')."; \
+		echo "       Build it with: make guest-disk-image-attack"; \
+		exit 1; \
+	fi
+	@echo "[guest-disk-attack] $(GUEST_DISK_ATTACK)"
+
+ifs-qemu-infer: aarch64 secpol guest-governor-infer-initrd check-guest-image check-guest-disk
+	@test -f "$(INFER_GUEST_INITRD)" || { \
+		echo "ERROR: the inference initramfs is missing ('$(INFER_GUEST_INITRD)'). Run 'make guest-governor-infer-initrd' first."; \
+		exit 1; \
+	}
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" \
+	INFER_GUEST_INITRD="$(abspath $(INFER_GUEST_INITRD))" \
+	GUEST_DISK="$(abspath $(GUEST_DISK))" \
+	mkifs -v latch_qemu_infer.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_infer.ifs
+
+# The ATTACK variant of the SAME profile: identical buildfile, identical
+# qvmconf, identical supervisor, identical signed contract.  Only the
+# asset disk differs -- and on the disk only the PROMPT, which is the
+# model's input, not a safety parameter.
+ifs-qemu-infer-attack: aarch64 secpol guest-governor-infer-initrd check-guest-image check-guest-disk-attack
+	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" \
+	INFER_GUEST_INITRD="$(abspath $(INFER_GUEST_INITRD))" \
+	GUEST_DISK="$(abspath $(GUEST_DISK_ATTACK))" \
+	mkifs -v latch_qemu_infer.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_infer_attack.ifs
+
+# On-target verification of the in-guest inference profile.
+#
+#   verify-infer-qemu          the model's own decision drives the plant
+#   verify-infer-qemu-attack   the model asks for a forbidden motion and
+#                              the trusted supervisor refuses it
+verify-infer-qemu: ifs-qemu-infer
+	python3 ../tools/verify_infer_qemu.py --mode nominal
+
+verify-infer-qemu-attack: ifs-qemu-infer-attack
+	python3 ../tools/verify_infer_qemu.py --mode attack \
+		--expect-u $(ATTACK_EXAMPLE_U)
+
 # Development-only unrestricted policy-generation image. Never substitute it
 # for the normal, enforced GOVERNOR image.
-ifs-qemu-governor-secpol-audit: aarch64 secpol guest-governor-initrd check-guest-image check-governor-initrd
+#
+# The image also carries `latch_secpol_dump`, a DEVELOPMENT-ONLY reader for
+# the /dev/secpolgenerate/* observation files: the minimal IFS has no `cat`,
+# no `ls` and no `dd`, and the audit has to read five pseudo-files that QNX's
+# own utilities do not expose.  The reader is linked ONLY into this image.
+secpol-dump: aarch64
+	qcc -Vgcc_ntoaarch64le -Wc,-std=c11 $(COMMON_CFLAGS) -D_QNX_SOURCE latch_secpol_dump.c -o $(BUILD_DIR)/nto-aarch64-le/latch_secpol_dump -Wl,-z,relro,-z,now
+
+ifs-qemu-governor-secpol-audit: aarch64 secpol guest-governor-initrd secpol-dump check-guest-image check-governor-initrd
 	python3 ../tools/generate_secpol_audit_build.py latch_qemu_governor.build $(BUILD_DIR)/latch_qemu_governor_secpol_audit.build
 	GUEST_IMAGE="$(abspath $(GUEST_IMAGE))" GOVERNOR_GUEST_INITRD="$(abspath $(GOVERNOR_GUEST_INITRD))" mkifs -v $(BUILD_DIR)/latch_qemu_governor_secpol_audit.build $(BUILD_DIR)/nto-aarch64-le/latch_qemu_governor_secpol_audit.ifs
 
@@ -390,6 +832,8 @@ ifs-qemu-audit-probe: target-probe secpol guest-governor-initrd check-guest-imag
 verify-governor-qemu-prebuilt:
 	python3 ../tools/verify_governor_qemu.py
 
+# Uses the disposable typed-launcher image, not the normal deployment image.
+# Build first with `make ifs-qemu-legacy-verify GUEST_IMAGE=...`.
 verify-qemu:
 	python3 ../tools/verify_qemu_aarch64.py
 
@@ -442,6 +886,75 @@ evidence-resolution:
 # The GOVERNOR evidence: host-sim, e2e, adversarial attacks, tape, and metrics.
 evidence-governor: host-sim
 	python3 $(EVIDENCE_TOOL) governor
+
+# The Linux synthetic Python-loop baseline. This is a WORKSTATION
+# measurement, not a QNX one: it is regenerated by its own tool and every
+# file under docs/evidence/baseline/ is written by that tool.
+evidence-baseline:
+	python3 ../tools/benchmark_linux_native.py --iterations 1500
+
+# The GOVERNOR VM-kill + restart/resume transcript (~6 min: it boots QEMU AArch64
+# `virt`, kills the guest VM, proves the fail-closed containment, and then
+# restarts the guest through the narrowly-typed lifecycle daemon).  The
+# harness writes the transcript DIRECTLY into the evidence archive, so the
+# archived file is always the tool's output and never a hand-edit.  On
+# failure the harness exits non-zero WITHOUT touching the archive, so a
+# failed run cannot replace good evidence with a partial transcript.
+evidence-governor-vm-kill:
+	GOVERNOR_VM_KILL_LOG=$(EVIDENCE_OUT)/governor/governor-vm-kill-resume.txt \
+	GOVERNOR_QEMU_IFS=$(CURDIR)/build/nto-aarch64-le/latch_qemu_governor.ifs \
+	python3 ../tools/qemu_guest_kill.py
+
+# The scripted GOVERNOR profile's ON-TARGET evidence (~8 min: one QEMU boot).
+#
+# `governor/governor-qemu-verify.txt` and `governor/governor-qemu-console.txt`
+# used to be ORPHANS in the archive: they had no generator anywhere in the
+# tree, so they went stale exactly the way an orphan does.  This target is
+# that generator.  The capture tool writes the archive only when the run
+# PASSES: a failed run exits non-zero WITHOUT touching docs/evidence/.
+evidence-governor-qemu: ifs-qemu-governor
+	python3 $(EVIDENCE_TOOL) governor-qemu
+
+# The security-policy generation audit (U-6 / M-4) (~8 min).
+#
+# It boots the DISPOSABLE, unrestricted `secpolgenerate` audit image -- never
+# the enforced deployment image -- lets the 235-frame guest scenario run, and
+# captures the observed DELTA, the ability-check ERRORS and the UNUSED rules.
+# The archive is written ONLY when the run passes: a failed run exits
+# non-zero WITHOUT touching docs/evidence/.
+evidence-secpol-audit: ifs-qemu-governor-secpol-audit
+	python3 $(EVIDENCE_TOOL) secpol-audit
+
+# The EXPERIMENTAL in-guest inference evidence (~15 min: two QEMU boots).
+#
+# It needs the language model and the cross-built inference program, which
+# are BUILD INPUTS and are not in this repository, so the asset disks have
+# to exist before this target can run.  The capture tool writes the archive
+# only when BOTH runs pass: a failed run exits non-zero WITHOUT touching
+# docs/evidence/.
+evidence-governor-infer: ifs-qemu-infer ifs-qemu-infer-attack
+	python3 $(EVIDENCE_TOOL) infer
+
+# The LFBK FEEDBACK-TRANSPORT evidence (U-2) (~10 min: two QEMU boots).
+#
+# W4 measures the TRANSPORT (a verdict reaches the freestanding guest and the
+# guest sees it CHANGE); W5 measures the CONTROL LOOP (the TRUSTED supervisor
+# publishes its own verdict, the guest understands it, and the guest STOPS
+# when it is told no).  The archive is written ONLY when BOTH runs pass: a
+# failed run exits non-zero WITHOUT touching docs/evidence/.
+evidence-governor-feedback: ifs-qemu-fbprobe ifs-qemu-fbverdict
+	python3 $(EVIDENCE_TOOL) feedback-transport
+
+# U-4: the DECISION-LATENCY MEASUREMENT evidence.  This is the file that
+# replaces the withdrawn "61 us WCET" claim with a real measurement: the
+# trusted supervisor's own per-tick decision latency, sampled once per tick
+# for more than a million ticks, aggregated in a histogram ON THE TARGET.
+#
+# It boots QEMU once and runs the FULL soak, so it takes ~40 minutes.  The
+# archive is written ONLY when the run passes: a failed run exits non-zero
+# WITHOUT touching docs/evidence/.
+evidence-governor-latency: ifs-qemu-latency
+	python3 $(EVIDENCE_TOOL) governor-latency
 
 # The index and the run-output manifest.
 evidence-index:

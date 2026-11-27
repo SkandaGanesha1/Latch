@@ -1,0 +1,7986 @@
+##############################################################################
+# RAW SERIAL TRANSCRIPT -- the decision-latency measurement (verbatim)
+##############################################################################
+echo LATCH_LATENCY_BOOTED; echo LATCOC1_$?
+no clock-frequency property in FDT!
+
+Enabling EL2 host hypervisor support (VHE)
+
+MMU: 16-bit ASID 40-bit PA TCR_EL1=00000012b5183519
+
+FOUND GICv2
+
+GICv2: 288 interrupts
+
+GICv2: routing SPIs to gic cpu 0
+
+cpu0: MPIDR=0000000080000000
+
+cpu0: MIDR=414fd0b1 Cortex-A76 r4p1
+
+cpu0: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+
+cpu0: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+
+cpu0: L1 Icache 64K linesz=64 set/way=256/4
+
+cpu0: L1 Dcache 64K linesz=64 set/way=256/4
+
+cpu0: L2 Unified 512K linesz=64 set/way=1024/8
+
+cpu0: GICv2 cpu interface 0
+
+Loading IFS...done
+
+cpu1: MPIDR=0000000080000001
+
+cpu1: MIDR=414fd0b1 Cortex-A76 r4p1
+
+cpu1: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+
+cpu1: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+
+cpu1: L1 Icache 64K linesz=64 set/way=256/4
+
+cpu1: L1 Dcache 64K linesz=64 set/way=256/4
+
+cpu1: L2 Unified 512K linesz=64 set/way=1024/8
+
+cpu1: GICv2 cpu interface 1
+
+cpu2: MPIDR=0000000080000002
+
+cpu2: MIDR=414fd0b1 Cortex-A76 r4p1
+
+cpu2: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+
+cpu2: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+
+cpu2: L1 Icache 64K linesz=64 set/way=256/4
+
+cpu2: L1 Dcache 64K linesz=64 set/way=256/4
+
+cpu2: L2 Unified 512K linesz=64 set/way=1024/8
+
+cpu2: GICv2 cpu interface 2
+
+cpu3: MPIDR=0000000080000003
+
+cpu3: MIDR=414fd0b1 Cortex-A76 r4p1
+
+cpu3: CWG=4 ERG=4 Dminline=4 Iminline=4 PIPT
+
+cpu3: CLIDR=82000023 LoUU=0 LoC=2 LoUIS=0
+
+cpu3: L1 Icache 64K linesz=64 set/way=256/4
+
+cpu3: L1 Dcache 64K linesz=64 set/way=256/4
+
+cpu3: L2 Unified 512K linesz=64 set/way=1024/8
+
+cpu3: GICv2 cpu interface 3
+
+
+
+System page at phys:0000000040014000 user:ffffff8040207000 kern:ffffff8040204000
+
+Starting next program at vffffff8060072c80
+
+syspage::hypinfo::flags=0x00000001
+
+================================================================
+
+ LATCH -- DECISION-LATENCY MEASUREMENT (U-4, experimental)
+
+ Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2
+
+================================================================
+
+latchd: Loaded manifest '/proc/boot/governor_servo.manifest' (plant='servo-horn-1d', SHA-256=a29b81341077ac0e...)
+
+latchd: Operating in NO-I2C mock mode (-n)
+
+Unable to access "/dev/latch/proposal" (1)
+
+latch_guestd: guest VM started (pid 20487, generation 1) argv: '/proc/boot/qvm' '@/proc/boot/latch_qemu_governor.qvmconf'
+
+# Y_BOOTED; echo LATCOC1_$?
+
+
+/proc/boot/ksh: Y_BOOTED: cannot execute - No such file or directory
+
+LATCOC1_126
+
+# echo LATCH_LATENCY_BOOTED; echo LATCOC2_$?
+
+
+LATCH_LATENCY_BOOTED
+
+LATCOC2_0
+
+# /proc/boot/latchctl console; echo LATCOC3_$?
+
+
+=== LATCH guest console: /dev/shmem/guest_console.log ===
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x414fd0b1]
+
+
+[    0.000000] Linux version 6.12.0 (skanda@fedora) (aarch64-linux-gnu-gcc (GCC) 16.2.1 20260819 (Red Hat Cross 16.2.1-1), GNU ld version 2.47.20260726) #1 SMP PREEMPT Thu Nov 12 12:11:03 IST 2026
+
+
+[    0.000000] KASLR disabled due to lack of seed
+
+
+[    0.000000] Machine model: QVM-v8A
+
+
+[    0.000000] earlycon: pl11 at MMIO 0x000000001c090000 (options '')
+
+
+[    0.000000] printk: legacy bootconsole [pl11] enabled
+
+
+[    0.000000] printk: debug: skip boot console de-registration.
+
+
+[    0.000000] efi: UEFI not found.
+
+
+[    0.000000] [Firmware Bug]: Kernel image misaligned at boot, please fix your bootloader!
+
+
+[    0.000000] NUMA: Faking a node at [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] NODE_DATA(0) allocated [mem 0x9ff05680-0x9ff07cbf]
+
+
+[    0.000000] Zone ranges:
+
+
+[    0.000000]   DMA      [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000]   DMA32    empty
+
+
+[    0.000000]   Normal   empty
+
+
+[    0.000000] Movable zone start for each node
+
+
+[    0.000000] Early memory node ranges
+
+
+[    0.000000]   node   0: [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] Initmem setup node 0 [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] cma: Reserved 32 MiB at 0x000000009d600000 on node -1
+
+
+[    0.000000] psci: probing for conduit method from DT.
+
+
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+
+
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+
+
+[    0.000000] psci: MIGRATE_INFO_TYPE returned unknown type (-2080374778)
+
+
+[    0.000000] psci: SMC Calling Convention v1.1
+
+
+[    0.000000] percpu: Embedded 25 pages/cpu s61656 r8192 d32552 u102400
+
+
+[    0.000000] pcpu-alloc: s61656 r8192 d32552 u102400 alloc=25*4096
+
+
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 
+
+
+[    0.000000] Detected PIPT I-cache on CPU0
+
+
+[    0.000000] CPU features: detected: Spectre-v4
+
+
+[    0.000000] CPU features: detected: Spectre-BHB
+
+
+[    0.000000] CPU features: detected: SSBS not fully self-synchronizing
+
+
+[    0.000000] alternatives: applying boot alternatives
+
+
+[    0.000000] Kernel command line: earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8
+
+
+[    0.000000] Dentry cache hash table entries: 65536 (order: 7, 524288 bytes, linear)
+
+
+[    0.000000] Inode-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+
+
+[    0.000000] Fallback order for Node 0: 0 
+
+
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 131072
+
+
+[    0.000000] Policy zone: DMA
+
+
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+
+
+[    0.000000] software IO TLB: SWIOTLB bounce buffer size adjusted to 0MB
+
+
+[    0.000000] software IO TLB: area num 2.
+
+
+[    0.000000] software IO TLB: mapped [mem 0x000000009d48d000-0x000000009d50d000] (0MB)
+
+
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=2, Nodes=1
+
+
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+
+
+[    0.000000] rcu: 	RCU event tracing is enabled.
+
+
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=2.
+
+
+[    0.000000] 	Trampoline variant of Tasks RCU enabled.
+
+
+[    0.000000] 	Tracing variant of Tasks RCU enabled.
+
+
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+
+
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=2
+
+
+[    0.000000] RCU Tasks: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+
+[    0.000000] RCU Tasks Trace: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+
+
+[    0.000000] Root IRQ handler: gic_handle_irq
+
+
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+
+
+[    0.000000] arch_timer: cp15 timer(s) running at 62.50MHz (virt).
+
+
+[    0.000000] clocksource: arch_sys_counter: mask: 0x1ffffffffffffff max_cycles: 0x1cd42e208c, max_idle_ns: 881590405314 ns
+
+
+[    0.000085] sched_clock: 57 bits at 63MHz, resolution 16ns, wraps every 4398046511096ns
+
+
+[    0.034111] arm-pv: using stolen time PV
+
+
+[    0.060918] Console: colour dummy device 80x25
+
+
+[    0.082431] Calibrating delay loop (skipped), value calculated using timer frequency.. 125.00 BogoMIPS (lpj=250000)
+
+
+[    0.125183] pid_max: default: 32768 minimum: 301
+
+
+[    0.146469] LSM: initializing lsm=capability
+
+
+[    0.168343] Mount-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+
+[    0.198372] Mountpoint-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+
+[    0.267761] cacheinfo: Unable to detect cache hierarchy for CPU 0
+
+
+[    0.327804] rcu: Hierarchical SRCU implementation.
+
+
+[    0.348127] rcu: 	Max phase no-delay instances is 1000.
+
+
+[    0.375253] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+
+
+[    0.414973] EFI services will not be available.
+
+
+[    0.437850] smp: Bringing up secondary CPUs ...
+
+
+[    0.467778] Detected PIPT I-cache on CPU1
+
+
+[    0.471051] CPU1: Booted secondary processor 0x0000000001 [0x414fd0b1]
+
+
+[    0.478956] smp: Brought up 1 node, 2 CPUs
+
+
+[    0.542281] SMP: Total of 2 processors activated.
+
+
+[    0.562920] CPU: All CPU(s) started at EL1
+
+
+[    0.582385] CPU features: detected: 32-bit EL0 Support
+
+
+[    0.603919] CPU features: detected: Data cache clean to the PoU not required for I/D coherence
+
+
+[    0.639878] CPU features: detected: Common not Private translations
+
+
+[    0.667480] CPU features: detected: CRC32 instructions
+
+
+[    0.691529] CPU features: detected: RCpc load-acquire (LDAPR)
+
+
+[    0.718544] CPU features: detected: LSE atomic instructions
+
+
+[    0.741803] CPU features: detected: Privileged Access Never
+
+
+[    0.767439] CPU features: detected: RAS Extension Support
+
+
+[    0.790096] CPU features: detected: Speculative Store Bypassing Safe (SSBS)
+
+
+[    0.827218] alternatives: applying system-wide alternatives
+
+
+[    0.867001] CPU features: detected: Hardware dirty bit management on CPU0-1
+
+
+[    0.919756] Memory: 439544K/524288K available (17600K kernel code, 4900K rwdata, 11872K rodata, 2880K init, 742K bss, 49940K reserved, 32768K cma-reserved)
+
+
+[    1.009642] devtmpfs: initialized
+
+
+[    1.050078] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+
+
+[    1.095559] futex hash table entries: 512 (order: 3, 32768 bytes, linear)
+
+
+[    1.127016] 23200 pages in range for non-PLT usage
+
+
+[    1.127143] 514720 pages in range for PLT usage
+
+
+[    1.151917] pinctrl core: initialized pinctrl subsystem
+
+
+[    1.201331] DMI not present or invalid.
+
+
+[    1.258567] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+
+
+[    1.299418] DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations
+
+
+[    1.331543] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+
+
+[    1.366326] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+
+
+[    1.399518] audit: initializing netlink subsys (disabled)
+
+
+[    1.428949] audit: type=2000 audit(0.396:1): state=initialized audit_enabled=0 res=1
+
+
+[    1.436292] thermal_sys: Registered thermal governor 'step_wise'
+
+
+[    1.467153] thermal_sys: Registered thermal governor 'power_allocator'
+
+
+[    1.497204] cpuidle: using governor menu
+
+
+[    1.548395] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+
+
+[    1.581769] ASID allocator initialised with 65536 entries
+
+
+[    1.616731] Serial: AMBA PL011 UART driver
+
+
+[    1.659982] 1c090000.uart: ttyAMA0 at MMIO 0x1c090000 (irq = 13, base_baud = 0) is a PL011 rev3
+
+
+[    1.699803] printk: legacy console [ttyAMA0] enabled
+
+
+[    1.699803] printk: legacy console [ttyAMA0] enabled
+
+
+[    1.765299] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+
+[    1.765299] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+
+[    1.818791] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+
+[    1.818791] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+
+[    1.867785] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+
+[    1.867785] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+
+[    1.922245] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+
+[    1.922245] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+
+[    1.973172] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+
+[    1.973172] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+
+[    2.025024] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+
+[    2.025024] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+
+[    2.075281] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+
+[    2.075281] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+
+[    2.128192] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+
+[    2.128192] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+
+[    2.195657] ACPI: Interpreter disabled.
+
+
+[    2.195657] ACPI: Interpreter disabled.
+
+
+[    2.235185] iommu: Default domain type: Translated
+
+
+[    2.235185] iommu: Default domain type: Translated
+
+
+[    2.277212] iommu: DMA domain TLB invalidation policy: strict mode
+
+
+[    2.277212] iommu: DMA domain TLB invalidation policy: strict mode
+
+
+[    2.331335] SCSI subsystem initialized
+
+
+[    2.331335] SCSI subsystem initialized
+
+
+[    2.367216] libata version 3.00 loaded.
+
+
+[    2.367216] libata version 3.00 loaded.
+
+
+[    2.399281] usbcore: registered new interface driver usbfs
+
+
+[    2.399281] usbcore: registered new interface driver usbfs
+
+
+[    2.442379] usbcore: registered new interface driver hub
+
+
+[    2.442379] usbcore: registered new interface driver hub
+
+
+[    2.484084] usbcore: registered new device driver usb
+
+
+[    2.484084] usbcore: registered new device driver usb
+
+
+[    2.525724] pps_core: LinuxPPS API ver. 1 registered
+
+
+[    2.525724] pps_core: LinuxPPS API ver. 1 registered
+
+
+[    2.564472] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+
+[    2.564472] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+
+[    2.635492] PTP clock support registered
+
+
+[    2.635492] PTP clock support registered
+
+
+[    2.667411] EDAC MC: Ver: 3.0.0
+
+
+[    2.667411] EDAC MC: Ver: 3.0.0
+
+
+[    2.697306] scmi_core: SCMI protocol bus registered
+
+
+[    2.697306] scmi_core: SCMI protocol bus registered
+
+
+[    2.743270] FPGA manager framework
+
+
+[    2.743270] FPGA manager framework
+
+
+[    2.772000] Advanced Linux Sound Architecture Driver Initialized.
+
+
+[    2.772000] Advanced Linux Sound Architecture Driver Initialized.
+
+
+[    2.833338] vgaarb: loaded
+
+
+[    2.833338] vgaarb: loaded
+
+
+[    2.861047] clocksource: Switched to clocksource arch_sys_counter
+
+
+[    2.861047] clocksource: Switched to clocksource arch_sys_counter
+
+
+[    2.918425] VFS: Disk quotas dquot_6.6.0
+
+
+[    2.918425] VFS: Disk quotas dquot_6.6.0
+
+
+[    2.951254] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+
+[    2.951254] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+
+[    3.006929] pnp: PnP ACPI: disabled
+
+
+[    3.006929] pnp: PnP ACPI: disabled
+
+
+[    3.175259] NET: Registered PF_INET protocol family
+
+
+[    3.175259] NET: Registered PF_INET protocol family
+
+
+[    3.217866] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+
+[    3.217866] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+
+[    3.285386] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+
+[    3.285386] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+
+[    3.355743] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+
+[    3.355743] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+
+[    3.420129] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+
+[    3.420129] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+
+[    3.481237] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+
+[    3.481237] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+
+[    3.537998] TCP: Hash tables configured (established 4096 bind 4096)
+
+
+[    3.537998] TCP: Hash tables configured (established 4096 bind 4096)
+
+
+[    3.590580] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    3.590580] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    3.642579] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    3.642579] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    3.699012] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+
+[    3.699012] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+
+[    3.750435] RPC: Registered named UNIX socket transport module.
+
+
+[    3.750435] RPC: Registered named UNIX socket transport module.
+
+
+[    3.798589] RPC: Registered udp transport module.
+
+
+[    3.798589] RPC: Registered udp transport module.
+
+
+[    3.842763] RPC: Registered tcp transport module.
+
+
+[    3.842763] RPC: Registered tcp transport module.
+
+
+[    3.885108] RPC: Registered tcp-with-tls transport module.
+
+
+[    3.885108] RPC: Registered tcp-with-tls transport module.
+
+
+[    3.933591] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+
+[    3.933591] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+
+[    3.986320] PCI: CLS 0 bytes, default 64
+
+
+[    3.986320] PCI: CLS 0 bytes, default 64
+
+
+[    4.024063] Unpacking initramfs...
+
+
+[    4.024063] Unpacking initramfs...
+
+
+[    4.053559] kvm [1]: HYP mode not available
+
+
+[    4.053559] kvm [1]: HYP mode not available
+
+
+[    4.097732] Initialise system trusted keyrings
+
+
+[    4.097732] Initialise system trusted keyrings
+
+
+[    4.139972] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+
+[    4.139972] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+
+[    4.195202] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+
+[    4.195202] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+
+[    4.249902] NFS: Registering the id_resolver key type
+
+
+[    4.249902] NFS: Registering the id_resolver key type
+
+
+[    4.291043] Key type id_resolver registered
+
+
+[    4.291043] Key type id_resolver registered
+
+
+[    4.324254] Key type id_legacy registered
+
+
+[    4.324254] Key type id_legacy registered
+
+
+[    4.357502] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+
+[    4.357502] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+
+[    4.411853] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+
+[    4.411853] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+
+[    4.472089] 9p: Installing v9fs 9p2000 file system support
+
+
+[    4.472089] 9p: Installing v9fs 9p2000 file system support
+
+
+[    4.563521] Key type asymmetric registered
+
+
+[    4.563521] Key type asymmetric registered
+
+
+[    4.602290] Asymmetric key parser 'x509' registered
+
+
+[    4.602290] Asymmetric key parser 'x509' registered
+
+
+[    4.646534] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+
+[    4.646534] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+
+[    4.707582] io scheduler mq-deadline registered
+
+
+[    4.707582] io scheduler mq-deadline registered
+
+
+[    4.743420] io scheduler kyber registered
+
+
+[    4.743420] io scheduler kyber registered
+
+
+[    4.776318] io scheduler bfq registered
+
+
+[    4.776318] io scheduler bfq registered
+
+
+[    4.831315] ledtrig-cpu: registered to indicate activity on CPUs
+
+
+[    4.831315] ledtrig-cpu: registered to indicate activity on CPUs
+
+
+[    5.006316] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+
+[    5.006316] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+
+[    5.071550] msm_serial: driver initialized
+
+
+[    5.071550] msm_serial: driver initialized
+
+
+[    5.107855] SuperH (H)SCI(F) driver initialized
+
+
+[    5.107855] SuperH (H)SCI(F) driver initialized
+
+
+[    5.147214] STM32 USART driver initialized
+
+
+[    5.147214] STM32 USART driver initialized
+
+
+[    5.237773] loop: module loaded
+
+
+[    5.237773] loop: module loaded
+
+
+[    5.268224] megasas: 07.727.03.00-rc1
+
+
+[    5.268224] megasas: 07.727.03.00-rc1
+
+
+[    5.313991] tun: Universal TUN/TAP device driver, 1.6
+
+
+[    5.313991] tun: Universal TUN/TAP device driver, 1.6
+
+
+[    5.359058] thunder_xcv, ver 1.0
+
+
+[    5.359058] thunder_xcv, ver 1.0
+
+
+[    5.386901] thunder_bgx, ver 1.0
+
+
+[    5.386901] thunder_bgx, ver 1.0
+
+
+[    5.413999] nicpf, ver 1.0
+
+
+[    5.413999] nicpf, ver 1.0
+
+
+[    5.439484] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+
+[    5.439484] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+
+[    5.498207] hns3: Copyright (c) 2017 Huawei Corporation.
+
+
+[    5.498207] hns3: Copyright (c) 2017 Huawei Corporation.
+
+
+[    5.542225] hclge is initializing
+
+
+[    5.542225] hclge is initializing
+
+
+[    5.569277] e1000: Intel(R) PRO/1000 Network Driver
+
+
+[    5.569277] e1000: Intel(R) PRO/1000 Network Driver
+
+
+[    5.607930] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+
+[    5.607930] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+
+[    5.653829] e1000e: Intel(R) PRO/1000 Network Driver
+
+
+[    5.653829] e1000e: Intel(R) PRO/1000 Network Driver
+
+
+[    5.693447] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+
+[    5.693447] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+
+[    5.741214] igb: Intel(R) Gigabit Ethernet Network Driver
+
+
+[    5.741214] igb: Intel(R) Gigabit Ethernet Network Driver
+
+
+[    5.783677] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+
+[    5.783677] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+
+[    5.827640] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+
+[    5.827640] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+
+[    5.877052] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+
+[    5.877052] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+
+[    5.926302] sky2: driver version 1.30
+
+
+[    5.926302] sky2: driver version 1.30
+
+
+[    5.963008] VFIO - User Level meta-driver version: 0.3
+
+
+[    5.963008] VFIO - User Level meta-driver version: 0.3
+
+
+[    6.015856] usbcore: registered new interface driver usb-storage
+
+
+[    6.015856] usbcore: registered new interface driver usb-storage
+
+
+[    6.072042] i2c_dev: i2c /dev entries driver
+
+
+[    6.072042] i2c_dev: i2c /dev entries driver
+
+
+[    6.122477] sdhci: Secure Digital Host Controller Interface driver
+
+
+[    6.122477] sdhci: Secure Digital Host Controller Interface driver
+
+
+[    6.173348] sdhci: Copyright(c) Pierre Ossman
+
+
+[    6.173348] sdhci: Copyright(c) Pierre Ossman
+
+
+[    6.214079] Synopsys Designware Multimedia Card Interface Driver
+
+
+[    6.214079] Synopsys Designware Multimedia Card Interface Driver
+
+
+[    6.266017] sdhci-pltfm: SDHCI platform and OF driver helper
+
+
+[    6.266017] sdhci-pltfm: SDHCI platform and OF driver helper
+
+
+[    6.320233] usbcore: registered new interface driver usbhid
+
+
+[    6.320233] usbcore: registered new interface driver usbhid
+
+
+[    6.365322] usbhid: USB HID core driver
+
+
+[    6.365322] usbhid: USB HID core driver
+
+
+[    6.408361] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+
+[    6.408361] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+
+[    6.494263] NET: Registered PF_PACKET protocol family
+
+
+[    6.494263] NET: Registered PF_PACKET protocol family
+
+
+[    6.538093] 9pnet: Installing 9P2000 support
+
+
+[    6.538093] 9pnet: Installing 9P2000 support
+
+
+[    6.573306] Key type dns_resolver registered
+
+
+[    6.573306] Key type dns_resolver registered
+
+
+[    6.632343] registered taskstats version 1
+
+
+[    6.632343] registered taskstats version 1
+
+
+[    6.670215] Loading compiled-in X.509 certificates
+
+
+[    6.670215] Loading compiled-in X.509 certificates
+
+
+[    6.729185] Demotion targets for Node 0: null
+
+
+[    6.729185] Demotion targets for Node 0: null
+
+
+[    6.774983] clk: Disabling unused clocks
+
+
+[    6.774983] clk: Disabling unused clocks
+
+
+[    6.809111] PM: genpd: Disabling unused power domains
+
+
+[    6.809111] PM: genpd: Disabling unused power domains
+
+
+[    6.851481] ALSA device list:
+
+
+[    6.851481] ALSA device list:
+
+
+[    6.876351]   No soundcards found.
+
+
+[    6.876351]   No soundcards found.
+
+
+[    6.982228] Freeing unused kernel memory: 2880K
+
+
+[    6.982228] Freeing unused kernel memory: 2880K
+
+
+[    7.019407] Run /init as init process
+
+
+[    7.019407] Run /init as init process
+
+
+[    7.049104]   with arguments:
+
+
+[    7.049104]   with arguments:
+
+
+[    7.072968]     /init
+
+
+[    7.072968]     /init
+
+
+[    7.092119]   with environment:
+
+
+[    7.092119]   with environment:
+
+
+[    7.117583]     HOME=/
+
+
+[    7.117583]     HOME=/
+
+
+[    7.138918]     TERM=linux
+
+
+[    7.138918]     TERM=linux
+
+
+[    7.199074] 
+
+
+[    7.199074] === LATCH Linux 6.12 Guest Userspace (/init) Alive ===
+
+
+[    7.199074] 
+
+
+[    7.199074] 
+
+
+[    7.199074] === LATCH Linux 6.12 Guest Userspace (/init) Alive ===
+
+
+[    7.199074] 
+
+
+[    7.270396] [guest] PID 1 = this binary. The in-guest policy IS /init.
+
+
+[    7.270396] 
+
+
+[    7.270396] [guest] PID 1 = this binary. The in-guest policy IS /init.
+
+
+[    7.270396] 
+
+
+[    7.335556] [guest] /dev/hvc0 opened! Configuring raw mode for GOVERNOR wire v2...
+
+
+[    7.335556] 
+
+
+[    7.335556] [guest] /dev/hvc0 opened! Configuring raw mode for GOVERNOR wire v2...
+
+
+[    7.335556] 
+
+
+[    7.411086] [LATENCY] soak: 900 Hz in-envelope CMD_V2 stream for 2100000 ms
+
+
+[    7.411086] 
+
+
+[    7.411086] [LATENCY] soak: 900 Hz in-envelope CMD_V2 stream for 2100000 ms
+
+
+[    7.411086] 
+
+
+[    7.477659] [LATENCY] the plant is walked to 100 mrad on a 5 mrad staircase, then holds
+
+
+[    7.477659] 
+
+
+[    7.477659] [LATENCY] the plant is walked to 100 mrad on a 5 mrad staircase, then holds
+
+
+[    7.477659] 
+
+
+[    7.556482] [LATENCY] the console stays quiet until the soak ends
+
+
+[    7.556482] 
+
+
+[    7.556482] [LATENCY] the console stays quiet until the soak ends
+
+
+[    7.556482] 
+
+
+LATCOC3_0
+
+# /proc/boot/latchctl status; echo LATCOC4_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 21780 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=8951)
+
+Decision Latency     : last = 492 cyc (7872 ns) | max = 88040 cyc (1408640 ns)
+
+Proposals Received   : 8951
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 4 overruns
+
+Proposal Backlog     : peak 57 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 1 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=8951
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC4_0
+
+# /proc/boot/latchctl status; echo LATCOC5_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 41856 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=27096)
+
+Decision Latency     : last = 104 cyc (1664 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 27096
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 6 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 92 ticks left | lease age 8 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 17 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=27096
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC5_0
+
+# /proc/boot/latchctl status; echo LATCOC6_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 61917 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=45184)
+
+Decision Latency     : last = 143 cyc (2288 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 45184
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 6 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 5 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=45184
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC6_0
+
+# /proc/boot/latchctl status; echo LATCOC7_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 81999 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=63264)
+
+Decision Latency     : last = 215 cyc (3440 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 63264
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 8 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 10 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=63264
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC7_0
+
+# /proc/boot/latchctl status; echo LATCOC8_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 102072 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=81340)
+
+Decision Latency     : last = 830 cyc (13280 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 81340
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 11 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=81340
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC8_0
+
+# /proc/boot/latchctl status; echo LATCOC9_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 122138 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=99425)
+
+Decision Latency     : last = 793 cyc (12688 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 99425
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 17 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 21 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=99425
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC9_0
+
+# /proc/boot/latchctl status; echo LATCOC10_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 142170 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=117508)
+
+Decision Latency     : last = 169 cyc (2704 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 117508
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 19 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 4 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=117508
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC10_0
+
+# /proc/boot/latchctl status; echo LATCOC11_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 162254 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=135591)
+
+Decision Latency     : last = 419 cyc (6704 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 135591
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 22 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 12 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=135591
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC11_0
+
+# /proc/boot/latchctl status; echo LATCOC12_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 182322 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=153673)
+
+Decision Latency     : last = 427 cyc (6832 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 153673
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 24 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 19 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=153673
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC12_0
+
+# /proc/boot/latchctl status; echo LATCOC13_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 202408 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=171752)
+
+Decision Latency     : last = 443 cyc (7088 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 171752
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 26 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=171752
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC13_0
+
+# /proc/boot/latchctl status; echo LATCOC14_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 222489 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=189836)
+
+Decision Latency     : last = 147 cyc (2352 ns) | max = 131212 cyc (2099392 ns)
+
+Proposals Received   : 189836
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 26 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 2 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=189836
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC14_0
+
+# /proc/boot/latchctl status; echo LATCOC15_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 242513 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=207912)
+
+Decision Latency     : last = 125 cyc (2000 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 207912
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 32 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 8 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=207912
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC15_0
+
+# /proc/boot/latchctl status; echo LATCOC16_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 262598 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=225992)
+
+Decision Latency     : last = 84 cyc (1344 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 225992
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 33 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 89 ticks left | lease age 11 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 13 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=225992
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC16_0
+
+# /proc/boot/latchctl status; echo LATCOC17_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 282682 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=244076)
+
+Decision Latency     : last = 85 cyc (1360 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 244076
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 35 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=244076
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC17_0
+
+# /proc/boot/latchctl status; echo LATCOC18_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 302742 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=262161)
+
+Decision Latency     : last = 675 cyc (10800 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 262161
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 38 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=262161
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC18_0
+
+# /proc/boot/latchctl status; echo LATCOC19_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 322828 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=280244)
+
+Decision Latency     : last = 156 cyc (2496 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 280244
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 41 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 15 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=280244
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC19_0
+
+# /proc/boot/latchctl status; echo LATCOC20_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 342914 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=298324)
+
+Decision Latency     : last = 127 cyc (2032 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 298324
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 42 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 20 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=298324
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC20_0
+
+# /proc/boot/latchctl status; echo LATCOC21_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 362989 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=316408)
+
+Decision Latency     : last = 148 cyc (2368 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 316408
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 46 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 4 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=316408
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC21_0
+
+# /proc/boot/latchctl status; echo LATCOC22_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 382933 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=334508)
+
+Decision Latency     : last = 156 cyc (2496 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 334508
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 49 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 4 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=334508
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC22_0
+
+# /proc/boot/latchctl status; echo LATCOC23_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 402882 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=352592)
+
+Decision Latency     : last = 367 cyc (5872 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 352592
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 59 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 13 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=352592
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC23_0
+
+# /proc/boot/latchctl status; echo LATCOC24_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 422961 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=370684)
+
+Decision Latency     : last = 115 cyc (1840 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 370684
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 64 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 93 ticks left | lease age 7 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 5 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=370684
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC24_0
+
+# /proc/boot/latchctl status; echo LATCOC25_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 443048 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=388779)
+
+Decision Latency     : last = 608 cyc (9728 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 388779
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 65 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=388779
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC25_0
+
+# /proc/boot/latchctl status; echo LATCOC26_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 463139 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=406872)
+
+Decision Latency     : last = 157 cyc (2512 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 406872
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 70 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=406872
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC26_0
+
+# /proc/boot/latchctl status; echo LATCOC27_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 483196 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=424949)
+
+Decision Latency     : last = 609 cyc (9744 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 424949
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 71 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 20 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=424949
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC27_0
+
+# /proc/boot/latchctl status; echo LATCOC28_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 503265 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=443036)
+
+Decision Latency     : last = 144 cyc (2304 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 443036
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 71 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=443036
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC28_0
+
+# /proc/boot/latchctl status; echo LATCOC29_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 523332 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=461112)
+
+Decision Latency     : last = 169 cyc (2704 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 461112
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 74 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 8 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=461112
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC29_0
+
+# /proc/boot/latchctl status; echo LATCOC30_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 543404 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=479197)
+
+Decision Latency     : last = 461 cyc (7376 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 479197
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 76 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=479197
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC30_0
+
+# /proc/boot/latchctl status; echo LATCOC31_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 563494 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=497277)
+
+Decision Latency     : last = 1054 cyc (16864 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 497277
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 77 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=497277
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC31_0
+
+# /proc/boot/latchctl status; echo LATCOC32_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 583604 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=515380)
+
+Decision Latency     : last = 403 cyc (6448 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 515380
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 78 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 1 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=515380
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC32_0
+
+# /proc/boot/latchctl status; echo LATCOC33_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 603683 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=533476)
+
+Decision Latency     : last = 371 cyc (5936 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 533476
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 81 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=533476
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC33_0
+
+# /proc/boot/latchctl status; echo LATCOC34_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 623664 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=551552)
+
+Decision Latency     : last = 176 cyc (2816 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 551552
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 82 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=551552
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC34_0
+
+# /proc/boot/latchctl status; echo LATCOC35_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 643737 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=569636)
+
+Decision Latency     : last = 219 cyc (3504 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 569636
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 83 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 93 ticks left | lease age 7 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=569636
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC35_0
+
+# /proc/boot/latchctl status; echo LATCOC36_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 663837 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=587732)
+
+Decision Latency     : last = 243 cyc (3888 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 587732
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 83 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 92 ticks left | lease age 8 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 3 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=587732
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC36_0
+
+# /proc/boot/latchctl status; echo LATCOC37_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 683909 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=605840)
+
+Decision Latency     : last = 276 cyc (4416 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 605840
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 86 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=605840
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC37_0
+
+# /proc/boot/latchctl status; echo LATCOC38_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 704006 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=623940)
+
+Decision Latency     : last = 116 cyc (1856 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 623940
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 88 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=623940
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC38_0
+
+# /proc/boot/latchctl status; echo LATCOC39_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 724088 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=642020)
+
+Decision Latency     : last = 162 cyc (2592 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 642020
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 90 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 16 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=642020
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC39_0
+
+# /proc/boot/latchctl status; echo LATCOC40_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 744172 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=660104)
+
+Decision Latency     : last = 250 cyc (4000 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 660104
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 91 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=660104
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC40_0
+
+# /proc/boot/latchctl status; echo LATCOC41_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 764239 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=678188)
+
+Decision Latency     : last = 543 cyc (8688 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 678188
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 93 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=678188
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC41_0
+
+# /proc/boot/latchctl status; echo LATCOC42_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 784298 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=696265)
+
+Decision Latency     : last = 1325 cyc (21200 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 696265
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 95 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=696265
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC42_0
+
+# /proc/boot/latchctl status; echo LATCOC43_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 804377 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=714353)
+
+Decision Latency     : last = 538 cyc (8608 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 714353
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 96 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 24 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=714353
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC43_0
+
+# /proc/boot/latchctl status; echo LATCOC44_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 824468 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=732444)
+
+Decision Latency     : last = 220 cyc (3520 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 732444
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 98 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 15 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=732444
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC44_0
+
+# /proc/boot/latchctl status; echo LATCOC45_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 844542 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=750531)
+
+Decision Latency     : last = 402 cyc (6432 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 750531
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 100 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 2 accepted commands
+
+Deadline Misses      : 3 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=750531
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC45_0
+
+# /proc/boot/latchctl status; echo LATCOC46_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 864570 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=768613)
+
+Decision Latency     : last = 341 cyc (5456 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 768613
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 103 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=768613
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC46_0
+
+# /proc/boot/latchctl status; echo LATCOC47_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 884639 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=786688)
+
+Decision Latency     : last = 100 cyc (1600 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 786688
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 104 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=786688
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC47_0
+
+# /proc/boot/latchctl status; echo LATCOC48_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 904718 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=804772)
+
+Decision Latency     : last = 107 cyc (1712 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 804772
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 106 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=804772
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC48_0
+
+# /proc/boot/latchctl status; echo LATCOC49_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 924781 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=822852)
+
+Decision Latency     : last = 170 cyc (2720 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 822852
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 108 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=822852
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC49_0
+
+# /proc/boot/latchctl status; echo LATCOC50_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 944813 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=840932)
+
+Decision Latency     : last = 148 cyc (2368 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 840932
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 113 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 3 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=840932
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC50_0
+
+# /proc/boot/latchctl status; echo LATCOC51_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 964876 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=859024)
+
+Decision Latency     : last = 632 cyc (10112 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 859024
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 115 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 20 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=859024
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC51_0
+
+# /proc/boot/latchctl status; echo LATCOC52_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 984983 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=877112)
+
+Decision Latency     : last = 164 cyc (2624 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 877112
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 115 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 8 accepted commands
+
+Deadline Misses      : 4 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=877112
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC52_0
+
+# /proc/boot/latchctl status; echo LATCOC53_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1005038 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=895200)
+
+Decision Latency     : last = 169 cyc (2704 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 895200
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 118 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 21 accepted commands
+
+Deadline Misses      : 5 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=895200
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC53_0
+
+# /proc/boot/latchctl status; echo LATCOC54_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1025096 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=913277)
+
+Decision Latency     : last = 939 cyc (15024 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 913277
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 119 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 5 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=913277
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC54_0
+
+# /proc/boot/latchctl status; echo LATCOC55_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1045172 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=931360)
+
+Decision Latency     : last = 80 cyc (1280 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 931360
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 119 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 6 accepted commands
+
+Deadline Misses      : 5 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=931360
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC55_0
+
+# /proc/boot/latchctl status; echo LATCOC56_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1065257 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=949444)
+
+Decision Latency     : last = 479 cyc (7664 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 949444
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 120 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 15 accepted commands
+
+Deadline Misses      : 5 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=949444
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC56_0
+
+# /proc/boot/latchctl status; echo LATCOC57_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1085331 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=967521)
+
+Decision Latency     : last = 908 cyc (14528 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 967521
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 121 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 17 accepted commands
+
+Deadline Misses      : 5 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=967521
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC57_0
+
+# /proc/boot/latchctl status; echo LATCOC58_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1105358 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=985608)
+
+Decision Latency     : last = 114 cyc (1824 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 985608
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 123 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 4 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=985608
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC58_0
+
+# /proc/boot/latchctl status; echo LATCOC59_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1125455 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1003711)
+
+Decision Latency     : last = 523 cyc (8368 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1003711
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 126 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1003711
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC59_0
+
+# /proc/boot/latchctl status; echo LATCOC60_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1145547 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1021804)
+
+Decision Latency     : last = 195 cyc (3120 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1021804
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 130 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1021804
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC60_0
+
+# /proc/boot/latchctl status; echo LATCOC61_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1165632 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1039888)
+
+Decision Latency     : last = 437 cyc (6992 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1039888
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 131 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1039888
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC61_0
+
+# /proc/boot/latchctl status; echo LATCOC62_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1185722 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1057968)
+
+Decision Latency     : last = 168 cyc (2688 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1057968
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 131 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 14 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1057968
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC62_0
+
+# /proc/boot/latchctl status; echo LATCOC63_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1205801 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1076055)
+
+Decision Latency     : last = 447 cyc (7152 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1076055
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 133 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 1 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1076055
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC63_0
+
+# /proc/boot/latchctl status; echo LATCOC64_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1225862 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1094132)
+
+Decision Latency     : last = 358 cyc (5728 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1094132
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 135 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 3 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1094132
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC64_0
+
+# /proc/boot/latchctl status; echo LATCOC65_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1245910 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1112219)
+
+Decision Latency     : last = 818 cyc (13088 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1112219
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 138 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 15 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1112219
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC65_0
+
+# /proc/boot/latchctl status; echo LATCOC66_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1265931 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1130300)
+
+Decision Latency     : last = 418 cyc (6688 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1130300
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 142 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 21 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1130300
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC66_0
+
+# /proc/boot/latchctl status; echo LATCOC67_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1286001 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1148376)
+
+Decision Latency     : last = 189 cyc (3024 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1148376
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 143 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1148376
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC67_0
+
+# /proc/boot/latchctl status; echo LATCOC68_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1306064 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1166465)
+
+Decision Latency     : last = 521 cyc (8336 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1166465
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 144 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1166465
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC68_0
+
+# /proc/boot/latchctl status; echo LATCOC69_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1326125 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1184541)
+
+Decision Latency     : last = 440 cyc (7040 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1184541
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 145 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 12 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1184541
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC69_0
+
+# /proc/boot/latchctl status; echo LATCOC70_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1346138 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1202625)
+
+Decision Latency     : last = 510 cyc (8160 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1202625
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 147 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 21 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1202625
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC70_0
+
+# /proc/boot/latchctl status; echo LATCOC71_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1366212 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1220704)
+
+Decision Latency     : last = 370 cyc (5920 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1220704
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 147 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1220704
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC71_0
+
+# /proc/boot/latchctl status; echo LATCOC72_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1386290 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1238788)
+
+Decision Latency     : last = 450 cyc (7200 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1238788
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 149 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1238788
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC72_0
+
+# /proc/boot/latchctl status; echo LATCOC73_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1406355 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1256865)
+
+Decision Latency     : last = 975 cyc (15600 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1256865
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 149 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1256865
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC73_0
+
+# /proc/boot/latchctl status; echo LATCOC74_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1426441 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1274951)
+
+Decision Latency     : last = 401 cyc (6416 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1274951
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 149 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1274951
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC74_0
+
+# /proc/boot/latchctl status; echo LATCOC75_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1446525 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1293035)
+
+Decision Latency     : last = 662 cyc (10592 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1293035
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 149 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 6 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1293035
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC75_0
+
+# /proc/boot/latchctl status; echo LATCOC76_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1466591 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1311112)
+
+Decision Latency     : last = 221 cyc (3536 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1311112
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 149 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 8 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1311112
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC76_0
+
+# /proc/boot/latchctl status; echo LATCOC77_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1486677 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1329197)
+
+Decision Latency     : last = 677 cyc (10832 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1329197
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 151 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1329197
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC77_0
+
+# /proc/boot/latchctl status; echo LATCOC78_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1506757 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1347276)
+
+Decision Latency     : last = 221 cyc (3536 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1347276
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 151 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 22 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1347276
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC78_0
+
+# /proc/boot/latchctl status; echo LATCOC79_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1526842 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1365360)
+
+Decision Latency     : last = 217 cyc (3472 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1365360
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 151 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 6 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1365360
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC79_0
+
+# /proc/boot/latchctl status; echo LATCOC80_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1546922 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1383440)
+
+Decision Latency     : last = 401 cyc (6416 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1383440
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 152 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1383440
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC80_0
+
+# /proc/boot/latchctl status; echo LATCOC81_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1566992 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1401520)
+
+Decision Latency     : last = 167 cyc (2672 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1401520
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 153 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 16 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1401520
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC81_0
+
+# /proc/boot/latchctl status; echo LATCOC82_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1586980 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1419602)
+
+Decision Latency     : last = 450 cyc (7200 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1419602
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 157 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1419602
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC82_0
+
+# /proc/boot/latchctl status; echo LATCOC83_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1607062 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1437684)
+
+Decision Latency     : last = 127 cyc (2032 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1437684
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 158 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 92 ticks left | lease age 8 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 5 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1437684
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC83_0
+
+# /proc/boot/latchctl status; echo LATCOC84_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1627126 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1455767)
+
+Decision Latency     : last = 384 cyc (6144 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1455767
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 158 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 13 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1455767
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC84_0
+
+# /proc/boot/latchctl status; echo LATCOC85_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1647208 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1473849)
+
+Decision Latency     : last = 666 cyc (10656 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1473849
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 160 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 20 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1473849
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC85_0
+
+# /proc/boot/latchctl status; echo LATCOC86_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1667288 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1491925)
+
+Decision Latency     : last = 1520 cyc (24320 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1491925
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 161 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 21 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1491925
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC86_0
+
+# /proc/boot/latchctl status; echo LATCOC87_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1687365 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1510004)
+
+Decision Latency     : last = 114 cyc (1824 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1510004
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 161 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 96 ticks left | lease age 4 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1510004
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC87_0
+
+# /proc/boot/latchctl status; echo LATCOC88_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1707457 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1528092)
+
+Decision Latency     : last = 167 cyc (2672 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1528092
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 164 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 13 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1528092
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC88_0
+
+# /proc/boot/latchctl status; echo LATCOC89_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1727518 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1546188)
+
+Decision Latency     : last = 134 cyc (2144 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1546188
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 166 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 90 ticks left | lease age 10 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1546188
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC89_0
+
+# /proc/boot/latchctl status; echo LATCOC90_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1747593 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1564272)
+
+Decision Latency     : last = 180 cyc (2880 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1564272
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 167 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1564272
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC90_0
+
+# /proc/boot/latchctl status; echo LATCOC91_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1767665 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1582357)
+
+Decision Latency     : last = 2502 cyc (40032 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1582357
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 173 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 3 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1582357
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC91_0
+
+# /proc/boot/latchctl status; echo LATCOC92_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1787753 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1600478)
+
+Decision Latency     : last = 467 cyc (7472 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1600478
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 173 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 24 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1600478
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC92_0
+
+# /proc/boot/latchctl status; echo LATCOC93_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1807823 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1618556)
+
+Decision Latency     : last = 328 cyc (5248 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1618556
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 174 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 2 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1618556
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC93_0
+
+# /proc/boot/latchctl status; echo LATCOC94_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1827848 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1636636)
+
+Decision Latency     : last = 146 cyc (2336 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1636636
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 175 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 7 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1636636
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC94_0
+
+# /proc/boot/latchctl status; echo LATCOC95_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1847915 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1654721)
+
+Decision Latency     : last = 1219 cyc (19504 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1654721
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 176 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 17 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1654721
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC95_0
+
+# /proc/boot/latchctl status; echo LATCOC96_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1868001 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1672824)
+
+Decision Latency     : last = 384 cyc (6144 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1672824
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 180 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 20 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1672824
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC96_0
+
+# /proc/boot/latchctl status; echo LATCOC97_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1888093 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1690917)
+
+Decision Latency     : last = 702 cyc (11232 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1690917
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 183 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 13 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1690917
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC97_0
+
+# /proc/boot/latchctl status; echo LATCOC98_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1908190 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1709016)
+
+Decision Latency     : last = 430 cyc (6880 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1709016
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 186 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 12 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1709016
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC98_0
+
+# /proc/boot/latchctl status; echo LATCOC99_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1928255 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1727096)
+
+Decision Latency     : last = 198 cyc (3168 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1727096
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 187 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 17 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1727096
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC99_0
+
+# /proc/boot/latchctl status; echo LATCOC100_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1948319 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1745180)
+
+Decision Latency     : last = 147 cyc (2352 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1745180
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 188 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 1 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1745180
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC100_0
+
+# /proc/boot/latchctl status; echo LATCOC101_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1968383 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1763256)
+
+Decision Latency     : last = 204 cyc (3264 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1763256
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 189 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 82 ticks left | lease age 18 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 2 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1763256
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC101_0
+
+# /proc/boot/latchctl status; echo LATCOC102_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 1988454 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1781348)
+
+Decision Latency     : last = 156 cyc (2496 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1781348
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 190 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 19 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1781348
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC102_0
+
+# /proc/boot/latchctl status; echo LATCOC103_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2008538 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1799440)
+
+Decision Latency     : last = 105 cyc (1680 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1799440
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 191 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 11 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1799440
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC103_0
+
+# /proc/boot/latchctl status; echo LATCOC104_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2028636 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1817544)
+
+Decision Latency     : last = 177 cyc (2832 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1817544
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 191 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 15 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1817544
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC104_0
+
+# /proc/boot/latchctl status; echo LATCOC105_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2048707 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1835627)
+
+Decision Latency     : last = 575 cyc (9200 ns) | max = 255084 cyc (4081344 ns)
+
+Proposals Received   : 1835627
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 194 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 100 ticks left | lease age 0 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 23 accepted commands
+
+Deadline Misses      : 6 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1835627
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC105_0
+
+# /proc/boot/latchctl status; echo LATCOC106_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2068727 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1853708)
+
+Decision Latency     : last = 167 cyc (2672 ns) | max = 261336 cyc (4181376 ns)
+
+Proposals Received   : 1853708
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 195 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 1 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 4 accepted commands
+
+Deadline Misses      : 7 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1853708
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC106_0
+
+# /proc/boot/latchctl status; echo LATCOC107_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2088794 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1871788)
+
+Decision Latency     : last = 107 cyc (1712 ns) | max = 261336 cyc (4181376 ns)
+
+Proposals Received   : 1871788
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 196 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 97 ticks left | lease age 3 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 9 accepted commands
+
+Deadline Misses      : 7 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1871788
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC107_0
+
+# /proc/boot/latchctl status; echo LATCOC108_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2108856 ticks
+
+Current Mode         : HP (High Performance)
+
+Actuator Angle       : 100 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1889872)
+
+Decision Latency     : last = 160 cyc (2560 ns) | max = 261336 cyc (4181376 ns)
+
+Proposals Received   : 1889872
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 197 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x0000 (NONE)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=HP (0)
+
+V2 Session / Lease   : active | 98 ticks left | lease age 2 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 18 accepted commands
+
+Deadline Misses      : 7 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead NO
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1889872
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC108_0
+
+# /proc/boot/latchctl status; echo LATCOC109_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2128937 ticks
+
+Current Mode         : HOLD (High Assurance 1)
+
+Actuator Angle       : 0 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1890224)
+
+Decision Latency     : last = 119 cyc (1904 ns) | max = 261336 cyc (4181376 ns)
+
+Proposals Received   : 1890224
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 201 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x2000 (HEARTBEAT)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=LATCH (5)
+
+V2 Session / Lease   : active | 99 ticks left | lease age 19701 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 8 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead YES
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1890224
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC109_0
+
+# /proc/boot/latchctl latency; echo LATCOC110_$?
+
+
+=== LATCH Supervisor Decision-Latency Distribution ===
+
+Samples (ticks)       : 2129049
+
+Decision-path samples : 1890224 (a proposal was dequeued)
+
+Idle-path samples     : 238825 (the proposal queue was empty)
+
+Motion evaluations    : 1890220 (of the decision-path samples)
+
+Cycle rate            : 62500000 Hz
+
+First / last tick     : 1 / 2129049
+
+Min / Max (decision)  : 223 / 261336 cyc (3568 / 4181376 ns)
+
+Mean (decision)       : 542.869 cyc
+
+Min / Max (all ticks) : 20 / 261336 cyc (320 / 4181376 ns)
+
+Mean (all ticks)      : 510.018 cyc
+
+Decision path         : p50 = [160, 192) cyc ([2560, 3072) ns) | p99 = [768, 1024) cyc ([12288, 16384) ns)
+
+Idle path             : p50 = [64, 80) cyc ([1024, 1280) ns) | p99 = [512, 640) cyc ([8192, 10240) ns)
+
+Histogram shape      : decision path 30 non-empty buckets | idle path 69 non-empty buckets (of 112)
+
+Over budget           : 202 samples (over the manifest's timing.wcet_budget_us)
+
+Over tick period      : 8 samples (over the decision period)
+
+Mode ticks            : HP (High Performance)=2109735 HOLD (High Assurance 1)=19305 HOME (High Assurance 2)=9
+
+LATCOC110_0
+
+# /proc/boot/latchctl status; echo LATCOC111_$?
+
+
+=== LATCH Simplex Supervisor Status ===
+
+Tick Counter         : 2129162 ticks
+
+Current Mode         : HOLD (High Assurance 1)
+
+Actuator Angle       : 0 mrad
+
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+
+Last Proposed Angle  : 100 mrad (seq=1890224)
+
+Decision Latency     : last = 793 cyc (12688 ns) | max = 261336 cyc (4181376 ns)
+
+Proposals Received   : 1890224
+
+Wire Faults Caught   : 0
+
+Envelope Vetoes      : 0
+
+Ring Drops / WCET    : 0 drops | 201 overruns
+
+Proposal Backlog     : peak 72 frames | 0 over limit
+
+EPERM Rejections     : 0
+
+Operator Hold Locked : NO
+
+Active Fault Bits    : 0x0000 (NONE)
+
+Latched Fault Bits   : 0x2000 (HEARTBEAT)
+
+Clean Streak         : 0 frames
+
+GOVERNOR             : enabled | rung=LATCH (5)
+
+V2 Session / Lease   : active | 74 ticks left | lease age 19926 ticks
+
+Warm-up / Agent      : 4 heartbeats | state 1
+
+Recovery Clean       : 0 accepted commands
+
+Deadline Misses      : 8 overruns
+
+HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
+
+Lease Owner          : valid | producer tag 1 | session dead YES
+
+Foreign / Takeovers  : 0 frames | 0 takeovers
+
+Session Epoch        : bound | 0xF9C0B340
+
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+
+Coherence            : valid | counter=1890224
+
+Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+LATCOC111_0
+
+#
+

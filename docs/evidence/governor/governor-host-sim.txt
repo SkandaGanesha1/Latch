@@ -1,6 +1,6 @@
 ================================================================================
 LATCH GOVERNOR — HOST SIMULATION & ADVERSARIAL TEST SUITE EXECUTION
-Date: 20261125-135633
+Date: 20261126-071632
 Host: Linux fedora 7.3.4-300.fc45.x86_64
 Compiler: gcc (host)
 ================================================================================
@@ -23,7 +23,7 @@ Compiler: gcc (host)
 
 --- 2. GOVERNOR E2E INTEGRATION TESTS (governor_e2e.py) ---
 [GOVERNOR_SCENARIO_1] PASS: keepout violation enters HOLD and LATCH immediately (not ADVISE)
-[GOVERNOR_SCENARIO_2] PASS: v1 SILENCE=0x80 is fail-closed (never read as HEARTBEAT) and v2 rejects 0x80
+[GOVERNOR_SCENARIO_2] PASS: v2 rejects legacy SILENCE flag and LPRP v1 IPC
 [GOVERNOR_SCENARIO_3] PASS: global assertion verified: u=370000 and all commands never land theta in keepout [250, 650]
 [GOVERNOR_SCENARIO_4] PASS: deadman lease expiry enforces deterministic graded ladder demotion
 [GOVERNOR_SCENARIO_5] PASS: heartbeat traffic renews lease but cannot recover rung (streak stays 0, plant unmoved)
@@ -62,12 +62,12 @@ Scenario: Injected task note forces proposal u=450 into keepout [250, 650]...
 [ATTACK A3 VERDICT] PASS
 
 === [ATTACK A4: STANDALONE DEADMAN LEASE TRIP] ===
-Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Silence...
+Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Unrenewed Traffic...
   [PASS] Zero keep-out breaches: 0% breach rate verified.
   [PASS] FAULT_HEARTBEAT asserted and ladder demoted to ADVISE on lease expiry.
   [PASS] Heartbeat hold maintained ADVISE without gaining recovery credit.
   [PASS] Exactly 25 clean commands promoted supervisory rung back to HP.
-  [PASS] Final deadman silence dropped system into fail-closed LATCH.
+  [PASS] Final non-renewing requests dropped system into fail-closed LATCH.
 [ATTACK A4 VERDICT] PASS
 
 === [ATTACK A5: COHERENCE SPOOF ATTACK] ===
@@ -91,7 +91,7 @@ Scenario: Adversary modifies recorded flight recorder event payload...
   [PASS] Zero keep-out breaches: 0% breach rate verified.
   [PASS] Pristine cryptographic hash chain verified successfully.
   [PASS] Adversarial bit-flip in event #5 intercepted: TAMPER DETECTED (exit code 1).
-  [PASS] Mathematical non-repudiation verified against forensic log manipulation.
+  [PASS] The replay checker detected the modified event.
 [ATTACK A7 VERDICT] PASS
 
 === [ATTACK A8: SECOND WRITER KEEPS A DEAD AGENT ALIVE] ===
@@ -102,6 +102,7 @@ Scenario: Owner warms up -> Owner dies -> Rogue keeps talking -> Lease still exp
   [PASS] The takeover after expiry started a NEW epoch: the new producer had to re-earn its warm-up before its command was admitted.
 [ATTACK A8 VERDICT] PASS
 
+  [PASS] RT-02 invalid takeover regression: spent-epoch, seq==0, and corrupt foreign takeover frames rejected without mutating active owner/epoch/session state.
 ================================================================================
                          ADVERSARIAL EVALUATION SCORECARD
 ================================================================================
@@ -118,12 +119,12 @@ A8   | Second Writer Keeps Dead Agent Alive | 11     | FAULT_HEARTBEAT (b | PASS
 ------------------------------------------------------------------------------
 Total Ticks Evaluated     : 132
 Total Keep-Out Intrusions : 0 (Envelopes Breached: 0.0%)
-Execution Wall Time       : 0.306 s
+Execution Wall Time       : 0.169 s
 ================================================================================
 
-UNIVERSAL SAFETY CRITERIA AUDIT:
+SCENARIO CHECKS:
   [CRITERION 1] Zero Keep-Out Envelope Intrusions (0% Breach Rate): SATISFIED
-  [CRITERION 2] Deterministic Microkernel Fault Detection         : SATISFIED
+  [CRITERION 2] Expected Faults in Tested Scenarios               : SATISFIED
   [CRITERION 3] Supervised Ladder Demotion (Lease/Fault Tripped)  : SATISFIED
   [CRITERION 4] Bounded Hysteresis Recovery (25 Clean Commands)   : SATISFIED
 --------------------------------------------------------------------------------

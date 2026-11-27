@@ -1,0 +1,210 @@
+################################################################################
+# qnx/latch_qemu_fbverdict.build
+#
+# The HOST->GUEST VERDICT WATCHER image (W5).
+#
+# This is the GOVERNOR image with ONE addition: the LFBK VERDICT FILE, and
+# the SUPERVISOR PUBLISHES ITS OWN VERDICTS on it.
+#
+#     `latch_fb_sink`   the only WRITER of the file.  It accepts a frame
+#                       on its one-sided WRITE node (/dev/latch/feedback_pub)
+#                       and copies the latest one to sector 0 of
+#                       /dev/shmem/latch_feedback.img on a dedicated writer
+#                       thread, so the advisory channel can never stall the
+#                       safety core.  It CREATES the file at its final size
+#                       BEFORE it registers its nodes, so the
+#                       `waitfor /dev/latch/feedback 4` below means
+#                       "node exists => file exists at final size".
+#     `latchd -f ...`   THE PUBLISHER.  The supervisor publishes one verdict
+#                       per MOTION PROPOSAL: ACCEPT when it accepted the
+#                       proposal and is still in HP, REJECT when it refused
+#                       it or it is no longer following the guest.  The
+#                       verdict carries the proposal's sequence number and
+#                       the session epoch, so the guest can tell WHICH
+#                       proposal it answers and WHICH session it belongs
+#                       to.
+#
+# THE DIFFERENCE FROM THE W4 (fbprobe) IMAGE IS THE POINT
+# -------------------------------------------------------
+# W4 published SYNTHETIC frames from `latch_fb_pump`, a development-only
+# tool, and asked "does a verdict reach the guest at all?".  W5 removes the
+# synthetic publisher entirely: there is NO `latch_fb_pump` in this image,
+# and the only thing that writes the verdict file is the TRUSTED
+# SUPERVISOR.  So the question W5 answers is the real one:
+#
+#     "when the supervisor refuses the guest's proposal, does the guest
+#      find out -- and does it stop asking?"
+#
+# The transport is IDENTICAL to W4's, and that is deliberate: the SAME
+# qvmconf is reused (`latch_qemu_fbprobe.qvmconf`), so the only difference
+# between the two measurements is WHO publishes and WHAT the guest does
+# with the answer.
+#
+# The guest policy is the same freestanding binary with ONE extra compile
+# flag (`-DLATCH_GOVERNOR_FEEDBACK_VERDICT`): it decodes the verdict,
+# correlates it with the proposal it answers, and stops proposing when the
+# supervisor says no.
+#
+# Nothing here is a deployment image: `latch_fb_sink` is development-only,
+# exactly like `secpolgenerate` in the audit image, and the deployment
+# policy qnx/latch.secpol is NOT modified.  The experiment's policy adds
+# exactly one rule: `allow latchd_t latch_fb_sink_t:channel connect;` --
+# a channel connect to the sink's write node, and nothing else.
+################################################################################
+
+[image=0x40080000]
+[virtual=aarch64le,raw] boot = {
+    startup-qemu-virt -v -Q enable
+    PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin
+    LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/lib/dll/qvm
+    procnto-smp-instr -v
+}
+
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/ldqnx-64.so.2 /usr/lib/ldqnx-64.so.2
+
+    # 1. Serial console (PL011 UART at 0x09000000, IRQ 33 on QEMU virt)
+    devc-serpl011 -e -F -b115200 0x09000000,33
+    waitfor /dev/ser1 4
+    reopen /dev/ser1
+
+    display_msg "================================================================"
+    display_msg " LATCH -- HOST->GUEST VERDICT WATCHER (W5, experimental)"
+    display_msg " Target: QEMU ARMv8 Virt Machine | 4x Cortex-A76 | EL2 VHE | GICv2"
+    display_msg "================================================================"
+
+    # 2. Push compiled QNX 8.0 Security Policy into procnto.
+    #
+    #    This is the DEPLOYMENT policy plus the experiment's additions
+    #    (the feedback mailbox resource manager and the rule that lets the
+    #    SUPERVISOR publish on it), assembled by
+    #    tools/generate_fbprobe_secpol.py.  The deployment policy
+    #    qnx/latch.secpol is NOT modified.
+    #
+    #    The file is installed at the conventional path /proc/boot/secpol.bin
+    #    because that is where the `on` utility looks for the policy when it
+    #    resolves a type name (its own `-S path` option overrides it, but the
+    #    default is what every other profile uses).
+    secpolpush /proc/boot/secpol.bin
+
+    # 3. System logger + pipe resource manager (the pipe RM is required by
+    #    the qvm hostdev >"|..." form).
+    on -T slogger2_t -C 1 /proc/boot/slogger2 &
+    waitfor /dev/slog2 4
+
+    on -T pipe_t -C 1 /proc/boot/pipe &
+    waitfor /dev/pipe 4
+
+    # 3b. The LFBK VERDICT FILE's writer.
+    #
+    #     `latch_fb_sink` is the ONLY process that may write the verdict
+    #     file.  It has three one-sided nodes:
+    #
+    #         /dev/latch/feedback       READ side.  Unused by this profile:
+    #                                     the chosen transport is a polled
+    #                                     FILE, not a channel.
+    #         /dev/latch/feedback_pub   WRITE side.  THE CHANNEL: the
+    #                                     supervisor (latchd -f) writes
+    #                                     here.
+    #         /dev/latch/feedback_out   DISCARD side.  Unused by this
+    #                                     profile; kept so the sink's
+    #                                     three-node shape does not change
+    #                                     under the gates.
+    #
+    #     IT CREATES THE VERDICT FILE BEFORE IT REGISTERS ITS NODES:
+    #     `fb_open_block_file()` runs first and ftruncates
+    #     /dev/shmem/latch_feedback.img to its final 1 MiB, so the
+    #     `waitfor /dev/latch/feedback 4` below is a proof that the FILE
+    #     exists at final size as well -- which is what makes the qvm
+    #     start safe (a hostdev that cannot be opened is FATAL to the VM).
+    on -T latch_fb_sink_t -C 1 /proc/boot/latch_fb_sink /dev/latch/feedback /dev/latch/feedback_pub /dev/latch/feedback_out /dev/shmem/latch_feedback.img &
+    waitfor /dev/latch/feedback 4
+
+    # 3c. NO `latch_fb_pump` HERE, AND THAT IS THE POINT.
+    #
+    #     The W4 image published SYNTHETIC frames from a development-only
+    #     tool.  This image has none: the ONLY publisher of a verdict is
+    #     the trusted supervisor itself, so the verdict the guest reads is
+    #     the verdict of the thing that actually decides.  The W4
+    #     readcond self-test is not repeated here either -- it was a
+    #     measurement of the REJECTED mailbox transport, and the mailbox is
+    #     not the transport any more.
+
+    # 4. Start latchd on _cpu-0 in mock I2C mode (-n), PUBLISHING its
+    #    verdicts on the feedback node.
+    #
+    #    `-f /dev/latch/feedback_pub` is OPTIONAL in the supervisor: if the
+    #    publisher cannot start, latchd says so and carries on, because the
+    #    safety envelope, the lease and the dead-man do not depend on the
+    #    advisory channel.  A deployment that does not pass `-f` simply
+    #    does not publish verdicts.
+    on -T latchd_t -C 0 -p 63f /proc/boot/latchd -m /proc/boot/governor_servo.manifest -n -f /dev/latch/feedback_pub &
+    waitfor /dev/latch/proposal 4
+    waitfor /dev/latch/actuator 4
+
+    # 5. Start background evidence logger on _cpu-1
+    on -T latchlog_t -C 1 /proc/boot/latchlog -m /proc/boot/governor_servo.manifest -d /dev/latch/actuator -o /dev/shmem/governor_tape.csv &
+
+    # 6. Launch the QNX Hypervisor 8.0 guest VM (via the typed lifecycle
+    #    daemon, exactly as the GOVERNOR profile does).
+    #
+    #    The SAME qvmconf as the W4 profile is used, on purpose: the
+    #    transport is the same, and reusing the file proves it.
+    on -T latch_guestd_t /proc/boot/latch_guestd -q /proc/boot/qvm -c /proc/boot/latch_qemu_fbprobe.qvmconf &
+    waitfor /dev/latch/guestctl 4
+
+    # 7. Interactive operator shell on _cpu-1
+    [+session] on -T operator_shell_t -C 1 -p 10r /proc/boot/ksh
+}
+
+[type=link] /bin/sh = /proc/boot/ksh
+[type=link] /dev/console = /dev/ser1
+[type=link] /tmp = /dev/shmem
+
+ldqnx-64.so.2
+libc.so
+libm.so
+libgcc_s.so.1
+libsecpol.so.1
+libqh.so.1
+libslog2.so.1
+libslog2parse.so.1
+libfdt.so.1
+
+[perms=0755] /lib/dll/qvm/vdev-virtio-console.so = vdev-virtio-console.so
+[perms=0755] /lib/dll/qvm/vdev-pl011.so = vdev-pl011.so
+# The verdict file's device.  The qvmconf declares `vdev virtio-blk`, and a
+# vdev the IFS does not carry cannot be opened at qvm start -- a FATAL
+# failure.  Same form as the inference profile's asset disk.
+[perms=0755] /lib/dll/qvm/vdev-virtio-blk.so = vdev-virtio-blk.so
+
+[perms=0755] secpolpush
+[perms=0755] slogger2
+[perms=0755] slog2info
+[perms=0755] pipe
+[perms=0755] devc-serpl011
+[perms=0755] /proc/boot/qvm = qvm
+[perms=0755] on
+[perms=0755] ability
+[perms=0755] pidin
+[perms=0755] slay
+[perms=0755] ksh
+[perms=0755] waitfor
+
+[uid=0 gid=0 perms=0750] /proc/boot/latchd = build/nto-aarch64-le/latchd
+[uid=0 gid=0 perms=0750] /proc/boot/latch_verify = build/nto-aarch64-le/latch_verify
+[uid=0 gid=0 perms=0755] /proc/boot/latch-ingest = build/nto-aarch64-le/latch-ingest
+[uid=0 gid=0 perms=0750] /proc/boot/latchctl = build/nto-aarch64-le/latchctl
+[uid=0 gid=0 perms=0755] /proc/boot/latchlog = build/nto-aarch64-le/latchlog
+[uid=0 gid=0 perms=0755] /proc/boot/latch_guestd = build/nto-aarch64-le/latch_guestd
+[uid=0 gid=0 perms=0755] /proc/boot/latch_fb_sink = build/nto-aarch64-le/latch_fb_sink
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest = ./contracts/governor_servo.manifest
+[uid=0 gid=0 perms=0644] /proc/boot/governor_servo.manifest.sha256 = ./contracts/governor_servo.manifest.sha256
+# The SAME qvmconf as the W4 profile: the transport is the same, and
+# reusing the file proves it.
+[uid=0 gid=0 perms=0644] /proc/boot/latch_qemu_fbprobe.qvmconf = ./latch_qemu_fbprobe.qvmconf
+# The EXPERIMENT's policy, installed at the conventional path: the `on`
+# utility resolves a type name by reading /proc/boot/secpol.bin.
+[uid=0 gid=0 perms=0644] /proc/boot/secpol.bin = build/secpol_fbprobe.bin
+[perms=0644] /proc/boot/linux-guest.Image = ${GUEST_IMAGE}
+[perms=0644] /proc/boot/governor-linux-guest.initrd = ${GOVERNOR_GUEST_INITRD}

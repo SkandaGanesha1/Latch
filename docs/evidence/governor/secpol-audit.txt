@@ -1,0 +1,386 @@
+==============================================================================
+LATCH — SECURITY-POLICY GENERATION AUDIT
+==============================================================================
+Date: 20261126-105952
+Host: Linux fedora 7.3.4-300.fc45.x86_64
+Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)
+Image: the DISPOSABLE, unrestricted secpolgenerate audit image
+Policy under audit: qnx/latch.secpol (compiled to qnx/build/secpol.bin)
+Workload: the 235-frame scripted guest scenario, and nothing else
+
+WHAT THIS IS: an OBSERVATION of what an unrestricted policy
+generator saw while the scripted scenario ran.
+
+WHAT THIS IS NOT: a proof that the policy is correct.  The
+workload is the 235-frame scripted scenario and nothing else --
+no I2C plant, no Pi 4B board, no failure path.  A rule this
+workload never touches is UNKNOWN to this audit, not SAFE.  The
+`unused` section is the list of such rules.
+
+The audit image runs `secpolgenerate -u -t 100`, so the observed
+policy is UNRESTRICTED and the delta is a SUPERSET: it includes
+the permissions the development-only binaries used.  The
+written review subtracts them.
+
+
+==============================================================================
+ LATCH — SECURITY-POLICY GENERATION AUDIT (U-6 / M-4)
+ Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)
+ Image    : the DISPOSABLE, unrestricted secpolgenerate audit image.
+            This is NOT the enforced deployment image and nothing
+            observed here is accepted as a deployment rule without
+            a written review.
+ Workload : the 235-frame scripted guest scenario, and nothing else.
+==============================================================================
+
+[PHASE 1] the audit image booted; the unrestricted policy generator is running.
+[PHASE 2] the process types under audit:
+    3   1 -                proc/boot/secpolgenerate
+    3   2 -                proc/boot/secpolgenerate
+    3   3 -                proc/boot/secpolgenerate
+    3   4 -                proc/boot/secpolgenerate
+    3   5 -                proc/boot/secpolgenerate
+    3   6 -                proc/boot/secpolgenerate
+    3   7 -                proc/boot/secpolgenerate
+    3   8 -                proc/boot/secpolgenerate
+    12294   1 latchd_t         proc/boot/latchd
+    12294   2 latchd_t         proc/boot/latchd
+    12294   3 latchd_t         proc/boot/latchd
+    12294   4 latchd_t         proc/boot/latchd
+    16391   1 latchlog_t       proc/boot/latchlog
+    16392   1 latch_guestd_t   proc/boot/latch_guestd
+    24585   1 qvm_host_t       proc/boot/qvm
+    24585   2 qvm_host_t       proc/boot/qvm
+    24586   1 operator_shell_t proc/boot/ksh
+
+[PHASE 3] running the 235-frame guest scenario...
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 0  rung=HP
+    proposals received: 235  rung=CLAMP
+    the full 235-frame workload arrived under the generated policy.
+
+[PHASE 4] reading the secpolgenerate observation files...
+    /dev/secpolgenerate/policy: 2306 byte(s), the generator closed the stream (EOF)
+    ----------------------------------------------------------------------
+    # /proc/boot/latch_secpol_dump /dev/secpolgenerate/policy; echo SECPOL_DONE_policy_$?
+    # This represents policy updates for policy id 9b76fb65.  It contains the rules
+    # representing the result of actions that would have failed with the existing
+    # policy.
+    
+    # There have been one or more uses of secpol_resmgr_attach() that can have
+    # permissions set for them in the policy. See the mount_point entries at
+    # the end.
+    
+    type pipe_t__run;
+    type qvm_host_t__run;
+    type slogger2_t__run;
+    
+    ability iofunc/dup allow { root };
+    ability iofunc/exec allow { };
+    ability latch/actuator allow { };
+    ability latch/propose allow { };
+    
+    # === Rules for type default ============
+    allow_link default {
+        /proc/boot/libsecpol.so.1
+    };
+    
+    # === Rules for type latch_ingest_t ============
+    allow latch_ingest_t self:ability {
+        channel_connect:latchd_t
+    };
+    
+    # === Rules for type latchlog_t ============
+    allow latchlog_t self:ability {
+        channel_connect:latchd_t
+    };
+    
+    # === Rules for type operator_shell_t ============
+    allow operator_shell_t self:ability {
+        channel_connect:latchd_t
+    };
+    
+    # === Rules for type pipe_t ============
+    allow pipe_t self:ability {
+        settypeid:pipe_t__run
+    };
+    derive_type pipe_t run pipe_t__run;
+    
+    # === Rules for type qvm_host_t ============
+    allow qvm_host_t self:ability {
+        channel_connect:slogger2_t,pipe_t
+        high_resolution_timer
+    };
+    derive_type qvm_host_t run qvm_host_t__run;
+    
+    # === Rules for type qvm_host_t__run ============
+    allow qvm_host_t__run self:ability {
+        spawn
+        fork
+        prot_exec
+        map_fixed
+        channel_connect:pipe_t
+        settypeid:latch_ingest_t
+        high_resolution_timer
+    };
+    
+    # === Rules for type slogger2_t ============
+    allow_attach slogger2_t {
+        /dev/console
+    };
+    allow slogger2_t self:ability {
+        settypeid:slogger2_t__run
+    };
+    derive_type slogger2_t run slogger2_t__run;
+    
+    # === Mount point permission rules ============
+    # These represent uses of secpol_resmgr_attach(). By using mount_point
+    # rules you can set the permissions used for these mount points.
+    # mount_point ... /dev/console;
+    # mount_point ... /dev/qvm/latch-governor-policy-guest-qemu-virt/env;
+    [latch_secpol_dump] snapshot ended: the generator closed the stream (EOF)
+    [latch_secpol_dump] files requested: 1; files reached: 1; last file: 2004 byte(s)
+    ===== LATCH_SECPOL_DUMP COMPLETE =====
+    SECPOL_DONE_policy_0
+    ----------------------------------------------------------------------
+    /dev/secpolgenerate/errors: 590 byte(s), the generator closed the stream (EOF)
+    ----------------------------------------------------------------------
+    # This file represents errors that have been encountered.  These errors might be
+    # expected.  Alternatively, some of these rules might need to be added to the
+    # security policy.
+    
+    1970-01-01 00:00:00 procnto-smp-instr (pid:1 type:default) failed to use ability latch/propose as root
+    
+    # === Rules for type default ============
+    allow default self:ability {
+        latch/propose
+    };
+    
+    [latch_secpol_dump] snapshot ended: the generator closed the stream (EOF)
+    [latch_secpol_dump] files requested: 1; files reached: 1; last file: 376 byte(s)
+    ===== LATCH_SECPOL_DUMP COMPLETE =====
+    SECPOL_DONE_errors_0
+    ----------------------------------------------------------------------
+    /dev/secpolgenerate/unused: 3419 byte(s), the generator closed the stream (EOF)
+    ----------------------------------------------------------------------
+    # /proc/boot/latch_secpol_dump /dev/secpolgenerate/unused; echo SECPOL_DONE_unused_$?
+    # This represents types and rules that have not been used.  These might want
+    # to be removed from the security policy.  Or it might just be that the system
+    # has just not been used in a manner that requires the rules.
+    
+    type guest_ctl_t;
+    type i2c_t;
+    type latch_verify_t;
+    type latchctl_t;
+    
+    # === Rules for type latch_guestd_t ============
+    allow latch_guestd_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        untrusted_exec
+        sigev_thread
+    };
+    
+    # === Rules for type latch_ingest_t ============
+    allow latch_ingest_t self:ability {
+        nonroot
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        channel_connect:latchd_t
+        untrusted_exec
+        sigev_thread
+        latch/propose
+    };
+    
+    # === Rules for type latchd_t ============
+    allow latchd_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        channel_connect:i2c_t,slogger2_t
+        untrusted_exec
+        sigev_thread
+    };
+    allow latchd_t self:ability {
+        runstate
+        priority
+        latch/actuator
+    };
+    
+    # === Rules for type latchlog_t ============
+    allow latchlog_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        channel_connect:latchd_t,slogger2_t
+        untrusted_exec
+        sigev_thread
+    };
+    
+    # === Rules for type operator_shell_t ============
+    allow operator_shell_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        channel_connect:latchd_t,slogger2_t,guest_ctl_t
+        untrusted_exec
+        sigev_thread
+    };
+    
+    # === Rules for type pipe_t ============
+    allow_attach pipe_t {
+        pipe:/...
+    };
+    allow pipe_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        untrusted_exec
+        sigev_thread
+    };
+    allow pipe_t self:ability {
+        able_create
+        iofunc/exec
+    };
+    
+    # === Rules for type qvm_host_t ============
+    allow_attach qvm_host_t {
+        /dev/qvm
+        /dev/qvm/*
+    };
+    allow qvm_host_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        channel_connect:slogger2_t,pipe_t
+        untrusted_exec
+        sigev_thread
+    };
+    allow qvm_host_t self:ability {
+        event
+        interrupt
+        priority
+        schedule
+        timer
+    };
+    
+    # === Rules for type slogger2_t ============
+    allow_attach slogger2_t {
+        /dev/slog2
+        /dev/slog2_notify
+    };
+    allow slogger2_t self:ability {
+        nonroot
+        pathspace
+        spawn
+        fork
+        prot_exec
+        pgrp
+        map_fixed
+        rconstraint
+        public_channel
+        runstate_burst
+        prot_write_and_exec
+        untrusted_exec
+        sigev_thread
+    };
+    
+    [latch_secpol_dump] snapshot ended: the generator closed the stream (EOF)
+    [latch_secpol_dump] files requested: 1; files reached: 1; last file: 3118 byte(s)
+    ===== LATCH_SECPOL_DUMP COMPLETE =====
+    SECPOL_DONE_unused_0
+    ----------------------------------------------------------------------
+    /dev/secpolgenerate/request: 301 byte(s), the generator closed the stream (EOF)
+    ----------------------------------------------------------------------
+    # /proc/boot/latch_secpol_dump /dev/secpolgenerate/request; echo SECPOL_DONE_request_$?
+    [latch_secpol_dump] snapshot ended: the generator closed the stream (EOF)
+    [latch_secpol_dump] files requested: 1; files reached: 1; last file: 0 byte(s)
+    ===== LATCH_SECPOL_DUMP COMPLETE =====
+    SECPOL_DONE_request_0
+    ----------------------------------------------------------------------
+    /dev/secpolgenerate/control: 301 byte(s), the generator closed the stream (EOF)
+    ----------------------------------------------------------------------
+    # /proc/boot/latch_secpol_dump /dev/secpolgenerate/control; echo SECPOL_DONE_control_$?
+    [latch_secpol_dump] snapshot ended: the generator closed the stream (EOF)
+    [latch_secpol_dump] files requested: 1; files reached: 1; last file: 0 byte(s)
+    ===== LATCH_SECPOL_DUMP COMPLETE =====
+    SECPOL_DONE_control_0
+    ----------------------------------------------------------------------
+
+[PHASE 5] the supervisor's final state under the generated policy:
+    Proposals Received   : 235
+    Wire Faults Caught   : 0
+    Envelope Vetoes      : 0
+    Active Fault Bits    : 0x0000 (NONE)
+    Latched Fault Bits   : 0x2000 (HEARTBEAT)
+    GOVERNOR             : enabled | rung=LATCH (5)
+    Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+
+[SECPOL AUDIT PASS] the unrestricted policy generator observed the full
+235-frame workload; the delta, the errors and the unused rules are above.
+The delta is an OBSERVATION, not an accepted rule set: see the review.

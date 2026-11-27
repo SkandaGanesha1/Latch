@@ -1,16 +1,17 @@
-================================================================================
+==============================================================================
 LATCH GOVERNOR — CRYPTOGRAPHIC MANIFEST SIDECAR ATTESTATION AUDIT
-Date: 2026-11-18T21:50:37Z
+Date: 20261126-071632
 Tool: latchctl manifest-verify (NIST FIPS 180-2 SHA-256)
-================================================================================
+==============================================================================
 
 --- 1. GOVERNOR SERVO ROBOTIC CONTRACT (governor_servo.manifest) ---
-[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/governor_servo.manifest' SHA-256=a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b (admissibility SATISFIED)
+[MANIFEST] VERIFIED: Manifest 'contracts/governor_servo.manifest' SHA-256=a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b (admissibility SATISFIED)
 Sidecar content: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b  contracts/governor_servo.manifest
 
 --- 2. MEDICAL SYRINGE INFUSION CONTRACT (syringe_governor.manifest) ---
-[MANIFEST] VERIFIED: Manifest 'latch/qnx/contracts/syringe_governor.manifest' SHA-256=6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392 (admissibility SATISFIED)
-Sidecar content: 6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392  contracts/syringe_governor.manifest
+[MANIFEST] VERIFIED: Manifest 'contracts/syringe_governor.manifest' SHA-256=7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd (admissibility SATISFIED)
+Sidecar content: 7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd  contracts/syringe_governor.manifest
 
 --- 3. TAMPER-EVIDENCE INTEGRITY PROOF (Modified Contract Rejection) ---
-[MANIFEST] REJECTED: Could not load or validate '/tmp/tmp.pDgphLOjNn': Missing mandatory SHA-256 sidecar '/tmp/tmp.pDgphLOjNn.sha256' (Fail-Closed)
+[MANIFEST] REJECTED: Could not load or validate '/tmp/latch-manifest-audit-aq5tofje/tampered.manifest': Missing mandatory SHA-256 sidecar '/tmp/latch-manifest-audit-aq5tofje/tampered.manifest.sha256' (Fail-Closed)
+

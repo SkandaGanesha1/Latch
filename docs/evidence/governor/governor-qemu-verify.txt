@@ -1,81 +1,1234 @@
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE -c latch_manifest.c -o build/nto-aarch64-le/latch_manifest.o
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchd.c governor_policy.c gov_gate_precheck.c build/nto-aarch64-le/latch_manifest.o build/nto-aarch64-le/latch_ipc.o -o build/nto-aarch64-le/latchd -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latch_ingest.c governor_wire.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latch-ingest -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchctl.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latchctl -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latchlog.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latchlog -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
-qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -I. -D_QNX_SOURCE latch_verify.c build/nto-aarch64-le/latch_manifest.o -o build/nto-aarch64-le/latch_verify -Vgcc_ntoaarch64le -Wl,-z,relro,-z,now
-secpolcompile -o build/secpol.bin latch.secpol
-aarch64-linux-gnu-gcc -DLATCH_GOVERNOR_V2 -nostdlib -ffreestanding -static -O2 -Wall -Wextra -Werror ../guest/latch_guest_init.c -o build/guest-governor-initramfs/init
-chmod +x build/guest-governor-initramfs/init
-(cd build/guest-governor-initramfs && find . -exec touch -h -d "@1700000000" {} + && find . -print0 | LC_ALL=C sort -z | cpio --null --create --format=newc --reproducible --quiet 2>/dev/null) | gzip -n -9 > /home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd
--rw-r--r--. 1 skanda skanda 3.2K Nov 18 13:13 build/governor-linux-guest.initrd
-python3 ../tools/verify_guest_initrd.py build/governor-linux-guest.initrd
-[GUEST_INITRD PASS] build/governor-linux-guest.initrd: ELF64/AArch64 v2 guest policy embedded (67576 bytes)
-GUEST_IMAGE="/home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image" GOVERNOR_GUEST_INITRD="/home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd" mkifs -v latch_qemu_governor.build build/nto-aarch64-le/latch_qemu_governor.ifs
-  Offset     Size    Entry   Ramoff     Target=Host
-40080000      fa0        0     ----     *.boot=/home/skanda/qnx800/target/qnx/aarch64le/boot/sys/raw.boot
-40080fa0      100     ----     ----     Startup-header
-400810a0    2bfe8 40081da8     ----     startup.*=/tmp/mkxfs.hXyzLB
-400ac0e8       5c     ----     ----     Image-header
-400ac144      bf8     ----     ----     Image-directory
-    ----     ----     ----     ----     Root-dirent
-400acd3c       64     ----     ----     proc/boot/governor_servo.manifest.sha256=./contracts/governor_servo.manifest.sha256
-    ----     ----     ----     ----     bin/sh -> /proc/boot/ksh
-    ----     ----     ----     ----     dev/console -> /dev/ser1
-    ----     ----     ----     ----     tmp -> /dev/shmem
-    ----     ----     ----     ----         proc
-    ----     ----     ----     ----         proc/boot
-    ----     ----     ----     ----         bin
-    ----     ----     ----     ----         dev
-    ----     ----     ----     ----         lib
-    ----     ----     ----     ----         lib/dll
-    ----     ----     ----     ----         lib/dll/qvm
-400ad000    dd000 ffffff8060072c80     ----     proc/boot/procnto-smp-instr=/tmp/mkxfs.1oAEoC
-4018a000    3d000     5348     ----     proc/boot/ldqnx-64.so.2=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/ldqnx-64.so.2
-    ----     ----     ----     ----     proc/boot/ldqnx-64.so -> ldqnx-64.so.2
-401c7000    ad000        0     ----     proc/boot/libc.so.6=/home/skanda/qnx800/target/qnx/aarch64le/lib/libc.so
-    ----     ----     ----     ----     proc/boot/libc.so -> libc.so.6
-40274000    3f000        0     ----     proc/boot/libm.so.3=/home/skanda/qnx800/target/qnx/aarch64le/lib/libm.so
-    ----     ----     ----     ----     proc/boot/libm.so -> libm.so.3
-402b3000    15000        0     ----     proc/boot/libgcc_s.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libgcc_s.so.1
-    ----     ----     ----     ----     proc/boot/libgcc_s.so -> libgcc_s.so.1
-402c8000     6000        0     ----     proc/boot/libsecpol.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libsecpol.so.1
-    ----     ----     ----     ----     proc/boot/libsecpol.so -> libsecpol.so.1
-402ce000    14000        0     ----     proc/boot/libqh.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libqh.so.1
-    ----     ----     ----     ----     proc/boot/libqh.so -> libqh.so.1
-402e2000     6000        0     ----     proc/boot/libslog2.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2.so.1
-    ----     ----     ----     ----     proc/boot/libslog2.so -> libslog2.so.1
-402e8000     a000        0     ----     proc/boot/libslog2parse.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2parse.so.1
-    ----     ----     ----     ----     proc/boot/libslog2parse.so -> libslog2parse.so.1
-402f2000     a000        0     ----     proc/boot/libfdt.so.1=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/libfdt.so.1
-    ----     ----     ----     ----     proc/boot/libfdt.so -> libfdt.so.1
-402fc000     4000        0     ----     lib/dll/qvm/vdev-virtio-console.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-virtio-console.so
-40300000     7000        0     ----     lib/dll/qvm/vdev-shmem.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-shmem.so
-40307000     3000        0     ----     lib/dll/qvm/vdev-pl011.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-pl011.so
-4030a000     6000     1ee0     ----     proc/boot/secpolpush=/home/skanda/qnx800/target/qnx/aarch64le/bin/secpolpush
-40310000    14000     47f0     ----     proc/boot/slogger2=/home/skanda/qnx800/target/qnx/aarch64le/bin/slogger2
-40324000     9000     291c     ----     proc/boot/slog2info=/home/skanda/qnx800/target/qnx/aarch64le/bin/slog2info
-4032d000     7000     2750     ----     proc/boot/pipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe
-40334000    12000     3210     ----     proc/boot/devc-serpl011=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
-40346000    60000     cd0c     ----     proc/boot/qvm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm
-403a6000     9000     41b4     ----     proc/boot/on=/home/skanda/qnx800/target/qnx/aarch64le/bin/on
-403af000     9000     41b4     ----     proc/boot/ability=/home/skanda/qnx800/target/qnx/aarch64le/bin/ability
-403b8000    1a000     560c     ----     proc/boot/pidin=/home/skanda/qnx800/target/qnx/aarch64le/bin/pidin
-403d2000     5000     228c     ----     proc/boot/slay=/home/skanda/qnx800/target/qnx/aarch64le/bin/slay
-403d7000    40000     71a0     ----     proc/boot/ksh=/home/skanda/qnx800/target/qnx/aarch64le/bin/ksh
-40417000     9000     41b4     ----     proc/boot/waitfor=/home/skanda/qnx800/target/qnx/aarch64le/bin/waitfor
-40420000     e000     2334     ----     proc/boot/latchd=build/nto-aarch64-le/latchd
-4042e000     a000     20a4     ----     proc/boot/latch_verify=build/nto-aarch64-le/latch_verify
-40438000     a000     1cc0     ----     proc/boot/latch-ingest=build/nto-aarch64-le/latch-ingest
-40442000     c000     1a34     ----     proc/boot/latchctl=build/nto-aarch64-le/latchctl
-4044e000     9000     189c     ----     proc/boot/latchlog=build/nto-aarch64-le/latchlog
-40457000  2489200     ----     ----     proc/boot/linux-guest.Image=/home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image
-428e0200     1af2     ----     ----     proc/boot/latch_qemu_governor.qvmconf=./latch_qemu_governor.qvmconf
-428e1cf2      c7a     ----     ----     proc/boot/governor-linux-guest.initrd=/home/skanda/Downloads/latch-qnx800/latch/qnx/build/governor-linux-guest.initrd
-428e296c      8c1     ----     ----     proc/boot/governor_servo.manifest=./contracts/governor_servo.manifest
-428e322d      7d4     ----     ----     proc/boot/startup-script=/tmp/mkxfs.L8M0X8
-428e3a01      770     ----     ----     proc/boot/secpol.bin=build/secpol.bin
-428e4174       44     ----     ----     Image-trailer
-python3 ../tools/verify_governor_qemu.py
-[GOVERNOR_QEMU] A4 observed: received=13 rung=ADVISE lease_age=5 coherence=13
+==============================================================================
+LATCH GOVERNOR -- ON-TARGET EVIDENCE
+==============================================================================
+Date: 20261126-093611
+Host: Linux fedora 7.3.4-300.fc45.x86_64
+Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)
+Profile: qnx/latch_qemu_governor.build
+Contract: qnx/contracts/governor_servo.manifest (schema 3, signed)
+
+The guest proposes; the trusted QNX supervisor applies the signed
+envelope.  The A4 window is the deadman proof: the guest goes
+silent for a scripted 110 ms, the 100-tick lease expires ONCE, the
+ladder demotes exactly one rung (HP -> ADVISE), and heartbeat-only
+traffic does NOT earn the clean-command recovery credit.
+
+
+==============================================================================
+LATCH GOVERNOR -- ON-TARGET RUNTIME REPORT
+==============================================================================
+IFS                 : /home/skanda/Downloads/latch-qnx800/latch/qnx/build/nto-aarch64-le/latch_qemu_governor.ifs
+Signed contract    : qnx/contracts/governor_servo.manifest
+Lease (deadman)    : 100 ticks
+Verdict            : PASS
+
+--- THE A4 DEADMAN WINDOW (heartbeat-only traffic) ---
+The guest goes silent for a scripted 110 ms -- long enough to expire the
+100-tick lease ONCE and demote the ladder exactly one rung.  Every
+sample below must show rung=ADVISE, because heartbeat-only traffic
+does NOT earn the clean-command recovery credit.
+
+received   rung       lease_age    coherence  recovery  
+9          ADVISE     4            9          0         
+17         ADVISE     2            17         0         
+25         ADVISE     4            25         0         
+33         ADVISE     5            33         0         
+41         ADVISE     4            41         0         
+49         ADVISE     3            49         0         
+57         ADVISE     4            57         0         
+65         ADVISE     4            65         0         
+73         ADVISE     10           73         0         
+85         ADVISE     2            85         0         
+93         ADVISE     2            93         0         
+101        ADVISE     3            101        0         
+109        ADVISE     3            109        0         
+117        ADVISE     3            117        0         
+125        ADVISE     3            125        0         
+133        ADVISE     9            133        0         
+141        ADVISE     4            141        0         
+149        ADVISE     3            149        0         
+155        ADVISE     6            155        0         
+
+--- THE RECOVERY AND THE FINAL LADDER ---
+received   rung       lease_age    latched_faults               recovery  
+163        ADVISE     4            0x0000 (NONE)                8         
+171        ADVISE     2            0x0000 (NONE)                16        
+179        ADVISE     2            0x0000 (NONE)                24        
+184        HP         9            0x0000 (NONE)                4         
+192        HP         18           0x0000 (NONE)                12        
+204        HP         1            0x0000 (NONE)                24        
+212        HP         3            0x0000 (NONE)                7         
+220        HP         1            0x0000 (NONE)                15        
+228        HP         3            0x0000 (NONE)                23        
+235        CLAMP      17           0x0000 (NONE)                0         
+235        CLAMP      46           0x0000 (NONE)                0         
+235        CLAMP      74           0x0000 (NONE)                0         
+235        SLOW       103          0x0000 (NONE)                0         
+235        SLOW       130          0x0000 (NONE)                0         
+235        SLOW       156          0x0000 (NONE)                0         
+235        SLOW       183          0x0000 (NONE)                0         
+235        SAFE_STOP  211          0x0000 (NONE)                0         
+235        SAFE_STOP  241          0x0000 (NONE)                0         
+235        SAFE_STOP  268          0x0000 (NONE)                0         
+235        SAFE_STOP  295          0x0000 (NONE)                0         
+235        LATCH      322          0x2000 (HEARTBEAT)           0         
+
+FINAL STATE        : {"active": "0x0000 (NONE)", "faults": "0x2000 (HEARTBEAT)", "lease_age": 322, "received": 235, "recovery": 0, "rung": "LATCH"}
+
+--- THE SIGNED CONTRACT, VERIFIED ON THE TARGET ---
+/proc/boot/latchctl manifest-verify /proc/boot/governor_servo.manifest
+
+
+[MANIFEST] VERIFIED: Manifest '/proc/boot/governor_servo.manifest' SHA-256=a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b (admissibility SATISFIED)
+
+#
+
+--- THE GUEST'S OWN CONSOLE (from /dev/shmem/guest_console.log) ---
+/proc/boot/latchctl console
+
+
+=== LATCH guest console: /dev/shmem/guest_console.log ===
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x414fd0b1]
+
+
+[    0.000000] Linux version 6.12.0 (skanda@fedora) (aarch64-linux-gnu-gcc (GCC) 16.2.1 20260819 (Red Hat Cross 16.2.1-1), GNU ld version 2.47.20260726) #1 SMP PREEMPT Thu Nov 12 12:11:03 IST 2026
+
+
+[    0.000000] KASLR disabled due to lack of seed
+
+
+[    0.000000] Machine model: QVM-v8A
+
+
+[    0.000000] earlycon: pl11 at MMIO 0x000000001c090000 (options '')
+
+
+[    0.000000] printk: legacy bootconsole [pl11] enabled
+
+
+[    0.000000] printk: debug: skip boot console de-registration.
+
+
+[    0.000000] efi: UEFI not found.
+
+
+[    0.000000] [Firmware Bug]: Kernel image misaligned at boot, please fix your bootloader!
+
+
+[    0.000000] NUMA: Faking a node at [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] NODE_DATA(0) allocated [mem 0x9ff05680-0x9ff07cbf]
+
+
+[    0.000000] Zone ranges:
+
+
+[    0.000000]   DMA      [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000]   DMA32    empty
+
+
+[    0.000000]   Normal   empty
+
+
+[    0.000000] Movable zone start for each node
+
+
+[    0.000000] Early memory node ranges
+
+
+[    0.000000]   node   0: [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] Initmem setup node 0 [mem 0x0000000080000000-0x000000009fffffff]
+
+
+[    0.000000] cma: Reserved 32 MiB at 0x000000009d600000 on node -1
+
+
+[    0.000000] psci: probing for conduit method from DT.
+
+
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+
+
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+
+
+[    0.000000] psci: MIGRATE_INFO_TYPE returned unknown type (-2080374778)
+
+
+[    0.000000] psci: SMC Calling Convention v1.1
+
+
+[    0.000000] percpu: Embedded 25 pages/cpu s61656 r8192 d32552 u102400
+
+
+[    0.000000] pcpu-alloc: s61656 r8192 d32552 u102400 alloc=25*4096
+
+
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 
+
+
+[    0.000000] Detected PIPT I-cache on CPU0
+
+
+[    0.000000] CPU features: detected: Spectre-v4
+
+
+[    0.000000] CPU features: detected: Spectre-BHB
+
+
+[    0.000000] CPU features: detected: SSBS not fully self-synchronizing
+
+
+[    0.000000] alternatives: applying boot alternatives
+
+
+[    0.000000] Kernel command line: earlycon=pl011,0x1c090000 keep_bootcon console=ttyAMA0,115200 root=/dev/ram0 rw rdinit=/init loglevel=8
+
+
+[    0.000000] Dentry cache hash table entries: 65536 (order: 7, 524288 bytes, linear)
+
+
+[    0.000000] Inode-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+
+
+[    0.000000] Fallback order for Node 0: 0 
+
+
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 131072
+
+
+[    0.000000] Policy zone: DMA
+
+
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+
+
+[    0.000000] software IO TLB: SWIOTLB bounce buffer size adjusted to 0MB
+
+
+[    0.000000] software IO TLB: area num 2.
+
+
+[    0.000000] software IO TLB: mapped [mem 0x000000009d48d000-0x000000009d50d000] (0MB)
+
+
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=2, Nodes=1
+
+
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+
+
+[    0.000000] rcu: 	RCU event tracing is enabled.
+
+
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=2.
+
+
+[    0.000000] 	Trampoline variant of Tasks RCU enabled.
+
+
+[    0.000000] 	Tracing variant of Tasks RCU enabled.
+
+
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+
+
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=2
+
+
+[    0.000000] RCU Tasks: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+
+[    0.000000] RCU Tasks Trace: Setting shift to 1 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=2.
+
+
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+
+
+[    0.000000] Root IRQ handler: gic_handle_irq
+
+
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+
+
+[    0.000000] arch_timer: cp15 timer(s) running at 62.50MHz (virt).
+
+
+[    0.000000] clocksource: arch_sys_counter: mask: 0x1ffffffffffffff max_cycles: 0x1cd42e208c, max_idle_ns: 881590405314 ns
+
+
+[    0.000071] sched_clock: 57 bits at 63MHz, resolution 16ns, wraps every 4398046511096ns
+
+
+[    0.050027] arm-pv: using stolen time PV
+
+
+[    0.078896] Console: colour dummy device 80x25
+
+
+[    0.109991] Calibrating delay loop (skipped), value calculated using timer frequency.. 125.00 BogoMIPS (lpj=250000)
+
+
+[    0.157266] pid_max: default: 32768 minimum: 301
+
+
+[    0.181622] LSM: initializing lsm=capability
+
+
+[    0.216762] Mount-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+
+[    0.252263] Mountpoint-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)
+
+
+[    0.353115] cacheinfo: Unable to detect cache hierarchy for CPU 0
+
+
+[    0.422300] rcu: Hierarchical SRCU implementation.
+
+
+[    0.453092] rcu: 	Max phase no-delay instances is 1000.
+
+
+[    0.483211] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+
+
+[    0.537509] EFI services will not be available.
+
+
+[    0.563204] smp: Bringing up secondary CPUs ...
+
+
+[    0.615380] Detected PIPT I-cache on CPU1
+
+
+[    0.618173] CPU1: Booted secondary processor 0x0000000001 [0x414fd0b1]
+
+
+[    0.625384] smp: Brought up 1 node, 2 CPUs
+
+
+[    0.702164] SMP: Total of 2 processors activated.
+
+
+[    0.722978] CPU: All CPU(s) started at EL1
+
+
+[    0.747014] CPU features: detected: 32-bit EL0 Support
+
+
+[    0.780821] CPU features: detected: Data cache clean to the PoU not required for I/D coherence
+
+
+[    0.819124] CPU features: detected: Common not Private translations
+
+
+[    0.865568] CPU features: detected: CRC32 instructions
+
+
+[    0.894393] CPU features: detected: RCpc load-acquire (LDAPR)
+
+
+[    0.925254] CPU features: detected: LSE atomic instructions
+
+
+[    0.956824] CPU features: detected: Privileged Access Never
+
+
+[    0.980678] CPU features: detected: RAS Extension Support
+
+
+[    1.009334] CPU features: detected: Speculative Store Bypassing Safe (SSBS)
+
+
+[    1.053226] alternatives: applying system-wide alternatives
+
+
+[    1.100230] CPU features: detected: Hardware dirty bit management on CPU0-1
+
+
+[    1.152516] Memory: 439544K/524288K available (17600K kernel code, 4900K rwdata, 11872K rodata, 2880K init, 742K bss, 49940K reserved, 32768K cma-reserved)
+
+
+[    1.262279] devtmpfs: initialized
+
+
+[    1.301988] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+
+
+[    1.358230] futex hash table entries: 512 (order: 3, 32768 bytes, linear)
+
+
+[    1.390447] 23200 pages in range for non-PLT usage
+
+
+[    1.390541] 514720 pages in range for PLT usage
+
+
+[    1.427941] pinctrl core: initialized pinctrl subsystem
+
+
+[    1.486007] DMI not present or invalid.
+
+
+[    1.555242] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+
+
+[    1.609694] DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations
+
+
+[    1.643857] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+
+
+[    1.689042] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+
+
+[    1.725410] audit: initializing netlink subsys (disabled)
+
+
+[    1.768130] audit: type=2000 audit(0.440:1): state=initialized audit_enabled=0 res=1
+
+
+[    1.773353] thermal_sys: Registered thermal governor 'step_wise'
+
+
+[    1.803238] thermal_sys: Registered thermal governor 'power_allocator'
+
+
+[    1.843324] cpuidle: using governor menu
+
+
+[    1.895758] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+
+
+[    1.937954] ASID allocator initialised with 65536 entries
+
+
+[    1.973807] Serial: AMBA PL011 UART driver
+
+
+[    2.029193] 1c090000.uart: ttyAMA0 at MMIO 0x1c090000 (irq = 13, base_baud = 0) is a PL011 rev3
+
+
+[    2.080749] printk: legacy console [ttyAMA0] enabled
+
+
+[    2.080749] printk: legacy console [ttyAMA0] enabled
+
+
+[    2.149325] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+
+[    2.149325] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+
+
+[    2.203954] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+
+[    2.203954] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+
+
+[    2.267202] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+
+[    2.267202] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+
+
+[    2.330349] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+
+[    2.330349] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+
+
+[    2.389104] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+
+[    2.389104] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+
+
+[    2.447771] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+
+[    2.447771] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+
+
+[    2.510798] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+
+[    2.510798] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+
+
+[    2.574550] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+
+[    2.574550] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+
+
+[    2.651506] ACPI: Interpreter disabled.
+
+
+[    2.651506] ACPI: Interpreter disabled.
+
+
+[    2.693091] iommu: Default domain type: Translated
+
+
+[    2.693091] iommu: Default domain type: Translated
+
+
+[    2.742274] iommu: DMA domain TLB invalidation policy: strict mode
+
+
+[    2.742274] iommu: DMA domain TLB invalidation policy: strict mode
+
+
+[    2.805193] SCSI subsystem initialized
+
+
+[    2.805193] SCSI subsystem initialized
+
+
+[    2.839368] libata version 3.00 loaded.
+
+
+[    2.839368] libata version 3.00 loaded.
+
+
+[    2.883480] usbcore: registered new interface driver usbfs
+
+
+[    2.883480] usbcore: registered new interface driver usbfs
+
+
+[    2.930305] usbcore: registered new interface driver hub
+
+
+[    2.930305] usbcore: registered new interface driver hub
+
+
+[    2.983150] usbcore: registered new device driver usb
+
+
+[    2.983150] usbcore: registered new device driver usb
+
+
+[    3.035657] pps_core: LinuxPPS API ver. 1 registered
+
+
+[    3.035657] pps_core: LinuxPPS API ver. 1 registered
+
+
+[    3.077609] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+
+[    3.077609] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+
+
+[    3.161061] PTP clock support registered
+
+
+[    3.161061] PTP clock support registered
+
+
+[    3.206022] EDAC MC: Ver: 3.0.0
+
+
+[    3.206022] EDAC MC: Ver: 3.0.0
+
+
+[    3.237496] scmi_core: SCMI protocol bus registered
+
+
+[    3.237496] scmi_core: SCMI protocol bus registered
+
+
+[    3.297190] FPGA manager framework
+
+
+[    3.297190] FPGA manager framework
+
+
+[    3.327887] Advanced Linux Sound Architecture Driver Initialized.
+
+
+[    3.327887] Advanced Linux Sound Architecture Driver Initialized.
+
+
+[    3.406449] vgaarb: loaded
+
+
+[    3.406449] vgaarb: loaded
+
+
+[    3.441784] clocksource: Switched to clocksource arch_sys_counter
+
+
+[    3.441784] clocksource: Switched to clocksource arch_sys_counter
+
+
+[    3.513347] VFS: Disk quotas dquot_6.6.0
+
+
+[    3.513347] VFS: Disk quotas dquot_6.6.0
+
+
+[    3.553887] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+
+[    3.553887] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+
+
+[    3.626305] pnp: PnP ACPI: disabled
+
+
+[    3.626305] pnp: PnP ACPI: disabled
+
+
+[    3.810808] NET: Registered PF_INET protocol family
+
+
+[    3.810808] NET: Registered PF_INET protocol family
+
+
+[    3.864196] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+
+[    3.864196] IP idents hash table entries: 8192 (order: 4, 65536 bytes, linear)
+
+
+[    3.939794] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+
+[    3.939794] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+
+
+[    4.015954] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+
+[    4.015954] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+
+
+[    4.083982] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+
+[    4.083982] TCP established hash table entries: 4096 (order: 3, 32768 bytes, linear)
+
+
+[    4.151998] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+
+[    4.151998] TCP bind hash table entries: 4096 (order: 5, 131072 bytes, linear)
+
+
+[    4.217401] TCP: Hash tables configured (established 4096 bind 4096)
+
+
+[    4.217401] TCP: Hash tables configured (established 4096 bind 4096)
+
+
+[    4.288914] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    4.288914] UDP hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    4.350339] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    4.350339] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes, linear)
+
+
+[    4.419404] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+
+[    4.419404] NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+
+[    4.475563] RPC: Registered named UNIX socket transport module.
+
+
+[    4.475563] RPC: Registered named UNIX socket transport module.
+
+
+[    4.540409] RPC: Registered udp transport module.
+
+
+[    4.540409] RPC: Registered udp transport module.
+
+
+[    4.595625] RPC: Registered tcp transport module.
+
+
+[    4.595625] RPC: Registered tcp transport module.
+
+
+[    4.634040] RPC: Registered tcp-with-tls transport module.
+
+
+[    4.634040] RPC: Registered tcp-with-tls transport module.
+
+
+[    4.696428] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+
+[    4.696428] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+
+[    4.762762] PCI: CLS 0 bytes, default 64
+
+
+[    4.762762] PCI: CLS 0 bytes, default 64
+
+
+[    4.798761] kvm [1]: HYP mode not available
+
+
+[    4.798761] kvm [1]: HYP mode not available
+
+
+[    4.821295] Unpacking initramfs...
+
+
+[    4.849112] Initialise system trusted keyrings
+
+
+[    4.821295] Unpacking initramfs...
+
+
+[    4.849112] Initialise system trusted keyrings
+
+
+[    4.927456] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+
+[    4.927456] workingset: timestamp_bits=42 max_order=17 bucket_order=0
+
+
+[    4.985398] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+
+[    4.985398] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+
+[    5.044558] NFS: Registering the id_resolver key type
+
+
+[    5.044558] NFS: Registering the id_resolver key type
+
+
+[    5.096248] Key type id_resolver registered
+
+
+[    5.096248] Key type id_resolver registered
+
+
+[    5.133144] Key type id_legacy registered
+
+
+[    5.133144] Key type id_legacy registered
+
+
+[    5.176050] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+
+[    5.176050] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+
+
+[    5.239734] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+
+[    5.239734] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+
+
+[    5.309983] 9p: Installing v9fs 9p2000 file system support
+
+
+[    5.309983] 9p: Installing v9fs 9p2000 file system support
+
+
+[    5.411428] Key type asymmetric registered
+
+
+[    5.411428] Key type asymmetric registered
+
+
+[    5.447439] Asymmetric key parser 'x509' registered
+
+
+[    5.447439] Asymmetric key parser 'x509' registered
+
+
+[    5.496924] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+
+[    5.496924] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+
+
+[    5.567028] io scheduler mq-deadline registered
+
+
+[    5.567028] io scheduler mq-deadline registered
+
+
+[    5.604009] io scheduler kyber registered
+
+
+[    5.604009] io scheduler kyber registered
+
+
+[    5.647076] io scheduler bfq registered
+
+
+[    5.647076] io scheduler bfq registered
+
+
+[    5.706400] ledtrig-cpu: registered to indicate activity on CPUs
+
+
+[    5.706400] ledtrig-cpu: registered to indicate activity on CPUs
+
+
+[    5.895865] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+
+[    5.895865] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+
+
+[    5.980829] msm_serial: driver initialized
+
+
+[    5.980829] msm_serial: driver initialized
+
+
+[    6.020689] SuperH (H)SCI(F) driver initialized
+
+
+[    6.020689] SuperH (H)SCI(F) driver initialized
+
+
+[    6.066112] STM32 USART driver initialized
+
+
+[    6.066112] STM32 USART driver initialized
+
+
+[    6.180684] loop: module loaded
+
+
+[    6.180684] loop: module loaded
+
+
+[    6.217213] megasas: 07.727.03.00-rc1
+
+
+[    6.217213] megasas: 07.727.03.00-rc1
+
+
+[    6.264751] tun: Universal TUN/TAP device driver, 1.6
+
+
+[    6.264751] tun: Universal TUN/TAP device driver, 1.6
+
+
+[    6.315814] thunder_xcv, ver 1.0
+
+
+[    6.315814] thunder_xcv, ver 1.0
+
+
+[    6.355261] thunder_bgx, ver 1.0
+
+
+[    6.355261] thunder_bgx, ver 1.0
+
+
+[    6.382401] nicpf, ver 1.0
+
+
+[    6.382401] nicpf, ver 1.0
+
+
+[    6.410254] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+
+[    6.410254] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+
+
+[    6.482054] hns3: Copyright (c) 2017 Huawei Corporation.
+
+
+[    6.482054] hns3: Copyright (c) 2017 Huawei Corporation.
+
+
+[    6.542072] hclge is initializing
+
+
+[    6.542072] hclge is initializing
+
+
+[    6.571413] e1000: Intel(R) PRO/1000 Network Driver
+
+
+[    6.571413] e1000: Intel(R) PRO/1000 Network Driver
+
+
+[    6.627148] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+
+[    6.627148] e1000: Copyright (c) 1999-2006 Intel Corporation.
+
+
+[    6.687019] e1000e: Intel(R) PRO/1000 Network Driver
+
+
+[    6.687019] e1000e: Intel(R) PRO/1000 Network Driver
+
+
+[    6.726780] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+
+[    6.726780] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+
+
+[    6.787261] igb: Intel(R) Gigabit Ethernet Network Driver
+
+
+[    6.787261] igb: Intel(R) Gigabit Ethernet Network Driver
+
+
+[    6.837313] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+
+[    6.837313] igb: Copyright (c) 2007-2014 Intel Corporation.
+
+
+[    6.893313] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+
+[    6.893313] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+
+
+[    6.956098] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+
+[    6.956098] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+
+
+[    7.011256] sky2: driver version 1.30
+
+
+[    7.011256] sky2: driver version 1.30
+
+
+[    7.049371] VFIO - User Level meta-driver version: 0.3
+
+
+[    7.049371] VFIO - User Level meta-driver version: 0.3
+
+
+[    7.111595] usbcore: registered new interface driver usb-storage
+
+
+[    7.111595] usbcore: registered new interface driver usb-storage
+
+
+[    7.187886] i2c_dev: i2c /dev entries driver
+
+
+[    7.187886] i2c_dev: i2c /dev entries driver
+
+
+[    7.243426] sdhci: Secure Digital Host Controller Interface driver
+
+
+[    7.243426] sdhci: Secure Digital Host Controller Interface driver
+
+
+[    7.304391] sdhci: Copyright(c) Pierre Ossman
+
+
+[    7.304391] sdhci: Copyright(c) Pierre Ossman
+
+
+[    7.352889] Synopsys Designware Multimedia Card Interface Driver
+
+
+[    7.352889] Synopsys Designware Multimedia Card Interface Driver
+
+
+[    7.404137] sdhci-pltfm: SDHCI platform and OF driver helper
+
+
+[    7.404137] sdhci-pltfm: SDHCI platform and OF driver helper
+
+
+[    7.471172] usbcore: registered new interface driver usbhid
+
+
+[    7.471172] usbcore: registered new interface driver usbhid
+
+
+[    7.539240] usbhid: USB HID core driver
+
+
+[    7.539240] usbhid: USB HID core driver
+
+
+[    7.590803] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+
+[    7.590803] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 (0,8000003f) counters available
+
+
+[    7.696234] NET: Registered PF_PACKET protocol family
+
+
+[    7.696234] NET: Registered PF_PACKET protocol family
+
+
+[    7.744899] 9pnet: Installing 9P2000 support
+
+
+[    7.744899] 9pnet: Installing 9P2000 support
+
+
+[    7.786676] Key type dns_resolver registered
+
+
+[    7.786676] Key type dns_resolver registered
+
+
+[    7.854027] registered taskstats version 1
+
+
+[    7.854027] registered taskstats version 1
+
+
+[    7.893033] Loading compiled-in X.509 certificates
+
+
+[    7.893033] Loading compiled-in X.509 certificates
+
+
+[    7.961116] Demotion targets for Node 0: null
+
+
+[    7.961116] Demotion targets for Node 0: null
+
+
+[    8.020704] clk: Disabling unused clocks
+
+
+[    8.020704] clk: Disabling unused clocks
+
+
+[    8.054817] PM: genpd: Disabling unused power domains
+
+
+[    8.054817] PM: genpd: Disabling unused power domains
+
+
+[    8.106704] ALSA device list:
+
+
+[    8.106704] ALSA device list:
+
+
+[    8.131080]   No soundcards found.
+
+
+[    8.131080]   No soundcards found.
+
+
+[    8.263875] Freeing unused kernel memory: 2880K
+
+
+[    8.263875] Freeing unused kernel memory: 2880K
+
+
+[    8.300611] Run /init as init process
+
+
+[    8.300611] Run /init as init process
+
+
+[    8.346417]   with arguments:
+
+
+[    8.346417]   with arguments:
+
+
+[    8.370928]     /init
+
+
+[    8.370928]     /init
+
+
+[    8.390446]   with environment:
+
+
+[    8.390446]   with environment:
+
+
+[    8.429022]     HOME=/
+
+
+[    8.429022]     HOME=/
+
+
+[    8.450066]     TERM=linux
+
+
+[    8.450066]     TERM=linux
+
+
+[    8.510727] 
+
+
+[    8.510727] === LATCH Linux 6.12 Guest Userspace (/init) Alive ===
+
+
+[    8.510727] 
+
+
+[    8.510727] 
+
+
+[    8.510727] === LATCH Linux 6.12 Guest Userspace (/init) Alive ===
+
+
+[    8.510727] 
+
+
+[    8.594118] [guest] PID 1 = this binary. The in-guest policy IS /init.
+
+
+[    8.594118] 
+
+
+[    8.594118] [guest] PID 1 = this binary. The in-guest policy IS /init.
+
+
+[    8.594118] 
+
+
+[    8.669253] [guest] /dev/hvc0 opened! Configuring raw mode for GOVERNOR wire v2...
+
+
+[    8.669253] 
+
+
+[    8.669253] [guest] /dev/hvc0 opened! Configuring raw mode for GOVERNOR wire v2...
+
+
+[    8.669253] 
+
+
+[    8.768607] [GOVERNOR] v2 demo: four liveness heartbeats, then commands
+
+
+[    8.768607] 
+
+
+[    8.768607] [GOVERNOR] v2 demo: four liveness heartbeats, then commands
+
+
+[    8.768607] 
+
+
+[    8.848062] [A4] guest CPU spinner, then scripted 110 ms heartbeat delay
+
+
+[    8.848062] 
+
+
+[    8.848062] [A4] guest CPU spinner, then scripted 110 ms heartbeat delay
+
+
+[    8.848062] 
+
+
+[    8.924844] [A4] one command renews lease; heartbeat-only traffic must not recover rung
+
+
+[    8.924844] 
+
+
+[    8.924844] [A4] one command renews lease; heartbeat-only traffic must not recover rung
+
+
+[    8.924844] 
+
+
+[    9.008546] [GOVERNOR] 25 coherent commands recover the lease demotion
+
+
+[    9.008546] 
+
+
+[    9.008546] [GOVERNOR] 25 coherent commands recover the lease demotion
+
+
+[    9.008546] 
+
+
+[    9.091234] [GOVERNOR] recovered rung accepts fresh canonical commands
+
+
+[    9.091234] 
+
+
+[    9.091234] [GOVERNOR] recovered rung accepts fresh canonical commands
+
+
+[    9.091234] 
+
+
+[    9.163462] [GOVERNOR] low-confidence command and explicit milli-unit conversion
+
+
+[    9.163462] 
+
+
+[    9.163462] [GOVERNOR] low-confidence command and explicit milli-unit conversion
+
+
+[    9.163462] 
+
+
+[    9.246227] [GOVERNOR] unknown unit rejected; tighten request accepted
+
+
+[    9.246227] 
+
+
+[    9.246227] [GOVERNOR] unknown unit rejected; tighten request accepted
+
+
+[    9.246227] 
+
+
+[    9.313378] [GOVERNOR] widening request vetoed; guest stops sending
+
+
+[    9.313378] 
+
+
+[    9.313378] [GOVERNOR] widening request vetoed; guest stops sending
+
+
+[    9.313378] 
+
+
+#
+
+--- the verifier's own output ---
+[GOVERNOR_QEMU] A4 observed: received=9 rung=ADVISE lease_age=4 coherence=9
 [GOVERNOR_QEMU PASS] schema-3 sidecar valid; 235 v2 proposals; A4 demotion held through heartbeat-only traffic; clean-command recovery observed; final lease expiry reached LATCH
+

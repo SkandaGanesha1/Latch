@@ -6,13 +6,13 @@ latch/guest/latch_guest_init.c:442-512 and latch/tools/verify_governor_qemu.py.
 
 Scenario:
   1. 4 warmup heartbeats establish the High Performance (HP) rung.
-  2. Heartbeat delay (> lease_ticks) forces deadman lease expiry, asserting
+  2. Non-renewing v2 requests (> lease_ticks) force deadman lease expiry, asserting
      LATCH_FAULT_HEARTBEAT (bit 13, 0x2000) and demoting rung from HP -> ADVISE.
   3. 1 command renews the lease.
   4. 15 heartbeat-only frames prove heartbeat traffic alone CANNOT recover the rung
      (clean_command_streak remains 0, plant unmoved, rung remains ADVISE).
   5. 25 consecutive clean commands earn recovery credit and promote rung ADVISE -> HP.
-  6. Final silence (> lease_ticks) expires lease repeatedly, cascading down to LATCH.
+  6. Further non-renewing requests expire the lease, cascading down to LATCH.
 
 Note on the lease: this scenario overrides `deadman.lease_ticks` to 4 so the
 host-sim run is deterministic (in the host-sim pipe one tick is one proposal).
@@ -59,7 +59,7 @@ def run_attack_a4(verbose: bool = True) -> Dict[str, Any]:
     """Execute Attack A4 deadman sequence and verify ladder demotion, hold, and recovery."""
     if verbose:
         print("=== [ATTACK A4: STANDALONE DEADMAN LEASE TRIP] ===")
-        print("Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Silence...")
+        print("Scenario: Warmup -> Lease Expiry -> Heartbeat Hold -> 25 Clean Recovery -> Unrenewed Traffic...")
 
     _, _, _, default_manifest_path = find_pipeline_binaries()
     manifest_dict = json.loads(default_manifest_path.read_text(encoding="utf-8"))
@@ -84,10 +84,11 @@ def run_attack_a4(verbose: bool = True) -> Dict[str, Any]:
     # 2. Initial nominal command in HP
     client.send_command(u_mrad=10, confidence_q8=255, unit_id=1, advance_coherence=True)
 
-    # 3. Simulate lease delay: send un-renewed silence frames for lease_ticks
-    # Each tick without lease renewal decrements lease_remaining; tick 4 expires lease -> demotes to ADVISE!
+    # Host simulation advances on IPC records. Valid v2 shrink requests do not
+    # renew the lease and provide deterministic unrenewed ticks; this is not an
+    # assertion that real guest silence produces those requests.
     for _ in range(lease_ticks):
-        client.send_silence()
+        client.send_shrink_request(shrink_v=manifest_dict["envelope"]["v_max"], shrink_scale_q8=255)
 
     # 4. Resume command: renews lease, establishes ADVISE
     client.send_command(u_mrad=15, confidence_q8=255, unit_id=1, advance_coherence=True)
@@ -106,9 +107,9 @@ def run_attack_a4(verbose: bool = True) -> Dict[str, Any]:
     for _ in range(5):
         client.send_command(u_mrad=40, confidence_q8=255, unit_id=1, advance_coherence=True)
 
-    # 8. Final silence / lease expiry: unrenewed ticks cascading down to LATCH
+    # 8. More unrenewed ticks cascade down to LATCH.
     for _ in range(lease_ticks * 6):
-        client.send_silence()
+        client.send_shrink_request(shrink_v=manifest_dict["envelope"]["v_max"], shrink_scale_q8=255)
 
     raw_frames = b"".join(client.emitted_frames)
     rows = run_attack_pipeline(raw_frames, manifest_dict, name="attack_a4")
@@ -160,7 +161,7 @@ def run_attack_a4(verbose: bool = True) -> Dict[str, Any]:
         "demotion_verified": "HP -> ADVISE on lease trip",
         "hold_verified": "Heartbeat traffic held lease without promotion credit",
         "recovery_verified": "Exactly 25 clean commands promoted ADVISE -> HP",
-        "latch_verified": "Silence cascaded down to LATCH",
+        "latch_verified": "Non-renewing requests cascaded down to LATCH",
         "keepout_intrusions": 0,
     }
 
@@ -169,7 +170,7 @@ def run_attack_a4(verbose: bool = True) -> Dict[str, Any]:
         print("  [PASS] FAULT_HEARTBEAT asserted and ladder demoted to ADVISE on lease expiry.")
         print("  [PASS] Heartbeat hold maintained ADVISE without gaining recovery credit.")
         print("  [PASS] Exactly 25 clean commands promoted supervisory rung back to HP.")
-        print("  [PASS] Final deadman silence dropped system into fail-closed LATCH.")
+        print("  [PASS] Final non-renewing requests dropped system into fail-closed LATCH.")
         print("[ATTACK A4 VERDICT] PASS\n")
 
     return report

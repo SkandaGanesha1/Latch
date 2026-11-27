@@ -1,6 +1,6 @@
 import os,pty,select,subprocess,time,sys
 from pathlib import Path
-kind=sys.argv[1]; assert kind in ('writer', 'audit'), 'expected writer or audit'; root=Path(__file__).resolve().parent.parent; ifs=root/'qnx/build/nto-aarch64-le'/('latch_writer_test.ifs' if kind=='writer' else 'latch_audit_probe.ifs')
+kind=sys.argv[1]; assert kind in ('writer', 'audit', 'security'), 'expected writer, audit or security'; root=Path(__file__).resolve().parent.parent; ifs=root/'qnx/build/nto-aarch64-le'/('latch_audit_probe.ifs' if kind=='audit' else 'latch_writer_test.ifs')
 m,s=pty.openpty(); p=subprocess.Popen(['qemu-system-aarch64','-M','virt,virtualization=on,gic-version=2','-cpu','cortex-a76','-smp','4','-m','2048','-accel','tcg,thread=multi','-nographic','-serial','mon:stdio','-kernel',str(ifs)],stdin=s,stdout=s,stderr=s);os.close(s); log=bytearray()
 def read(t, prompt=True):
  end=time.monotonic()+t; data=b''
@@ -16,12 +16,21 @@ def cmd(c,t=5):
 try:
  boot=read(90); print('BOOT_PROMPT',boot.endswith('# '))
  if not boot.endswith('# '): raise RuntimeError('boot failed')
- if kind=='writer':
-  start=cmd('/proc/boot/latch_target_probe hold /dev/latch/proposal &'); print('START',start)
-  holder=read(3,False); print('HOLDER',holder); assert 'PROBE_OPEN success' in start + holder
-  compete=cmd('/proc/boot/latch_target_probe try /dev/latch/proposal; echo COMPETE_RC=$?'); print('COMPETE',compete); assert 'COMPETE_RC=3' in compete
-  closed=read(18,False); print('CLOSE',closed); assert 'PROBE_CLOSED' in closed
-  reopen=cmd('/proc/boot/latch_target_probe try /dev/latch/proposal; echo REOPEN_RC=$?'); print('REOPEN',reopen); assert 'REOPEN_RC=0' in reopen and 'PROBE_OPEN success' in reopen
+ if kind=='security':
+  denied=cmd('/proc/boot/latch_target_probe try /dev/latch/proposal; echo PROBE_RC=$?')
+  print('UNAUTHORIZED',denied)
+  assert 'PROBE_OPEN errno=1' in denied and 'PROBE_RC=1' in denied
+  transition=cmd('/proc/boot/on -T latch_verify_t /proc/boot/latch_target_probe try /dev/latch/proposal; echo TYPE_RC=$?')
+  print('TYPE_TRANSITION',transition)
+  assert 'TYPE_RC=1' in transition and 'PROBE_OPEN success' not in transition
+ elif kind=='writer':
+  begin=boot.split('WRITER_TEST_BEGIN',1)[1].split('WRITER_TEST_COMPETE',1)[0]
+  compete=boot.split('WRITER_TEST_COMPETE',1)[1].split('WRITER_TEST_REOPEN',1)[0]
+  reopen=boot.split('WRITER_TEST_REOPEN',1)[1].split('WRITER_TEST_END',1)[0]
+  print('HOLDER',begin,'COMPETE',compete,'REOPEN',reopen)
+  assert 'PROBE_OPEN success' in begin
+  assert 'PROBE_OPEN errno=16' in compete and 'PROBE_CLOSED' in compete
+  assert 'PROBE_OPEN success' in reopen and 'PROBE_CLOSED' in reopen
  else:
   time.sleep(45)
   status=cmd('/proc/boot/latchctl status',5); print('STATUS',status); assert 'Proposals Received   : 235' in status

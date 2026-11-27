@@ -6,6 +6,12 @@
 #include <string.h>
 #include <unistd.h>
 
+static int marker(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return -1;
+    return close(fd);
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     if (strcmp(argv[1], "dump") == 0) {
@@ -30,9 +36,18 @@ int main(int argc, char **argv) {
             printf("PROBE_OPEN errno=%d\n", error); return error == EBUSY ? 3 : 1;
         }
         puts("PROBE_OPEN success"); fflush(stdout);
-        if (strcmp(argv[1], "hold") == 0) sleep(15);
+        if (strcmp(argv[1], "hold") == 0) {
+            if (marker("/dev/shmem/latch-probe-ready") != 0) {
+                perror("ready marker"); close(fd); return 1;
+            }
+            sleep(15);
+        }
         if (close(fd) != 0) { perror("close"); return 1; }
-        puts("PROBE_CLOSED"); return 0;
+        puts("PROBE_CLOSED"); fflush(stdout);
+        if (strcmp(argv[1], "hold") == 0 && marker("/dev/shmem/latch-probe-closed") != 0) {
+            perror("closed marker"); return 1;
+        }
+        return 0;
     }
     return 2;
 }
