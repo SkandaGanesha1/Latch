@@ -17,8 +17,11 @@
 | **`latchctl`** | 1.0.0 | LATCH Project | MIT | Diagnostic | POSIX C11 | Compiled from source (`latchctl.c`) |
 | **`latchlog`** | 1.0.0 | LATCH Project | MIT | Diagnostic | POSIX C11 | Compiled from source (`latchlog.c`) |
 | **`latch_verify`** | 1.0.0 | LATCH Project | MIT | Verification | POSIX C11 | Compiled from source (`latch_verify.c`) |
+| **`latch.manifest`** | Schema 2 | LATCH Project | MIT | Safety Contract | None (JSON) | `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823` |
+| **`syringe_pump_bolus.manifest`** | Schema 2 | LATCH Project | MIT | Safety Contract | None (JSON) | `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e` |
 | **`governor_servo.manifest`** | Schema 3 | LATCH Project | MIT | Safety Contract | None (JSON) | `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b` |
-| **`syringe_governor.manifest`**| Schema 3 | LATCH Project | MIT | Safety Contract | None (JSON) | `6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392` |
+| **`syringe_governor.manifest`** | Schema 3 | LATCH Project | MIT | Safety Contract | None (JSON) | `7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd` |
+| **`homeostat_servo.manifest`** | Schema 3 | LATCH Project | MIT | Safety Contract | None (JSON) | `4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30` |
 | **`latch.secpol`** | 1.0.0 | LATCH Project | MIT | Mandatory Access Control | `secpolcompile` | Policy source (`latch.secpol`) |
 
 ### B. Untrusted Linux Guest Environment (`guest/`)
@@ -56,8 +59,9 @@
 ## 3. Cryptographic Sidecar Verification
 
 All contracts in the repository are verified prior to execution against signed SHA-256 sidecars conforming to NIST FIPS 180-2:
-- `qnx/contracts/governor_servo.manifest.sha256`: `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b`
-- `qnx/contracts/syringe_governor.manifest.sha256`: `6b62927a81c2566d1f2d7d0e8ff5047d9f22086f1693044ea9a77de7c142b392`
 - `qnx/latch.manifest.sha256`: `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823`
 - `qnx/contracts/syringe_pump_bolus.manifest.sha256`: `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e`
+- `qnx/contracts/governor_servo.manifest.sha256`: `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b`
+- `qnx/contracts/syringe_governor.manifest.sha256`: `7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd`
+- `qnx/contracts/homeostat_servo.manifest.sha256`: `4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30`
 
