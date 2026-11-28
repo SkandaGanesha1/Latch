@@ -21,6 +21,11 @@
  *
  *   4. A FAILED PUBLISH IS NOT SILENT.  Every failure path increments a
  *      counter that the caller can read back.
+ *
+ *   5. THE PRIMITIVES LIVE FOR THE PROCESS LIFETIME.  The mutex and the
+ *      condvar are STATIC objects with static storage duration; they are
+ *      initialised EXACTLY ONCE and they are NEVER destroyed.  See the
+ *      block above `g_pub` for why.
  */
 
 #include "latch_feedback_pub.h"
@@ -65,6 +70,74 @@ typedef struct {
 } fb_pub_t;
 
 static fb_pub_t g_pub;
+
+/*
+ * THE PRIMITIVES LIVE FOR THE PROCESS LIFETIME.
+ * ===========================================
+ *
+ * `g_pub.lock` and `g_pub.cond` are STATIC objects with static storage
+ * duration, and they are used by EVERY public entry point -- including
+ * the ones that run before the publisher was started and the ones that
+ * run after it was stopped.  So they have to be in a defined state at
+ * EVERY point in the process's life, which means:
+ *
+ *   - they are initialised EXACTLY ONCE, by `pthread_once`, and
+ *   - they are NEVER destroyed.
+ *
+ * WHY NEVER DESTROYED
+ * -------------------
+ * `pthread_mutex_destroy()` / `pthread_cond_destroy()` are not "stop
+ * using this".  POSIX leaves the behaviour UNDEFINED after a destroy:
+ * a destroyed mutex may be LOCKED again, and a destroyed condvar may be
+ * WAITED on or SIGNalled again.  Every one of those happens here:
+ *
+ *   - `latch_feedback_pub_publish()` after a stop takes the lock to
+ *     discover that the publisher is not running (and refuses the
+ *     frame);
+ *   - `latch_feedback_pub_get_status()` after a stop takes the lock to
+ *     hand the operator a final snapshot;
+ *   - `latch_feedback_pub_start()` after a stop RE-USES the very same
+ *     mutex and condvar for the new writer thread.
+ *
+ * So the old `stop()` -- which destroyed both -- made every one of
+ * those a use of a destroyed object.  On glibc the destroy of a normal
+ * mutex is very nearly a no-op, so the defect is INVISIBLE on the host;
+ * it is still undefined behaviour, and "it happens to work on the
+ * library we test with" is not a safety argument.
+ *
+ * AND WHY INITIALISED EXACTLY ONCE
+ * --------------------------------
+ * The same reasoning applies to the INITIALISATION.  `start()` used to
+ * call `pthread_mutex_init()` every time it ran, so a restart
+ * re-initialised an already-initialised mutex -- undefined behaviour
+ * again -- and a `publish()` that arrived BEFORE the first `start()`
+ * locked a mutex that had never been initialised at all.
+ *
+ * `pthread_once` is the canonical POSIX answer to both: the
+ * initialiser runs exactly once, on the first call, and every later
+ * call is a single atomic load.  The primitives are then in a defined
+ * state for the whole life of the process, and `stop()` only has to do
+ * what it says: stop the writer thread and join it.
+ */
+static pthread_once_t g_pub_prim_once = PTHREAD_ONCE_INIT;
+static int            g_pub_prim_ready;
+
+static void fb_pub_init_primitives(void)
+{
+    (void)pthread_mutex_init(&g_pub.lock, NULL);
+    (void)pthread_cond_init(&g_pub.cond, NULL);
+}
+
+/* Make sure the primitives exist.  Cheap after the first call: the flag
+ * is a plain int and the branch is perfectly predicted, so the safety
+ * core's publish path pays one predictable load and nothing else. */
+static void fb_pub_primitives_ready(void)
+{
+    if (!g_pub_prim_ready) {
+        (void)pthread_once(&g_pub_prim_once, fb_pub_init_primitives);
+        g_pub_prim_ready = 1;
+    }
+}
 
 /* A short sleep that does not need the alarm machinery. */
 static void fb_pub_sleep_ms(long ms)
@@ -218,8 +291,9 @@ int latch_feedback_pub_start(const char *path)
         return -1;
     }
 
-    (void)pthread_mutex_init(&g_pub.lock, NULL);
-    (void)pthread_cond_init(&g_pub.cond, NULL);
+    /* The primitives are initialised EXACTLY ONCE, for the process
+     * lifetime, and are never destroyed.  See the block above. */
+    fb_pub_primitives_ready();
     memset(&g_pub.status, 0, sizeof(g_pub.status));
     g_pub.fd      = -1;
     g_pub.pending = 0;
@@ -229,8 +303,10 @@ int latch_feedback_pub_start(const char *path)
 
     if (pthread_create(&g_pub.tid, NULL, fb_pub_writer, NULL) != 0) {
         g_pub.running = 0;
-        (void)pthread_cond_destroy(&g_pub.cond);
-        (void)pthread_mutex_destroy(&g_pub.lock);
+        /* The primitives are NOT destroyed here.  A failed start leaves
+         * them alive and usable, so a later `start()` -- or a
+         * `publish()` that is refused -- does not touch a destroyed
+         * object. */
         return -1;
     }
     g_pub.thread_valid = 1;
@@ -242,6 +318,9 @@ int latch_feedback_pub_publish(const latch_feedback_t *frame)
     if (frame == NULL) {
         return -EINVAL;
     }
+    /* The lock has to exist even if the publisher was never started:
+     * the refusal below is the answer to "publish before start". */
+    fb_pub_primitives_ready();
     pthread_mutex_lock(&g_pub.lock);
     if (!g_pub.running) {
         pthread_mutex_unlock(&g_pub.lock);
@@ -263,6 +342,7 @@ int latch_feedback_pub_publish(const latch_feedback_t *frame)
 
 void latch_feedback_pub_stop(void)
 {
+    fb_pub_primitives_ready();
     if (!g_pub.running && !g_pub.thread_valid) {
         return;
     }
@@ -275,8 +355,10 @@ void latch_feedback_pub_stop(void)
         (void)pthread_join(g_pub.tid, NULL);
         g_pub.thread_valid = 0;
     }
-    (void)pthread_cond_destroy(&g_pub.cond);
-    (void)pthread_mutex_destroy(&g_pub.lock);
+    /* THE PRIMITIVES ARE NOT DESTROYED HERE.  They live for the process
+     * lifetime; see the block above `g_pub`.  A `publish()` after this
+     * call, a `get_status()` after this call and a `start()` after this
+     * call all use the SAME live mutex and condvar. */
 }
 
 void latch_feedback_pub_get_status(latch_feedback_pub_status_t *out)
@@ -284,6 +366,7 @@ void latch_feedback_pub_get_status(latch_feedback_pub_status_t *out)
     if (out == NULL) {
         return;
     }
+    fb_pub_primitives_ready();
     pthread_mutex_lock(&g_pub.lock);
     *out = g_pub.status;
     out->running = g_pub.running ? 1 : 0;

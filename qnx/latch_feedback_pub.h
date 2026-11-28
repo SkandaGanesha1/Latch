@@ -43,6 +43,32 @@
  * which the guest's feedback timeout turns into "stop proposing", which
  * the supervisor's dead-man turns into a fail-closed LATCH.  Loss is safe;
  * silence is fatal; both directions close.
+ *
+ * THE PRIMITIVES LIVE FOR THE PROCESS LIFETIME
+ * ---------------------------------------------
+ * The publisher's mutex and condvar are STATIC objects with static
+ * storage duration.  They are initialised EXACTLY ONCE (by
+ * `pthread_once`) and they are NEVER destroyed.
+ *
+ * `latch_feedback_pub_stop()` stops the writer thread and joins it.  It
+ * does NOT tear the primitives down, because every public entry point
+ * uses them -- including the ones that run BEFORE the publisher was
+ * started and the ones that run AFTER it was stopped:
+ *
+ *   - `latch_feedback_pub_publish()` before a start takes the lock to
+ *     discover that the publisher is not running (and refuses the
+ *     frame);
+ *   - `latch_feedback_pub_publish()` after a stop takes the lock to
+ *     refuse the frame the same way;
+ *   - `latch_feedback_pub_get_status()` after a stop takes the lock to
+ *     hand the operator a final snapshot;
+ *   - `latch_feedback_pub_start()` after a stop RE-USES the very same
+ *     mutex and condvar for the new writer thread.
+ *
+ * POSIX leaves the behaviour UNDEFINED after `pthread_mutex_destroy()` /
+ * `pthread_cond_destroy()`, so all four of those would be a use of a
+ * destroyed object.  The publisher is therefore restartable, and every
+ * one of those paths is exercised by `qnx/latch_feedback_pub_test.c`.
  */
 
 #include "latch_feedback.h"
@@ -92,7 +118,11 @@ int latch_feedback_pub_start(const char *path);
  */
 int latch_feedback_pub_publish(const latch_feedback_t *frame);
 
-/* Stop the publisher and join the writer thread.  Safe to call twice. */
+/* Stop the publisher and join the writer thread.  Safe to call twice.
+ *
+ * The mutex and the condvar are NOT destroyed: they live for the
+ * process lifetime, so a later `publish()`, `get_status()` or `start()`
+ * uses live primitives.  See the lifetime note above. */
 void latch_feedback_pub_stop(void);
 
 /* A consistent snapshot of the counters. */

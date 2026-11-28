@@ -23,6 +23,17 @@
  *   3. THE LOSSES ARE COUNTED.  An overwrite is a fact about the run, and
  *      a fact nobody can see is a fact nobody can act on.
  *
+ *   4. THE PRIMITIVES SURVIVE A STOP.  The publisher's mutex and condvar
+ *      are process-lifetime objects; `stop()` must not destroy them,
+ *      because a `publish()`, a `get_status()` and a `start()` all use
+ *      them AFTER a stop.  POSIX leaves the behaviour undefined after a
+ *      destroy, and on glibc the destroy of a normal mutex is very
+ *      nearly a no-op -- so the defect is invisible on the host and has
+ *      to be caught by the STATIC gate in `tools/consistency_check.py`.
+ *      What this test proves is the BEHAVIOUR the lifetime rule exists
+ *      to deliver: after a stop the publisher still answers, and it can
+ *      be started again.
+ *
  * The "node" here is an ordinary file, which is the closest thing to the
  * resource manager's publisher node that a POSIX host offers: the
  * publisher opens it write-only and writes fixed-size frames to it.
@@ -42,7 +53,22 @@
 
 #define FAIL(msg) do { fprintf(stderr, "FAIL: %s\n", (msg)); return 1; } while (0)
 
+/* The node the FIRST publisher run writes to, and the node the RESTARTED
+ * publisher writes to.
+ *
+ * TWO NODES, NOT ONE
+ * ------------------
+ * The restart has to write to a node of its own.  The stand-in node here
+ * is an ordinary FILE, and a file that is opened again starts writing at
+ * offset 0 -- so a restarted publisher pointed at the SAME file would
+ * OVERWRITE its first frame instead of appending, and the frame count
+ * would not move.  The real publisher node is a resource manager's
+ * one-sided WRITE node, which is a STREAM: every write appends.  The
+ * test therefore gives the restarted publisher a node of its own, so the
+ * assertion is about the publisher (it wrote a frame) and not about the
+ * stand-in's file semantics. */
 static const char *g_node_path = "build/host-sim/latch_feedback_pub_test.node";
+static const char *g_node_path_2 = "build/host-sim/latch_feedback_pub_test_restart.node";
 
 static void sleep_ms(long ms)
 {
@@ -112,10 +138,10 @@ static int wait_for_quiescent(int timeout_ms)
  * -2 if the node holds a TORN frame (its size is not a whole number of
  * frames) -- which is a protocol violation in its own right.
  */
-static int node_frame_count(uint64_t *count)
+static int node_frame_count(const char *path, uint64_t *count)
 {
     struct stat st;
-    if (stat(g_node_path, &st) != 0) {
+    if (stat(path, &st) != 0) {
         return -1;
     }
     if (st.st_size < 0 ||
@@ -127,9 +153,9 @@ static int node_frame_count(uint64_t *count)
 }
 
 /* Read ONE frame, addressed by its index in the node. */
-static int read_frame_at(uint64_t index, unsigned char *out)
+static int read_frame_at(const char *path, uint64_t index, unsigned char *out)
 {
-    int fd = open(g_node_path, O_RDONLY);
+    int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return -1;
     }
@@ -202,7 +228,7 @@ int main(void)
             FAIL("the publisher did not write the frame");
         }
         {
-            int rc = node_frame_count(&frames);
+            int rc = node_frame_count(g_node_path, &frames);
             if (rc == -2) {
                 FAIL("the node holds a TORN frame: its size is not a whole "
                      "number of frames");
@@ -211,7 +237,7 @@ int main(void)
                 FAIL("the node does not hold exactly one frame");
             }
         }
-        if (read_frame_at(0u, buf) != 0) {
+        if (read_frame_at(g_node_path, 0u, buf) != 0) {
             FAIL("the node's frame cannot be read");
         }
         memcpy(&back, buf, sizeof(back));
@@ -282,7 +308,7 @@ int main(void)
             f_last.rung          = 0u;
             (void)latch_feedback_encode(&f_last);
             {
-                int rc = node_frame_count(&frames);
+                int rc = node_frame_count(g_node_path, &frames);
                 if (rc == -2) {
                     FAIL("the node holds a TORN frame: its size is not a "
                          "whole number of frames");
@@ -293,7 +319,7 @@ int main(void)
                 /* The frame under test is the node's LAST frame, addressed
                  * by index -- not "the last frame inside a 4096-byte
                  * window".  See node_frame_count() for why. */
-                if (read_frame_at(frames - 1u, last) != 0) {
+                if (read_frame_at(g_node_path, frames - 1u, last) != 0) {
                     FAIL("the node's last frame cannot be read");
                 }
             }
@@ -321,22 +347,154 @@ int main(void)
     if (latch_feedback_pub_is_running()) {
         FAIL("the publisher still says it is running after stop");
     }
+    /* Stopping twice must not crash or hang. */
+    latch_feedback_pub_stop();
+
+    /* ---- 5. THE PRIMITIVES SURVIVE THE STOP ----------------------------
+     *
+     * The publisher's mutex and condvar are process-lifetime objects.
+     * `stop()` must not destroy them, because the calls below -- and the
+     * restart after them -- use them again.  POSIX leaves the behaviour
+     * UNDEFINED after a destroy, and on glibc the destroy of a normal
+     * mutex is very nearly a no-op, so this section CANNOT prove the
+     * absence of the defect on its own: it proves the BEHAVIOUR the
+     * lifetime rule delivers, and `tools/consistency_check.py` proves
+     * the rule itself (statically, with a mutation).
+     */
     {
+        latch_feedback_pub_status_t after;
         latch_feedback_t f;
+        uint64_t frames_after_stop = 0u;
+
+        /* The status snapshot still works after the stop: it takes the
+         * very mutex that `stop()` must not have destroyed. */
+        latch_feedback_pub_get_status(&after);
+        if (after.running != 0) {
+            FAIL("the status snapshot says the publisher is running after "
+                 "a stop");
+        }
+        if (after.offered != st.offered || after.written != st.written) {
+            FAIL("the status snapshot changed after a stop");
+        }
+
+        /* A publish after the stop is still REFUSED (and still counts as
+         * a refusal, not as a crash): it takes the same mutex. */
         memset(&f, 0, sizeof(f));
         if (latch_feedback_pub_publish(&f) != -EPERM) {
             FAIL("the publisher accepted a frame after it was stopped");
         }
+        latch_feedback_pub_get_status(&after);
+        if (after.offered != st.offered) {
+            FAIL("a refused publish after the stop was counted as accepted");
+        }
+
+        /* The node did not grow while the publisher was stopped. */
+        if (node_frame_count(g_node_path, &frames_after_stop) != 0) {
+            FAIL("the node's frame count cannot be read after the stop");
+        }
+        if (frames_after_stop != frames) {
+            FAIL("the publisher wrote a frame after it was stopped");
+        }
     }
-    /* Stopping twice must not crash or hang. */
-    latch_feedback_pub_stop();
+
+    /* ---- 6. THE PUBLISHER CAN BE STARTED AGAIN ------------------------
+     *
+     * A restart RE-USES the same mutex and condvar, so it also has to
+     * work.  This is the path that re-initialised an already-initialised
+     * mutex before the lifetime rule was written.
+     *
+     * The restarted publisher gets a NODE OF ITS OWN -- see the note on
+     * `g_node_path_2` for why.
+     */
+    {
+        latch_feedback_t f;
+        latch_feedback_pub_status_t restarted;
+        uint64_t frames_before = 0u;
+        uint64_t frames_after = 0u;
+        unsigned char landed[LATCH_FEEDBACK_SIZE];
+        latch_feedback_t back;
+
+        if (node_frame_count(g_node_path, &frames_before) != 0) {
+            FAIL("the node's frame count cannot be read before the restart");
+        }
+        (void)unlink(g_node_path_2);
+        {
+            int fd = open(g_node_path_2, O_RDWR | O_CREAT | O_TRUNC, 0600);
+            if (fd < 0) {
+                fprintf(stderr, "FAIL: cannot create the restart node %s: %s\n",
+                        g_node_path_2, strerror(errno));
+                return 1;
+            }
+            (void)close(fd);
+        }
+        if (latch_feedback_pub_start(g_node_path_2) != 0) {
+            FAIL("the publisher did not start again");
+        }
+        if (!latch_feedback_pub_is_running()) {
+            FAIL("the publisher does not say it is running after a restart");
+        }
+        memset(&f, 0, sizeof(f));
+        f.seq           = 77u;
+        f.session_epoch = 0x5A5A5A5Au;
+        f.verdict       = (uint8_t)LATCH_FEEDBACK_VERDICT_ACCEPT;
+        f.rung          = 0u;
+        if (latch_feedback_encode(&f) != 0) {
+            FAIL("the production codec refused to encode a verdict");
+        }
+        if (latch_feedback_pub_publish(&f) != 0) {
+            FAIL("the publisher refused a frame after the restart");
+        }
+        if (wait_for_written(1u, 2000) != 0) {
+            FAIL("the restarted publisher did not write the frame");
+        }
+        if (node_frame_count(g_node_path_2, &frames_after) != 0) {
+            FAIL("the restart node's frame count cannot be read");
+        }
+        if (frames_after != 1u) {
+            FAIL("the restarted publisher did not write exactly one frame");
+        }
+        if (read_frame_at(g_node_path_2, 0u, landed) != 0) {
+            FAIL("the restart node's frame cannot be read");
+        }
+        memcpy(&back, landed, sizeof(back));
+        if (latch_feedback_decode(landed, LATCH_FEEDBACK_SIZE, &back) != 0) {
+            FAIL("the frame the restarted publisher wrote does not decode");
+        }
+        if (back.seq != f.seq || back.session_epoch != f.session_epoch) {
+            FAIL("the restarted publisher did not write the frame it was "
+                 "given");
+        }
+        latch_feedback_pub_get_status(&restarted);
+        if (restarted.offered != 1u || restarted.written != 1u) {
+            FAIL("the restarted publisher's counters do not describe the "
+                 "frame it was given");
+        }
+        /* The FIRST node did not grow: the stopped publisher really did
+         * stop, and the restarted one is writing to its own node. */
+        {
+            uint64_t frames_still = 0u;
+            if (node_frame_count(g_node_path, &frames_still) != 0) {
+                FAIL("the node's frame count cannot be read after the restart");
+            }
+            if (frames_still != frames_before) {
+                FAIL("the first node grew after the restart");
+            }
+        }
+        latch_feedback_pub_stop();
+        if (latch_feedback_pub_is_running()) {
+            FAIL("the publisher still says it is running after the second "
+                 "stop");
+        }
+    }
 
     (void)unlink(g_node_path);
+    (void)unlink(g_node_path_2);
 
     printf("[LATCH_FEEDBACK_PUB] PASS: offered=%llu written=%llu dropped=%llu "
            "errors=%llu opens=%llu frames_in_node=%llu -- the frame arrives "
            "unchanged, the publish call never blocks, the latest verdict wins, "
-           "and every loss is counted\n",
+           "every loss is counted, and the publisher survives a stop and a "
+           "restart\n",
            (unsigned long long)st.offered, (unsigned long long)st.written,
            (unsigned long long)st.dropped, (unsigned long long)st.errors,
            (unsigned long long)st.opens, (unsigned long long)frames);

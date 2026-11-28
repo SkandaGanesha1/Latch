@@ -1364,6 +1364,226 @@ def _c_compiler():
     return None
 
 
+# ---------------------------------------------------------------------------
+# THE FEEDBACK PUBLISHER'S PRIMITIVE LIFETIME (C-3)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS MEASURED, AND IT IS A USE-AFTER-DESTROY.
+#
+# `qnx/latch_feedback_pub.c` owns a mutex and a condvar as members of a
+# STATIC struct, and EVERY public entry point uses them:
+#
+#   - `latch_feedback_pub_publish()` before a start takes the lock to
+#     discover that the publisher is not running (and refuses the frame);
+#   - `latch_feedback_pub_publish()` after a stop takes the lock to
+#     refuse the frame the same way;
+#   - `latch_feedback_pub_get_status()` after a stop takes the lock to
+#     hand the operator a final snapshot;
+#   - `latch_feedback_pub_start()` after a stop RE-USES the very same
+#     mutex and condvar for the new writer thread.
+#
+# The old `latch_feedback_pub_stop()` DESTROYED both of them.  POSIX
+# leaves the behaviour UNDEFINED after `pthread_mutex_destroy()` and
+# `pthread_cond_destroy()`, so all four of those paths were a use of a
+# destroyed object.  The old `latch_feedback_pub_start()` was just as
+# bad in the other direction: it called `pthread_mutex_init()` on EVERY
+# start, which is undefined behaviour on an already-initialised mutex,
+# and it meant that a `publish()` arriving before the first `start()`
+# locked a mutex that had never been initialised at all.
+#
+# ON GLIBC THIS IS INVISIBLE, WHICH IS EXACTLY WHY IT NEEDS A STATIC
+# GATE.  The destroy of a normal (non-robust, non-error-checking) mutex
+# is very nearly a no-op on glibc, so the host test passes either way
+# and the defect cannot be found by RUNNING the code.  "It happens to
+# work on the library we test with" is not a safety argument.  So the
+# rule is checked in the SOURCE, and the host test is compiled and run
+# to prove that the shipped module still COMPILES and still BEHAVES.
+#
+# THE RULE
+# --------
+#   1. the publisher NEVER destroys its primitives -- they are
+#      process-lifetime objects;
+#   2. they are initialised EXACTLY ONCE, by `pthread_once`, and
+#      `start()` brings them up before it uses them;
+#   3. the host test exercises the paths that need them to be alive
+#      after a stop: a refused publish, a status snapshot, and a
+#      RESTART.
+#
+# Rule 3 is DERIVED from the test's own source -- the positions of the
+# calls, not a list of names -- so rewriting the test's prose cannot
+# make it pass, and deleting the restart makes it fail.
+# ---------------------------------------------------------------------------
+
+
+def verify_feedback_pub_lifetime():
+    """The publisher's primitives live for the process lifetime.
+
+    See the block comment above for the measured defect this closes.
+    """
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    pub_c_path = os.path.join(qnx_dir, "latch_feedback_pub.c")
+    pub_h_path = os.path.join(qnx_dir, "latch_feedback_pub.h")
+    test_path = os.path.join(qnx_dir, "latch_feedback_pub_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (pub_c_path, pub_h_path, test_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(pub_c_path, encoding="utf-8", errors="replace") as f:
+        pub_c = f.read()
+    with io.open(pub_h_path, encoding="utf-8", errors="replace") as f:
+        pub_h = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    pub_code = strip_c_comments(pub_c)
+    pub_h_code = strip_c_comments(pub_h)
+    test_code = strip_c_comments(test_src)
+
+    # --- 1. THE PRIMITIVES ARE NEVER DESTROYED -------------------------
+    for name in ("pthread_mutex_destroy", "pthread_cond_destroy"):
+        if name in pub_code:
+            fail("qnx/latch_feedback_pub.c calls %s(). The publisher's mutex "
+                 "and condvar are process-lifetime objects: every public "
+                 "entry point uses them, including the ones that run "
+                 "BEFORE the publisher was started and the ones that run "
+                 "AFTER it was stopped (a refused publish, a status "
+                 "snapshot, and a restart). POSIX leaves the behaviour "
+                 "UNDEFINED after a destroy, and on glibc the destroy of "
+                 "a normal mutex is very nearly a no-op -- so the defect "
+                 "is invisible when the code is RUN and has to be caught "
+                 "here." % name)
+    for name in ("pthread_mutex_destroy", "pthread_cond_destroy"):
+        if name in pub_h_code:
+            fail("qnx/latch_feedback_pub.h names %s(): the header states the "
+                 "lifetime contract, and it must not contradict the source."
+                 % name)
+
+    # --- 2. THE PRIMITIVES ARE INITIALISED EXACTLY ONCE -----------------
+    if "PTHREAD_ONCE_INIT" not in pub_code:
+        fail("qnx/latch_feedback_pub.c does not initialise its primitives "
+             "with `pthread_once` (PTHREAD_ONCE_INIT). `start()` used to "
+             "call `pthread_mutex_init()` on every start, which is "
+             "undefined behaviour on an already-initialised mutex, and a "
+             "`publish()` before the first `start()` locked a mutex that "
+             "had never been initialised at all.")
+    if not re.search(r"pthread_once\s*\(", pub_code):
+        fail("qnx/latch_feedback_pub.c does not call `pthread_once()`: the "
+             "primitives have to be brought up EXACTLY ONCE, and the "
+             "canonical POSIX way to say that is `pthread_once`.")
+    start_body = _c_inline_func_body(pub_code, "latch_feedback_pub_start")
+    if not start_body:
+        fail("qnx/latch_feedback_pub.c does not define "
+             "latch_feedback_pub_start() -- the publisher's lifetime "
+             "contract cannot be checked.")
+    if "fb_pub_primitives_ready" not in start_body:
+        fail("qnx/latch_feedback_pub.c: latch_feedback_pub_start() must "
+             "bring the primitives up (fb_pub_primitives_ready()) before "
+             "it uses them, or the first `start()` runs on a mutex that "
+             "was never initialised.")
+
+    # --- 3. THE HOST TEST EXERCISES THE PATHS THAT NEED THEM ALIVE ----
+    #
+    # The positions of the calls are what matters, not their names: the
+    # test has to publish WHILE THE PUBLISHER IS STOPPED (between a stop
+    # and the restart that follows it), and it has to START it again.
+    # A test that publishes only before the stop, or only after the
+    # restart, proves neither.
+    stops = [m.start() for m in
+             re.finditer(r"latch_feedback_pub_stop\s*\(", test_code)]
+    starts = [m.start() for m in
+              re.finditer(r"latch_feedback_pub_start\s*\(", test_code)]
+    publishes = [m.start() for m in
+                 re.finditer(r"latch_feedback_pub_publish\s*\(", test_code)]
+    if not stops:
+        fail("qnx/latch_feedback_pub_test.c never stops the publisher, so "
+             "it proves nothing about the primitives' lifetime: the whole "
+             "point of the lifetime rule is what happens AFTER a stop.")
+    if len(starts) < 2:
+        fail("qnx/latch_feedback_pub_test.c does not START the publisher "
+             "again after it stopped it. A restart RE-USES the same mutex "
+             "and condvar, and it is the path that re-initialised an "
+             "already-initialised mutex before the lifetime rule was "
+             "written.")
+    first_stop = stops[0]
+    last_start = starts[-1]
+    if last_start <= first_stop:
+        fail("qnx/latch_feedback_pub_test.c's LAST start of the publisher "
+             "comes before its FIRST stop: the test never restarts a "
+             "stopped publisher, so the path that re-uses the primitives "
+             "is not exercised.")
+    if not any(first_stop < p < last_start for p in publishes):
+        fail("qnx/latch_feedback_pub_test.c does not publish WHILE THE "
+             "PUBLISHER IS STOPPED. A publish after a stop takes the very "
+             "mutex that `stop()` must not have destroyed, so it is the "
+             "path the lifetime rule exists to keep defined -- and it is "
+             "the path a reader would break first.")
+
+    # --- 4. THE HOST TEST IS PART OF THE REGRESSION SUITE --------------
+    if "latch-feedback-pub-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-feedback-pub-check` target: the "
+             "publisher's lifetime rule has no proof at all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-feedback-pub-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-feedback-pub-check, or the publisher's lifetime rule "
+             "is not part of the regression suite.")
+
+    # --- 5. THE SHIPPED MODULE COMPILES AND BEHAVES --------------------
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("C-3 publisher lifetime: the primitives are never "
+                   "destroyed and are initialised exactly once (the "
+                   "compiled host test was skipped -- no C compiler on "
+                   "PATH, so only the structural half of the gate ran)")
+        return
+
+    tmp = tempfile.mkdtemp(prefix="latch_fbpub_")
+    try:
+        # The host test writes its stand-in node under `build/host-sim/`,
+        # RELATIVE to its working directory.  Give it a scratch tree so
+        # the check never writes into the repository.
+        node_dir = os.path.join(tmp, "build", "host-sim")
+        os.makedirs(node_dir, exist_ok=True)
+        test_bin = os.path.join(tmp, "latch_feedback_pub_test")
+        comp = subprocess.run(
+            [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+             "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM", "-I", qnx_dir,
+             os.path.join(qnx_dir, "latch_feedback.c"),
+             pub_c_path, test_path, "-o", test_bin,
+             "-lpthread", "-lrt", "-lm"],
+            capture_output=True, text=True, timeout=180)
+        if comp.returncode != 0:
+            fail("the shipped qnx/latch_feedback_pub.c does not compile "
+                 "against its own host test: %s. The publisher has to be "
+                 "usable by a HOST test, or the property it encodes cannot "
+                 "be proved off-target."
+                 % (comp.stderr.strip() or comp.stdout.strip()))
+        run = subprocess.run([test_bin], capture_output=True, text=True,
+                             timeout=120, cwd=tmp)
+        if run.returncode != 0:
+            detail = (run.stdout.strip() or run.stderr.strip() or
+                      "exit status %d" % run.returncode)
+            fail("the shipped qnx/latch_feedback_pub.c does NOT BEHAVE "
+                 "correctly: %s. The publisher has to survive a stop (a "
+                 "refused publish, a status snapshot) and a restart, and "
+                 "every loss has to be counted." % detail)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    pass_check("C-3 publisher lifetime: the mutex and the condvar are "
+               "process-lifetime objects -- they are initialised exactly "
+               "once by pthread_once, never destroyed, and the shipped "
+               "host test proves that a refused publish, a status "
+               "snapshot and a RESTART all work after a stop")
+
+
 def verify_first_reader_decision():
     """The first-reader decision is shared, host-tested, and atomic.
 
@@ -4996,6 +5216,15 @@ def main():
     # backlog was NEVER discarded and the guest's first read was a stale
     # verdict.  See `verify_first_reader_decision()`.
     verify_first_reader_decision()
+
+    # --- THE PUBLISHER'S PRIMITIVE LIFETIME (C-3) ----------------------
+    #
+    # The publisher's mutex and condvar are process-lifetime objects, and
+    # `stop()` must not destroy them: a publish after a stop, a status
+    # snapshot after a stop and a restart all use them again.  On glibc
+    # the defect is invisible when the code is RUN, so it is checked in
+    # the SOURCE.  See `verify_feedback_pub_lifetime()`.
+    verify_feedback_pub_lifetime()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #

@@ -1656,6 +1656,72 @@ document.
   document now states the measured number, and the gate checks the
   first `~N narration words` against the count it measures.
 
+### 4h. Facts about the PUBLISHER'S PRIMITIVE LIFETIME
+
+These were measured on this tree on 2026-11-28, while remediating the
+v14 P0 finding C-3. Read them before touching
+`qnx/latch_feedback_pub.c`.
+
+- **ON GLIBC, `pthread_mutex_destroy()` OF A NORMAL MUTEX IS VERY NEARLY
+  A NO-OP — SO A USE-AFTER-DESTROY IS INVISIBLE WHEN THE CODE IS RUN.**
+  The publisher's `stop()` destroyed its mutex and its condvar, and
+  every public entry point used them again afterwards: a `publish()`
+  after a stop (to refuse the frame), a `get_status()` after a stop (to
+  hand the operator a final snapshot), and a `start()` after a stop (to
+  run a new writer thread on the SAME primitives). POSIX leaves the
+  behaviour **undefined** after a destroy, but the host test passes
+  either way, because glibc's destroy of a normal (non-robust,
+  non-error-checking) mutex leaves the object usable by accident.
+  **"It happens to work on the library we test with" is not a safety
+  argument.** So the rule is enforced **STATICALLY** — in the SOURCE,
+  by `verify_feedback_pub_lifetime()` in `tools/consistency_check.py` —
+  and the host test is the *behavioural* proof of what the rule
+  delivers (a refused publish, a status snapshot and a RESTART all work
+  after a stop). A defect that cannot be seen by running the code has to
+  be caught by a gate that reads the code.
+
+- **THE SAME IS TRUE OF RE-INITIALISATION.** `start()` used to call
+  `pthread_mutex_init()` on **every** start, which is undefined
+  behaviour on an already-initialised mutex, and it meant that a
+  `publish()` arriving before the first `start()` locked a mutex that
+  had **never been initialised at all**. The primitives are now
+  **process-lifetime objects**: initialised EXACTLY ONCE by
+  `pthread_once` (`g_pub_prim_once = PTHREAD_ONCE_INIT`) and **never
+  destroyed**. `start()`, `publish()`, `stop()` and `get_status()` all
+  call the `fb_pub_primitives_ready()` guard.
+
+- **`pthread_once` IS IN THE INSTALLED QNX SDP 8.0.** Confirmed in
+  `/home/skanda/qnx800/target/qnx/usr/include/pthread.h` (the sysroot
+  has no per-architecture `usr/include`; the include lives one level up,
+  under `target/qnx/usr/include`): `PTHREAD_ONCE_INIT` is defined as
+  `{ .__once=0, .__mutex=PTHREAD_MUTEX_INITIALIZER }`, and
+  `pthread_once` is a MACRO that does an `__atomic_load_n(...,
+  __ATOMIC_ACQUIRE)` and only calls `__pthread_once()` when the flag is
+  still zero. So the fast path on QNX is one atomic load, and the
+  initialiser runs exactly once.
+
+- **A HOST TEST THAT RESTARTS A PUBLISHER NEEDS A SECOND NODE FILE.**
+  The publisher's stand-in node on a POSIX host is an ordinary FILE, and
+  a file that is opened again starts writing at **offset 0** — so a
+  restarted publisher pointed at the SAME file **overwrites** its first
+  frame instead of appending, and the frame count does not move. The
+  real publisher node is a resource manager's one-sided WRITE node, which
+  is a **stream**: every write appends. The test therefore gives the
+  restarted publisher a node of its own
+  (`g_node_path_2`), so the assertion is about the publisher (it wrote
+  a frame) and not about the stand-in's file semantics.
+
+- **THE GATE THAT COMPILES A SHIPPED MODULE AGAINST ITS OWN HOST TEST
+  NEEDS `-DLATCH_HOST_SIM` AND A SCRATCH WORKING DIRECTORY.**
+  `qnx/latch_protocol.h` refuses to compile without either the QNX
+  compiler flags or `-DLATCH_HOST_SIM`, and the host test writes its
+  stand-in node under `build/host-sim/` **relative to its working
+  directory** — so the gate runs the binary with `cwd` set to a scratch
+  directory (with `build/host-sim/` created inside it), never in the
+  repository. A gate that compiles a module it does not own has to
+  reproduce the module's own build flags exactly, or it is testing
+  something the module does not ship.
+
 ---
 
 ## 5. What this project must never claim

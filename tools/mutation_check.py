@@ -1232,6 +1232,83 @@ MUTATIONS = [
      # mutation that only renamed the constant would leave the string in
      # the banner block and the gate would stay green.
      [("WITHDRAWN -- NOT EVIDENCE", "WITHDRAWN", "all")]),
+
+    # ===================== THE PUBLISHER'S LIFETIME (C-3) ==============
+    #
+    # The publisher's mutex and condvar are PROCESS-LIFETIME objects: every
+    # public entry point uses them, including the ones that run BEFORE the
+    # publisher was started and the ones that run AFTER it was stopped.
+    # `stop()` must not destroy them, and they must be initialised exactly
+    # once.
+    #
+    # These mutations exist because the defect is INVISIBLE when the code
+    # is RUN: on glibc the destroy of a normal mutex is very nearly a
+    # no-op, so the host test passes either way.  The rule has to be
+    # checked in the SOURCE, and that is what these mutations prove.
+
+    ("C-3: the publisher destroys its mutex again (a publish after a stop, "
+     "a status snapshot after a stop and a restart all lock it again, and "
+     "POSIX leaves the behaviour UNDEFINED after a destroy)",
+     "qnx/latch_feedback_pub.c",
+     [("    if (g_pub.thread_valid) {\n"
+       "        (void)pthread_join(g_pub.tid, NULL);\n"
+       "        g_pub.thread_valid = 0;\n"
+       "    }\n",
+       "    if (g_pub.thread_valid) {\n"
+       "        (void)pthread_join(g_pub.tid, NULL);\n"
+       "        g_pub.thread_valid = 0;\n"
+       "    }\n"
+       "    (void)pthread_mutex_destroy(&g_pub.lock);\n")]),
+
+    ("C-3: the publisher destroys its condvar again (the writer thread's "
+     "timed wait and the stop signal both use it, and POSIX leaves the "
+     "behaviour UNDEFINED after a destroy)",
+     "qnx/latch_feedback_pub.c",
+     [("    if (g_pub.thread_valid) {\n"
+       "        (void)pthread_join(g_pub.tid, NULL);\n"
+       "        g_pub.thread_valid = 0;\n"
+       "    }\n",
+       "    if (g_pub.thread_valid) {\n"
+       "        (void)pthread_join(g_pub.tid, NULL);\n"
+       "        g_pub.thread_valid = 0;\n"
+       "    }\n"
+       "    (void)pthread_cond_destroy(&g_pub.cond);\n")]),
+
+    ("C-3: the primitives lose their exactly-once initialiser (a mutex "
+     "that is re-initialised on every start is undefined behaviour, and a "
+     "publish before the first start locks a mutex that was never "
+     "initialised at all)",
+     "qnx/latch_feedback_pub.c",
+     [("static pthread_once_t g_pub_prim_once = PTHREAD_ONCE_INIT;",
+       "static pthread_once_t g_pub_prim_once;")]),
+
+    ("C-3: start() stops bringing the primitives up (the first start "
+     "would then run on a mutex that was never initialised)",
+     "qnx/latch_feedback_pub.c",
+     [("    /* The primitives are initialised EXACTLY ONCE, for the process\n"
+       "     * lifetime, and are never destroyed.  See the block above. */\n"
+       "    fb_pub_primitives_ready();\n",
+       "")]),
+
+    ("C-3: the host test stops publishing WHILE THE PUBLISHER IS STOPPED "
+     "(that publish takes the very mutex `stop()` must not have "
+     "destroyed, so it is the path the lifetime rule exists to keep "
+     "defined)",
+     "qnx/latch_feedback_pub_test.c",
+     [("        /* A publish after the stop is still REFUSED (and still counts as\n"
+       "         * a refusal, not as a crash): it takes the same mutex. */\n"
+       "        memset(&f, 0, sizeof(f));\n"
+       "        if (latch_feedback_pub_publish(&f) != -EPERM) {\n"
+       "            FAIL(\"the publisher accepted a frame after it was stopped\");\n"
+       "        }\n",
+       "")]),
+
+    ("C-3: the host test stops RESTARTING the publisher (a restart re-uses "
+     "the same mutex and condvar, and it is the path that re-initialised "
+     "an already-initialised mutex before the lifetime rule was written)",
+     "qnx/latch_feedback_pub_test.c",
+     [("        if (latch_feedback_pub_start(g_node_path_2) != 0) {",
+       "        if (0) {")]),
 ]
 
 
