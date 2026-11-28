@@ -2041,6 +2041,146 @@ before touching `qnx/latch_ingest.c`.
   caught even though the call site is unchanged. The mutation battery
   attacks both families separately.
 
+### 4k. Facts about the GUEST CHILD'S LIFECYCLE (NEW-3)
+
+These were measured on this tree on 2026-11-28, while remediating the v13
+audit finding NEW-3 (`qnx/latch_guestd.c` reaped and killed the guest
+child unsafely, and left it running when the daemon was terminated). Read
+them before touching `qnx/latch_guestd.c`.
+
+- **`SA_RESTART` DOES NOT EXIST IN SDP 8.0, SO EVERY BLOCKING CALL IS
+  INTERRUPTIBLE.** The installed
+  `/home/skanda/qnx800/target/qnx/usr/include/signal.h` carries the line
+  `#define SA_RESTART      0x0040 (not supported yet)` **commented out**,
+  and the other `SA_*` flags it does define are `SA_SIGINFO`,
+  `SA_RESETHAND`, `SA_ONSTACK` and `SA_NODEFER`. There is therefore **no
+  way to ask for a restart**, and none is ever granted. The QNX 8.0 C
+  Library Reference confirms the consequence for the call the daemon's
+  dispatch loop makes: `MsgReceive()` — which is what `dispatch_block()`
+  waits on — lists `EINTR` with the text *"The call was interrupted by a
+  signal."* And `signal()`'s own entry says *"After returning from the
+  signal-catching function, the receiving process resumes execution at the
+  point at which it was interrupted."* **So a `SIGTERM` really does bring
+  the dispatch loop back**, and a termination flag read at the top of the
+  loop is enough to end it. (The same reference points new applications at
+  `sigaction()` over `signal()`; `sigaction()` also makes the handler's
+  lifetime explicit, because the handler stays installed instead of
+  reverting to the default action after the first delivery.)
+
+- **`kill()` IS ASYNCHRONOUS, SO THE REAP IMMEDIATELY AFTER IT CAN
+  LEGITIMATELY SAY "STILL RUNNING".** Measured on the host by the shipped
+  test: `kill(pid, SIGKILL)` followed immediately by `waitpid(pid, …,
+  WNOHANG)` returned **0** (still running) on the first attempt, and
+  `REAPED` only after a few milliseconds. A stop path that treats the
+  first poll's answer as final is therefore wrong about a *live* system,
+  and the shipped sequence POLLS (`LATCH_GUEST_REAP_TRIES` = 200 polls of
+  `LATCH_GUEST_REAP_SLEEP_NS` = 10 ms, a two-second bound). The bound
+  exists because an unbounded wait is a hang, and a daemon that hangs in
+  its stop path cannot report the failure the hang represents.
+
+- **`waitpid()` RETURNING -1 DOES NOT SAY WHETHER THERE WAS NO SUCH
+  CHILD.** `ECHILD` (no such child) and `EINTR` (the call was interrupted)
+  are BOTH -1, and only the `errno` tells them apart. The old daemon had
+  one branch for "everything else", so an interrupted call was read as
+  "the child is gone" — and a stop that reports success without stopping
+  the guest lets the caller start a **SECOND** guest, which then fights
+  over the same virtio-console endpoint. The shipped decisions take the
+  return value and the `errno` **together**, and the zero value of each
+  outcome enum is the UNKNOWN one, so an unassigned decision establishes
+  nothing.
+
+- **A CHILD'S PID CANNOT BE REUSED WHILE IT IS AN UNREAPED ZOMBIE — SO
+  REAPING IT IS EXACTLY WHAT MAKES THE PID REUSABLE.** This is the
+  reason the order is **kill, then reap**, and the reason the whole
+  sequence runs with `SIGCHLD` blocked: the old handler reaped ANY child
+  with `waitpid(-1, …)`, so the PID that `guest_stop()` sends `SIGKILL`
+  through could be released between the daemon's read of it and its
+  `kill()` — and the kill could then land on an unrelated process. The
+  mask removes the window at the source; the handler now reaps the guest
+  child and nothing else, and the "pending" side-channel that used to
+  paper over the spawn race is gone entirely.
+
+- **BLOCKING A SIGNAL DOES NOT LOSE IT — IT STAYS PENDING.** Measured on
+  the host: with `SIGCHLD` blocked and a child exiting, `sigpending()`
+  reported `SIGCHLD` as pending, the handler had NOT run, and the handler
+  ran as soon as the mask was restored. That is what makes the mask safe
+  to use across the spawn window: the signal is deferred, not discarded.
+
+- **A HOST TEST THAT EXERCISES A COPY OF THE DAEMON'S LOGIC PROVES
+  NOTHING ABOUT THE DAEMON.** So the decisions AND the masked
+  kill-then-reap sequence live in the shipped header
+  `qnx/latch_guest_child.h`, and `qnx/latch_guestd.c` **calls** them
+  (`latch_guest_stop_sequence()`, `latch_guest_reap_once()`). The host
+  test therefore runs the daemon's own code, against **REAL** child
+  processes. The gate's structural half REJECTS a daemon that calls
+  `latch_guest_reap_decide()` or `latch_guest_kill_decide()` directly,
+  because a second call site is a second implementation of the decision.
+
+- **THE ORDERING PROPERTY IS OBSERVABLE, NOT JUST ASSERTED.** The test
+  installs a SIGCHLD handler that reaps ANY child — deliberately, because
+  that is exactly what the daemon's OLD handler did — and then proves
+  that the shipped sequence's reap **wins**: the handler finds nothing to
+  reap, because the sequence reaped the child while its PID was still
+  reserved. With the mask removed from the shipped sequence, the handler
+  wins the race and the test says so by name. The mutation battery
+  attacks the mask in the header for the same reason.
+
+- **A SIGNAL HANDLER THAT CALLS A FUNCTION WHICH CAN SET `errno` MUST
+  SAVE AND RESTORE IT.** `waitpid()` sets `errno`, so the SIGCHLD handler
+  saves it on entry and restores it on exit — otherwise the code the
+  handler interrupted may read an `errno` that belongs to the handler.
+
+- **THE PID THE HANDLER AND THE CONTROL PATH SHARE MUST BE A
+  `volatile sig_atomic_t`.** POSIX says the only objects a signal handler
+  may touch are `sig_atomic_t` ones, and `volatile` keeps the compiler
+  from caching the value in a register across the read. On QNX
+  `sig_atomic_t` is `int` and `pid_t` is an `int`-sized type, so the pid
+  fits. The status report reads the pid **once**, so its `running` flag
+  and its `pid` field cannot disagree with each other.
+
+- **THE SAME RULE APPLIES TO EVERY SHARED OBJECT THE HANDLER WRITES —
+  NOT JUST THE PID.** POSIX says a signal handler may refer to **no
+  object other than a `volatile sig_atomic_t` one** (and `errno`, and
+  only if it restores it). The old code wrote the last exit status from
+  the handler into a plain `uint32_t`, which is undefined behaviour by
+  the letter of the standard — even on AArch64, where a 32-bit aligned
+  store happens to be atomic. The exit status is a `waitpid()` status
+  word, 16 bits wide on both QNX and Linux, so it fits in an
+  `int`-sized `sig_atomic_t` without loss and the bit pattern is
+  preserved on the way back out to the protocol's `uint32_t` field. The
+  gate's check is **generic**: it finds every file-scope object the
+  handler assigns to and requires each to be declared
+  `volatile sig_atomic_t` — so a new shared object cannot quietly
+  reintroduce the defect.
+
+- **THE DAEMON MUST NEVER EXIT WHILE ITS GUEST IS RUNNING.** `SIGTERM`
+  and `SIGINT` used to clear the run flag and nothing else, so the daemon
+  detached and exited — and the guest hypervisor, its own CHILD, kept
+  running as an **ORPHAN**. The handler cannot do the stop work itself
+  (`guest_stop()` prints, sleeps and calls `waitpid()`, none of which is
+  async-signal-safe), so it sets a flag and the ordinary code performs
+  the stop after the dispatch loop has ended. The stop must **complete**
+  before the daemon exits, and if it fails the daemon says so loudly and
+  exits **non-zero**: it must not exit successfully while reporting that
+  it left the guest running.
+
+- **A GUEST THAT DIES DURING THE SPAWN MUST BE A FAILED START, AND THE
+  MASK IS WHAT MAKES THAT DETECTION RACE-FREE.** The old code detected it
+  through the "pending" side-channel — if the SIGCHLD handler had already
+  reaped that pid, the daemon reported the failure and left the guest
+  DOWN. Deleting the side-channel without replacing the detection would
+  have turned a guest that exits immediately (a hypervisor that could not
+  be exec'd, a configuration that was refused) into a **successful**
+  start, and the client would believe it started a guest that does not
+  exist. The replacement asks the question **after the mask is
+  restored**, with the shipped reap: a signal generated while `SIGCHLD`
+  was blocked stays pending, so the moment the mask is restored the
+  child is either already accounted for by the handler (`g_guest_pid` is
+  already -1) or is about to be — and the shipped reap finds the corpse
+  itself. Either way the daemon returns `ECHILD`, so the client's start
+  **fails**. The question may only be asked after the restore: before it,
+  the handler cannot have run and the answer would be a guess.
+
 ---
 
 ## 5. What this project must never claim

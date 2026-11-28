@@ -21,14 +21,14 @@ exit status: 0
 [CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
 [CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
 [CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
-[CONSISTENCY PASS] qnx/latch_qemu.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] qnx/latch_qemu.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
-[CONSISTENCY PASS] qnx/latch_qemu_governor.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] qnx/latch_qemu_governor.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd
-[CONSISTENCY PASS] qnx/latch_qemu_infer.build: all 12 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] qnx/latch_qemu_infer.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] in-guest inference initramfs size not checked (initramfs not built in this checkout)
 [CONSISTENCY PASS] Experimental in-guest inference profile: same signed contract, read-only asset disk, typed guest launch, heartbeat below the deadman lease
-[CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] C-2b notification-list locking: every resource manager that touches an iofunc notification list (latch_fb_sink.c) reaches it only through the locked wrappers -- the library's trigger walks and unlinks the armed list and its remove walks and frees it with no mutex of its own, so the notify call runs with the list locked, a lock that cannot be taken refuses the operation, and the two lock families are never held together
 [CONSISTENCY PASS] C-2 resource manager locking: every resource manager (latch_fb_sink.c, latch_guestd.c, latchd.c) reaches the iofunc library only through the locked wrappers -- the iofunc call runs with the device's shared attribute locked, a lock that cannot be taken refuses the operation, and the lock is released on the error path too
 [CONSISTENCY PASS] C-1 first reader: the decision is shared, host-tested and atomic -- a probe and a refused open do not consume the first-reader slot, the first GRANTED reader is the first reader, and the decision and the backlog discard are one critical section
@@ -37,6 +37,7 @@ exit status: 0
 [CONSISTENCY PASS] EVHEX hex sizing: no hex buffer carries a literal length, both sizes are derived from the things they render, and the shared renderer REFUSES a buffer that is one byte too small
 [CONSISTENCY PASS] C-7 guest-control gate: the node is 0660, the two independent checks are in one helper, both mutating verbs call it, the read-only verb does not, the ability is a named grant held by exactly the types that may connect, the client opens the node the way the gate expects, and the shipped host test proves that EXACTLY ONE of the four combinations allows the mutation
 [CONSISTENCY PASS] NEW-8 ingest start-up: the CPU is the signed contract's to decide (`-c` asserts it and a contradiction refuses), the CPU pin's result is checked and an out-of-range CPU is refused rather than substituted, the custom-ability lookup's result is checked, every decision's zero value is a refusal, the ability is created before the node that proves it, and the shipped host test proves the counts
+[CONSISTENCY PASS] NEW-3 guest child lifecycle: the reap's errno is READ (an INTERRUPTED waitpid establishes NOTHING), the SIGCHLD handler reaps the guest child and nothing else, the kill precedes the reap inside ONE masked region so the child's pid is still reserved, the spawn window is masked and the pid is recorded under the mask, the pending side-channel is gone, SIGTERM and SIGINT reach the stop path, and the daemon never exits while its guest is running -- the shipped host test ran 72 checks against REAL child processes
 [CONSISTENCY PASS] the LPR2 proposal's size is DERIVED from `sizeof(latch_ipc_proposal_v2_t)` (56 bytes) and every judge-facing document agrees with it (10 claim(s) checked)
 [CONSISTENCY PASS] every signed contract's sidecar is a `sha256sum` line naming the contract by its repository-root-relative path, and `sha256sum -c` verifies all 5 of them from the repository root
 [CONSISTENCY PASS] the guest's cross-core words are published with HARDWARE barriers: 6 cross-core scalar(s) (g_fb_cmd_seq, g_fb_seq_sent, g_fb_verdict_word, g_fb_watcher_state, g_fb_watcher_stop_requested, g_fb_watcher_stopped) reach the other core only through guest/latch_fb_publish.h, 1 cross-core aggregate(s) (g_fb_summary) are published behind one flag, and every accessor compiles to a real `dmb` on AArch64 (aarch64-linux-gnu-gcc, clang --target=aarch64-linux-gnu)
@@ -70,7 +71,7 @@ exit status: 0
 [CONSISTENCY PASS] U-4 report: the archived LATENCY.md states N >= 10^6, the machine, p50/p99/max, the TCG caveat, and disclaims the WCET reading
 [CONSISTENCY PASS] U-4 report: the archived LATENCY.md is byte-for-byte what the generator produces from the raw target report it carries (the summary cannot drift away from the measurement)
 [CONSISTENCY PASS] U-4 plan: the row is VERIFIED and quotes the archive's own sample count (2128376), so the plan cannot claim a measurement the evidence does not carry
-[CONSISTENCY PASS] qnx/latch_rpi4.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] qnx/latch_rpi4.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] RPi4 buildfile el1-host, BCM2711 I2C IRQ 149, secpolpush, qvm unconstrained runmask, pipe/slogger2, guest image/initrd verified
 [CONSISTENCY PASS] Security policy QNX 8.0 secpolcompile grammar & least-privilege rules verified
 [CONSISTENCY PASS] Guest-lifecycle privilege boundary verified: latch_guestd_t owns only spawn + settypeid:qvm_host_t, the guest-control channel is its own type, and the operator shell still cannot actuate
@@ -104,7 +105,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (1653 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (3016 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)

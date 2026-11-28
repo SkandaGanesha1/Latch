@@ -90,6 +90,7 @@
  * carry `_IO_FLAG_WR`, and the client must hold the dedicated
  * `latch/guestctl` ability. */
 #include "latch_guestctl_guard.h"
+#include "latch_guest_child.h"
 
 /* THE RESOURCE MANAGER'S ATTRIBUTE LOCK.  Every iofunc entry point this
  * resource manager calls goes through the wrappers in this header, so
@@ -109,9 +110,11 @@
 
 /* How long to wait for a SIGKILLed guest child to be reaped.  A process
  * that cannot be reaped within this bound is reported as a failure; the
- * daemon never spawns a second guest while the first may still exist. */
-#define LATCH_GUEST_REAP_TRIES  200u
-#define LATCH_GUEST_REAP_SLEEP_NS 10000000L /* 10 ms */
+ * daemon never spawns a second guest while the first may still exist.
+ *
+ * THE TWO CONSTANTS LIVE IN THE SHIPPED HEADER (NEW-3), because the
+ * shipped stop sequence uses them and the host test has to use the SAME
+ * ones -- a test with a different bound proves a different thing. */
 
 /* -------------------------------------------------------------------------
  * Device attributes
@@ -125,24 +128,63 @@ static latch_guest_attr_t g_guest_attr;
 /* -------------------------------------------------------------------------
  * Daemon state
  * ------------------------------------------------------------------------- */
-static pid_t       g_guest_pid     = -1;
+/*
+ * THE CHILD'S PID IS SHARED WITH THE SIGNAL HANDLER, SO IT IS A
+ * `volatile sig_atomic_t` (NEW-3).
+ *
+ * The SIGCHLD handler WRITES this variable (`g_guest_pid = -1` when it
+ * reaps the child), and the control path READS it -- in the status
+ * report, in the spawn check and in the stop sequence.  POSIX says the
+ * only objects a signal handler may touch are `sig_atomic_t` ones, and
+ * `volatile` keeps the compiler from caching the value in a register
+ * across the read.
+ *
+ * On QNX `sig_atomic_t` is `int` and `pid_t` is an `int`-sized type, so
+ * the pid fits.  The access is a SINGLE aligned store or load, which is
+ * atomic on AArch64; and the windows in which the CONTROL path touches
+ * the pid are masked against the handler anyway, so the handler cannot
+ * observe a half-published child.
+ */
+static volatile sig_atomic_t g_guest_pid = -1;
 static uint32_t    g_generation    = 0u;
-static uint32_t    g_last_exit     = 0u;
+/*
+ * THE LAST EXIT STATUS IS SHARED WITH THE SIGNAL HANDLER TOO, SO IT IS
+ * A `volatile sig_atomic_t` AS WELL (NEW-3).
+ *
+ * POSIX says a signal handler may refer to NO object other than a
+ * `volatile sig_atomic_t` one (and `errno`, and only if it restores it).
+ * The handler WRITES this variable, so a plain `uint32_t` is undefined
+ * behaviour by the letter of the standard -- and the standard is the
+ * right thing to obey even where the hardware would get away with it.
+ *
+ * The value is a `waitpid()` status word, which is 16 bits wide on both
+ * QNX and Linux, so it fits in an `int`-sized `sig_atomic_t` without
+ * loss.  The bit pattern is preserved on the way back out to the
+ * protocol's `uint32_t` field.
+ */
+static volatile sig_atomic_t g_last_exit = 0;
 static char        g_qvm_path[256] = {0};
 static char        g_conf_path[256] = {0};
 static char        g_conf_arg[272] = {0};
 static volatile sig_atomic_t g_running = 1;
 
 /*
- * A child that has been reaped by the SIGCHLD handler but whose pid was
- * not yet recorded (the window between posix_spawn() returning and the
- * spawn site storing the pid) is parked here, so its exit status is not
- * lost and the daemon does not end up pointing at a dead, already-reaped
- * pid.
+ * THE TERMINATION FLAG (NEW-3).
+ *
+ * `SIGTERM` and `SIGINT` used to clear `g_running` and nothing else, so
+ * the daemon detached and exited -- and the guest hypervisor, which is the
+ * daemon's own CHILD, kept running as an ORPHAN.  A lifecycle daemon
+ * whose death leaves the thing it manages running is not a lifecycle
+ * daemon.
+ *
+ * The handler cannot do the stop work itself: `guest_stop()` prints,
+ * sleeps and calls `waitpid()`, none of which is async-signal-safe.  So
+ * the handler sets a FLAG and the MAIN path performs the stop, after the
+ * dispatch loop has ended.  This is the same shape the guest-control gate
+ * uses: the signal says WHAT happened, and the ordinary code decides what
+ * to do about it.
  */
-static volatile sig_atomic_t g_pending_reaped = 0;
-static pid_t       g_pending_pid    = -1;
-static uint32_t    g_pending_status = 0u;
+static volatile sig_atomic_t g_terminate = 0;
 
 /* The dedicated `latch/guestctl` ability (C-7).  It is created by the
  * daemon at start-up with flags 0 -- neither root nor non-root receives it
@@ -156,9 +198,53 @@ static int         g_ability_guestctl_id = -1;
  * Helpers
  * ------------------------------------------------------------------------- */
 
+/*
+ * THE SIGCHLD MASK (NEW-3).
+ *
+ * This is the mechanism that makes the child's lifecycle race-free, and
+ * it is the whole fix in one function.
+ *
+ * THE PROBLEM.  The daemon's SIGCHLD handler runs asynchronously, and it
+ * used to reap ANY child with `waitpid(-1, ...)`.  Two consequences
+ * followed:
+ *
+ *   * the handler could run INSIDE the control path's own `waitpid()` --
+ *     the handler is installed WITHOUT `SA_RESTART`, so the interrupted
+ *     call returned `-1` with `errno == EINTR`, and the old code read that
+ *     as "there is no such child", concluded the guest was GONE, and
+ *     reported a successful stop for a guest that was still running; and
+ *
+ *   * the handler could reap the child BETWEEN the control path's read of
+ *     `g_guest_pid` and its `kill()`.  **A child's PID cannot be reused
+ *     while it is an unreaped zombie**, so reaping it is exactly what
+ *     makes the PID reusable -- and the `kill()` could then land on an
+ *     unrelated process.
+ *
+ * THE FIX.  Hold SIGCHLD blocked across every window in which the child's
+ * PID is touched: the spawn window, the kill, and every `waitpid()`.  The
+ * handler then cannot run inside any of them, so:
+ *
+ *   * the `waitpid()` cannot be interrupted by SIGCHLD (the `EINTR` case
+ *     disappears at the source, and the code reads `errno` anyway);
+ *   * the handler and the control path can never reap the same child; and
+ *   * the ORDER is enforceable -- the child is KILLED before it is
+ *     reaped, so its PID is still reserved when the `kill()` goes out.
+ *
+ * The daemon has exactly ONE thread that can receive a signal (the
+ * dispatch loop), so blocking the signal in that thread also blocks the
+ * handler.  The handler's own `waitpid()` tolerates `ECHILD` as well, so
+ * even a second reaper would be harmless.
+ *
+ * THE MASK ITSELF LIVES IN THE SHIPPED HEADER (NEW-3), because the host
+ * test has to be able to exercise it against a REAL child process:
+ * `latch_guest_block_sigchld()` / `latch_guest_restore_mask()` out of
+ * `qnx/latch_guest_child.h`.  There is ONE implementation of the mask in
+ * the tree, and the daemon calls it.
+ */
 static void guest_sig_handler(int sig) {
     (void)sig;
     g_running = 0;
+    g_terminate = 1;
 }
 
 /*
@@ -170,60 +256,89 @@ static void guest_sig_handler(int sig) {
  * while a defunct entry is still listed is not a transcript anyone should
  * trust.
  *
- * The handler is async-signal-safe: waitpid() is, and every variable it
- * touches is either a sig_atomic_t or a value whose update is a single
+ * The handler is async-signal-safe: `waitpid()` is, and every variable it
+ * touches is either a `sig_atomic_t` or a value whose update is a single
  * aligned store.
+ *
+ * IT REAPS THE GUEST CHILD AND NOTHING ELSE (NEW-3).  The old code reaped
+ * ANY child with `waitpid(-1, ...)`, which needed a whole "pending"
+ * side-channel to carry a reap that arrived before the spawn site could
+ * record the pid -- a SINGLE slot, which could lose a reap and could match
+ * a REUSED pid.  The mask removes that window (the pid is recorded under
+ * the mask), so the side-channel is not needed and the handler no longer
+ * touches children that are not the guest's.
  */
 static void guest_sigchld_handler(int sig) {
     (void)sig;
-    int status = 0;
-    pid_t r;
-    while ((r = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (g_guest_pid > 0 && r == g_guest_pid) {
-            g_last_exit = (uint32_t)status;
-            g_guest_pid = -1;
-        } else {
-            /* Reaped before the spawn site could record the pid. */
-            g_pending_pid = r;
-            g_pending_status = (uint32_t)status;
-            g_pending_reaped = 1;
-        }
+    /* A handler that calls a function which can set `errno` MUST save and
+     * restore it: the interrupted code may be about to read it.  The
+     * QNX 8.0 C Library Reference lists `waitpid()` as setting `errno`,
+     * so this handler saves it around its own call. */
+    int saved_errno = errno;
+
+    pid_t pid = g_guest_pid;
+    if (pid <= 0) {
+        errno = saved_errno;
+        return;                 /* nothing of ours to reap */
     }
+    int status = 0;
+    pid_t r = waitpid(pid, &status, WNOHANG);
+    if (r == pid) {
+        g_last_exit = (sig_atomic_t)status;
+        g_guest_pid = -1;
+    }
+    /* `r == 0` -> still running.  `r == -1` -> nothing to reap (the
+     * control path got there first) or the call failed; either way the
+     * next control request reaps it. */
+    errno = saved_errno;
 }
 
 /*
  * Reap the guest child if it has exited.
  *
  * Returns 1 if a child was reaped (and updates g_last_exit), 0 if the child
- * is still alive, and -1 if there is no child at all.
+ * is still alive -- or if the attempt established NOTHING -- and -1 if there
+ * is no child at all.
+ *
+ * THE OUTCOME IS DECIDED BY THE SHIPPED HEADER (NEW-3).  `waitpid()`'s
+ * return value alone does not distinguish "there is no such child"
+ * (`ECHILD`) from "the call was interrupted" (`EINTR`) -- both are -1 --
+ * and the old code read BOTH as "the child is gone".  A stop that reports
+ * success without stopping the guest lets the caller start a SECOND guest,
+ * and two guests fight over the same virtio-console endpoint.
  */
 static int guest_reap_if_exited(void) {
-    if (g_guest_pid <= 0) {
+    pid_t pid = g_guest_pid;
+    if (pid <= 0) {
         return -1;
     }
-    int status = 0;
-    pid_t r = waitpid(g_guest_pid, &status, WNOHANG);
-    if (r == 0) {
-        return 0;               /* still running */
-    }
-    if (r > 0) {
-        g_last_exit = (uint32_t)status;
+
+    /* THE REAP IS THE SHIPPED ONE (NEW-3): the mask, the `waitpid()` and
+     * the reading of the `errno` are all in
+     * `qnx/latch_guest_child.h`, so the host test exercises the very same
+     * code the daemon runs. */
+    latch_guest_reap_result_t res = latch_guest_reap_once(pid);
+
+    switch (res.outcome) {
+    case LATCH_GUEST_REAP_REAPED:
+        g_last_exit = (sig_atomic_t)res.status;
         g_guest_pid = -1;
         return 1;
+    case LATCH_GUEST_REAP_NO_CHILD:
+        g_guest_pid = -1;
+        return 1;
+    case LATCH_GUEST_REAP_RUNNING:
+        return 0;
+    case LATCH_GUEST_REAP_INTERRUPTED:
+        /* The call established NOTHING: ask again.  It is emphatically not
+         * "the child is gone". */
+        return 0;
+    case LATCH_GUEST_REAP_ERROR:
+    default:
+        fprintf(stderr, "latch_guestd: waitpid(%d) failed: %s\n",
+                (int)pid, strerror(res.wait_errno));
+        return 0;
     }
-    /*
-     * ECHILD: the SIGCHLD handler already reaped this child.  Recover the
-     * exit status from the pending slot if the handler parked it there
-     * (it parks a reap whose pid was not yet recorded); otherwise the
-     * handler already folded the status into g_last_exit.
-     */
-    if (g_pending_reaped && g_pending_pid == g_guest_pid) {
-        g_last_exit = g_pending_status;
-        g_pending_reaped = 0;
-        g_pending_pid = -1;
-    }
-    g_guest_pid = -1;
-    return 1;
 }
 
 /*
@@ -235,11 +350,41 @@ static int guest_reap_if_exited(void) {
  * its own (weaker) type, and it does not run the guest untyped.
  */
 static int guest_spawn(void) {
+    /*
+     * THE WHOLE SPAWN WINDOW IS ONE MASKED REGION (NEW-3).
+     *
+     * The old code had a whole side-channel for the window between
+     * `posix_spawn()` returning the pid and the daemon recording it: the
+     * SIGCHLD handler could fire in that window, reap the child, and park
+     * the pid in a "pending" slot -- a SINGLE slot, which could lose a
+     * reap and could match a REUSED pid.  With SIGCHLD blocked across the
+     * window, the handler cannot run until the pid has been recorded, and
+     * the side-channel is not needed at all.
+     *
+     * The signal is not LOST by the mask: a signal generated while it is
+     * blocked stays PENDING and is delivered when the mask is restored.
+     *
+     * The mask is taken HERE, before the "a guest is already running"
+     * check, so that the whole region -- the check, the spawn and the
+     * recording of the pid -- is ONE region with no window in it.  The
+     * check itself is the first thing the function does, because it is the
+     * check that prevents TWO guests from fighting over the same
+     * virtio-console endpoint.
+     */
+    sigset_t saved;
+    if (!latch_guest_block_sigchld(&saved)) {
+        fprintf(stderr, "latch_guestd: sigprocmask(SIG_BLOCK, SIGCHLD) failed: %s\n",
+                strerror(errno));
+        return errno;
+    }
+
     if (g_guest_pid > 0) {
-        guest_reap_if_exited();
+        /* The reap runs under the mask we already hold. */
+        (void)guest_reap_if_exited();
         if (g_guest_pid > 0) {
             fprintf(stderr, "latch_guestd: a guest VM is already running (pid %d)\n",
                     (int)g_guest_pid);
+            latch_guest_restore_mask(&saved);
             return EBUSY;
         }
     }
@@ -247,11 +392,13 @@ static int guest_spawn(void) {
     if (access(g_qvm_path, X_OK) != 0) {
         fprintf(stderr, "latch_guestd: guest binary '%s' is missing or not executable: %s\n",
                 g_qvm_path, strerror(errno));
+        latch_guest_restore_mask(&saved);
         return ENOENT;
     }
     if (access(g_conf_path, R_OK) != 0) {
         fprintf(stderr, "latch_guestd: guest configuration '%s' is missing: %s\n",
                 g_conf_path, strerror(errno));
+        latch_guest_restore_mask(&saved);
         return ENOENT;
     }
 
@@ -259,6 +406,7 @@ static int guest_spawn(void) {
     int rc = posix_spawnattr_init(&attr);
     if (rc != 0) {
         fprintf(stderr, "latch_guestd: posix_spawnattr_init: %s\n", strerror(rc));
+        latch_guest_restore_mask(&saved);
         return rc;
     }
 
@@ -280,6 +428,7 @@ static int guest_spawn(void) {
         fprintf(stderr, "latch_guestd: cannot set the child's security type to '%s': %s\n",
                 LATCH_GUEST_TYPE_NAME, strerror(errno));
         posix_spawnattr_destroy(&attr);
+        latch_guest_restore_mask(&saved);
         return EPERM;
     }
 
@@ -290,36 +439,64 @@ static int guest_spawn(void) {
 
     pid_t pid = -1;
     rc = posix_spawn(&pid, g_qvm_path, NULL, &attr, argv, environ);
+    if (rc == 0) {
+        /* The pid is RECORDED UNDER THE SAME MASK, so the handler cannot
+         * observe a half-published child. */
+        g_guest_pid = pid;
+    }
+    latch_guest_restore_mask(&saved);
+
     posix_spawnattr_destroy(&attr);
     if (rc != 0) {
         fprintf(stderr, "latch_guestd: posix_spawn('%s'): %s\n", g_qvm_path, strerror(rc));
         return rc;
     }
 
+    g_generation++;
+
     /*
-     * The child may have died -- and been reaped by the SIGCHLD handler --
-     * before this point, e.g. if the qvm binary could not be exec'd.  If
-     * the handler already reaped THIS pid, the daemon must not keep
-     * pointing at a dead child: it records the exit status, reports the
-     * failure and leaves the guest DOWN.  The caller (the client that
-     * asked for a start, or the daemon's own startup) then fails closed.
+     * THE CHILD MAY HAVE DIED ALREADY (NEW-3).
+     *
+     * The old code detected this through the "pending" side-channel: if
+     * the SIGCHLD handler had already reaped THIS pid by the time the
+     * spawn site got here, the daemon recorded the exit status, reported
+     * the failure and left the guest DOWN -- so the caller failed closed
+     * instead of believing it started a guest that was not there.
+     *
+     * The side-channel is gone, and the MASK makes it unnecessary: a
+     * signal generated while SIGCHLD was blocked stays PENDING, so the
+     * moment the mask is restored the child -- if it died -- is either
+     * already accounted for by the handler or is about to be.  So the
+     * question is asked AFTER the mask is restored, with the SHIPPED
+     * reap: has the child already gone?
+     *
+     * There are two ways the answer can be "yes", and both of them are
+     * covered:
+     *
+     *   * the handler ran when the mask was restored and reaped the
+     *     child, so `g_guest_pid` is already -1; or
+     *   * the handler has not run yet, and the shipped reap finds the
+     *     corpse itself (`waitpid()` returns the pid).
+     *
+     * Either way the daemon must NOT keep pointing at a dead child, and
+     * it must NOT report a start it cannot vouch for.  A guest that
+     * exits immediately -- because the hypervisor could not be exec'd,
+     * or because the configuration was refused -- is exactly the case
+     * this check exists for, and the client's "start" must fail.
+     *
+     * An INTERRUPTED reap establishes NOTHING (that is the whole point
+     * of the shipped decision), so it is not treated as "the child is
+     * gone": the start is reported and the truth is established by the
+     * next status report.  The only case in which the daemon refuses is
+     * the case in which the child's corpse has actually been seen.
      */
-    if (g_pending_reaped && g_pending_pid == pid) {
-        g_last_exit = g_pending_status;
-        g_pending_reaped = 0;
-        g_pending_pid = -1;
-        g_generation++;
+    if (guest_reap_if_exited() != 0) {
         fprintf(stderr, "latch_guestd: guest VM (pid %d) exited immediately "
                         "(status 0x%X); the guest is NOT running.\n",
                 (int)pid, (unsigned int)g_last_exit);
         return ECHILD;
     }
-    /* Any pending reap belongs to an older child: discard it. */
-    g_pending_reaped = 0;
-    g_pending_pid = -1;
 
-    g_guest_pid = pid;
-    g_generation++;
     printf("latch_guestd: guest VM started (pid %d, generation %u) argv: '%s' '%s'\n",
            (int)pid, (unsigned int)g_generation, g_qvm_path, g_conf_arg);
     fflush(stdout);
@@ -332,53 +509,76 @@ static int guest_spawn(void) {
  * The wait is bounded.  If the child cannot be reaped within the bound the
  * daemon reports the failure and does NOT start another guest, because two
  * live guests would fight over the same virtio-console endpoint.
+ *
+ * THE KILL AND THE REAP ARE ONE MASKED SEQUENCE (NEW-3).
+ *
+ * The ORDER is load-bearing: the child must be KILLED BEFORE it is
+ * reaped, because a child's PID cannot be reused while it is an unreaped
+ * zombie -- so reaping it first is exactly what makes the PID reusable,
+ * and the `kill()` could then land on an unrelated process.  Holding
+ * SIGCHLD blocked across the whole sequence is what enforces that order
+ * against the asynchronous handler.
+ *
+ * And the outcome is DECIDED, not assumed: a reap that was INTERRUPTED
+ * establishes nothing and the sequence is retried, and a child the reap
+ * says is STILL RUNNING is never reported as "stopped".
+ *
+ * THE SEQUENCE ITSELF IS THE SHIPPED ONE (NEW-3).  The daemon does not
+ * re-implement it: it calls `latch_guest_stop_sequence()` out of
+ * `qnx/latch_guest_child.h`, which is the same function the host test
+ * runs against a REAL child process.  A daemon whose stop path could
+ * drift from the tested logic would make the test a proof of nothing.
  */
 static int guest_stop(void) {
-    if (g_guest_pid <= 0) {
-        guest_reap_if_exited();
-        if (g_guest_pid <= 0) {
-            /* Already stopped.  Idempotent: report success with running=0. */
-            return EOK;
+    latch_guest_stop_request_t req;
+    req.pid      = g_guest_pid;
+    req.tries    = LATCH_GUEST_REAP_TRIES;
+    req.sleep_ns = LATCH_GUEST_REAP_SLEEP_NS;
+
+    latch_guest_stop_result_t res = latch_guest_stop_sequence(&req);
+
+    if (res.outcome == LATCH_GUEST_STOP_STOPPED) {
+        if (res.reap == LATCH_GUEST_REAP_REAPED) {
+            g_last_exit = (sig_atomic_t)res.status;
         }
+        g_guest_pid = -1;
+        printf("latch_guestd: guest VM stopped (pid %d, status 0x%X)\n",
+               (int)req.pid, (unsigned int)g_last_exit);
+        fflush(stdout);
+        return EOK;
     }
 
-    pid_t pid = g_guest_pid;
-    if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
-        fprintf(stderr, "latch_guestd: kill(%d): %s\n", (int)pid, strerror(errno));
-        return errno;
+    if (res.outcome == LATCH_GUEST_STOP_FAILED) {
+        fprintf(stderr, "latch_guestd: kill(%d): %s\n",
+                (int)req.pid, strerror(res.kill_errno));
+    } else if (res.outcome == LATCH_GUEST_STOP_RUNNING) {
+        fprintf(stderr, "latch_guestd: guest VM (pid %d) did not exit within "
+                        "the reap bound\n", (int)req.pid);
+    } else {
+        /* The sequence established NOTHING -- e.g. the reap was
+         * INTERRUPTED.  It is emphatically not a stop, and the daemon says
+         * so rather than reporting a success it did not earn. */
+        fprintf(stderr, "latch_guestd: the stop of the guest VM (pid %d) "
+                        "established nothing (reap outcome %d, wait errno %s); "
+                        "it may still be running.\n",
+                (int)req.pid, (int)res.reap,
+                res.wait_errno ? strerror(res.wait_errno) : "none");
     }
-
-    for (uint32_t i = 0u; i < LATCH_GUEST_REAP_TRIES; ++i) {
-        /*
-         * Use the SAME reaping path as everywhere else, so the SIGCHLD
-         * handler and this loop cannot both try to reap the child.  A
-         * non-zero return means the child is gone: either this loop reaped
-         * it, or the handler had already done so.
-         */
-        int r = guest_reap_if_exited();
-        if (r != 0) {
-            printf("latch_guestd: guest VM stopped (pid %d, status 0x%X)\n",
-                   (int)pid, (unsigned int)g_last_exit);
-            fflush(stdout);
-            return EOK;
-        }
-        struct timespec ts = { 0, LATCH_GUEST_REAP_SLEEP_NS };
-        (void)nanosleep(&ts, NULL);
-    }
-
-    fprintf(stderr, "latch_guestd: guest VM (pid %d) did not exit within the reap bound\n",
-            (int)pid);
-    return ETIMEDOUT;
+    return latch_guest_stop_errno(res.outcome);
 }
 
 static void guest_fill_status(latch_guest_status_t *st) {
     memset(st, 0, sizeof(*st));
     st->struct_size = (uint32_t)sizeof(*st);
     (void)guest_reap_if_exited();
-    st->running = (g_guest_pid > 0) ? 1u : 0u;
+    /* ONE read of the shared pid, so the two uses below cannot disagree
+     * with each other: `running` and `pid` must describe the SAME
+     * instant.  (NEW-3) */
+    int32_t pid = (g_guest_pid > 0) ? (int32_t)g_guest_pid : -1;
+    st->running = (pid > 0) ? 1u : 0u;
     st->generation = g_generation;
-    st->last_exit_status = g_last_exit;
-    st->pid = (g_guest_pid > 0) ? (int32_t)g_guest_pid : -1;
+    st->last_exit_status = (uint32_t)g_last_exit;
+    st->pid = pid;
 }
 
 /* -------------------------------------------------------------------------
@@ -640,8 +840,54 @@ int main(int argc, char *argv[]) {
         snprintf(g_conf_arg, sizeof(g_conf_arg), "@%s", g_conf_path);
     }
 
-    signal(SIGINT, guest_sig_handler);
-    signal(SIGTERM, guest_sig_handler);
+    /*
+     * THE TERMINATION SIGNALS ARE INSTALLED WITH `sigaction()` (NEW-3).
+     *
+     * Two reasons, and both of them are about the platform rather than
+     * about style.
+     *
+     * 1. `SA_RESTART` DOES NOT EXIST IN SDP 8.0.  The installed
+     *    `<signal.h>` carries the line
+     *
+     *        #define SA_RESTART      0x0040 (not supported yet)
+     *
+     *    commented out, so there is no way to ask for a restart, and none
+     *    is ever granted: a blocking call that is interrupted by a signal
+     *    returns `EINTR`.  The QNX 8.0 C Library Reference says so for
+     *    `MsgReceive()` -- which is what `dispatch_block()` waits on --
+     *    under `EINTR`: "The call was interrupted by a signal."  So the
+     *    dispatch loop DOES come back when a signal arrives, and the
+     *    termination flag below is read on the next turn of the loop.
+     *
+     * 2. `sigaction()` is the mechanism the QNX 8.0 C Library Reference
+     *    points new applications at ("The sigaction() function provides a
+     *    more comprehensive and reliable mechanism for controlling
+     *    signals; new applications should use it instead of signal()").
+     *    It also makes the handler's lifetime EXPLICIT: the handler stays
+     *    installed, so a second `SIGTERM` does the same thing as the
+     *    first instead of reverting to the default action.
+     *
+     * The handler itself does the LEAST it can: it sets two flags and
+     * returns.  It cannot do the stop work itself -- `guest_stop()`
+     * prints, sleeps and calls `waitpid()`, none of which is
+     * async-signal-safe -- so the ordinary code performs the stop after
+     * the dispatch loop has ended.  This is the same shape the
+     * guest-control gate uses: the signal says WHAT happened; the
+     * ordinary code decides what to do about it.
+     */
+    struct sigaction term_sa;
+    memset(&term_sa, 0, sizeof(term_sa));
+    term_sa.sa_handler = guest_sig_handler;
+    sigemptyset(&term_sa.sa_mask);
+    term_sa.sa_flags = 0;       /* no SA_RESTART: SDP 8.0 has none */
+    if (sigaction(SIGTERM, &term_sa, NULL) != 0) {
+        perror("latch_guestd: sigaction(SIGTERM)");
+        return EXIT_FAILURE;
+    }
+    if (sigaction(SIGINT, &term_sa, NULL) != 0) {
+        perror("latch_guestd: sigaction(SIGINT)");
+        return EXIT_FAILURE;
+    }
     signal(SIGPIPE, SIG_IGN);
 
     /*
@@ -738,6 +984,11 @@ int main(int argc, char *argv[]) {
     while (g_running) {
         if (dispatch_block(ctp) == NULL) {
             if (errno == EINTR) {
+                /* A signal interrupted the wait.  `g_running` is re-read
+                 * at the top of the loop, so a termination request is
+                 * noticed HERE -- on the next turn -- and not inside the
+                 * signal handler, which is where the stop work cannot
+                 * safely be done. */
                 continue;
             }
             break;
@@ -745,7 +996,39 @@ int main(int argc, char *argv[]) {
         (void)dispatch_handler(ctp);
     }
 
+    /*
+     * THE TERMINATION PATH (NEW-3).
+     *
+     * The daemon used to detach and exit with the guest hypervisor -- its
+     * own CHILD -- still running, as an ORPHAN.  A lifecycle daemon whose
+     * death leaves the thing it manages running is not a lifecycle daemon.
+     *
+     * The invariant is one sentence: **THE DAEMON NEVER EXITS WHILE ITS
+     * GUEST IS RUNNING.**  It is enforced here, on EVERY exit from the
+     * dispatch loop -- not only on the `SIGTERM` path, because an orphan
+     * is an orphan however the daemon came to leave.
+     *
+     * AND THE STOP MUST COMPLETE BEFORE THE DAEMON EXITS.  If the stop
+     * fails, the daemon says so LOUDLY and exits NON-ZERO: it must not
+     * exit successfully while reporting that it left the guest running.
+     * A non-zero exit is the honest answer, and the supervisor degrades to
+     * LATCH on its own, which is the safe direction.
+     */
+    int exit_status = EXIT_SUCCESS;
+    if (g_guest_pid > 0) {
+        fprintf(stderr, "latch_guestd: stopping the guest VM (%s).\n",
+                g_terminate ? "termination" : "dispatch-loop exit");
+        int stop_rc = guest_stop();
+        if (stop_rc != EOK) {
+            fprintf(stderr, "latch_guestd: the guest VM could NOT be stopped "
+                            "(%s); it may still be running.\n", strerror(stop_rc));
+            exit_status = EXIT_FAILURE;
+        }
+    } else if (g_terminate) {
+        fprintf(stderr, "latch_guestd: termination; the guest VM was already gone.\n");
+    }
+
     dispatch_context_free(ctp);
     resmgr_detach(dpp, id, _RESMGR_DETACH_ALL);
-    return EXIT_SUCCESS;
+    return exit_status;
 }

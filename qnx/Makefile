@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check latch-guestctl-guard-check latch-ingest-start-check
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check latch-guestctl-guard-check latch-ingest-start-check latch-guest-child-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -120,7 +120,7 @@ $(VERIFY_BIN): latch_verify.c latch_protocol.h $(MANIFEST_OBJ) | dirs
 # guest VM child process and serves the guest-control channel.  It links
 # libsecpol for the documented spawn-attribute type transition.
 ifeq ($(GUESTD_OK),1)
-$(GUESTD_BIN): latch_guestd.c latch_protocol.h | dirs
+$(GUESTD_BIN): latch_guestd.c latch_protocol.h latch_guest_child.h | dirs
 	$(CC) $(CFLAGS) latch_guestd.c -o $@ $(LDFLAGS) -lsecpol
 endif
 
@@ -196,6 +196,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory latch-hex-check
 	$(MAKE) --no-print-directory latch-guestctl-guard-check
 	$(MAKE) --no-print-directory latch-ingest-start-check
+	$(MAKE) --no-print-directory latch-guest-child-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
@@ -237,6 +238,15 @@ mutation-check:
 # surface as a confusing "cannot find libasan.so.8.0.0" instead of an
 # actionable message. So the target PROBES by compiling AND linking a tiny
 # program, and reports exactly which compiler it used.
+#
+# THE SANITIZER BUILD MUST SEE THE SAME DECLARATIONS AS THE NORMAL BUILD.
+# `-D_POSIX_C_SOURCE=200809L` is in the host-sim's CFLAGS, because the
+# suites use POSIX APIs that glibc hides under a strict `-std=c11` without
+# it.  The sanitizer flags carry it for the SAME reason the normal flags
+# request `_FORTIFY_SOURCE` EXPLICITLY: a sanitizer build that compiles a
+# DIFFERENT program is not a sanitizer build of this one.  (This is not
+# hypothetical: the guest-child suite uses `sigprocmask()`, and the
+# sanitizer build failed to compile it until the macro was added here.)
 check-asan:
 	@echo "=== Running AddressSanitizer & UndefinedBehaviorSanitizer Checks ==="
 	@mkdir -p $(BUILD_DIR)/asan
@@ -259,7 +269,7 @@ check-asan:
 	echo "=== sanitizer compiler: $$ASAN_CC ==="; \
 	echo $$ASAN_CC > $(BUILD_DIR)/asan/.compiler
 	@ASAN_CC=$$(cat $(BUILD_DIR)/asan/.compiler); \
-	ASAN_FLAGS="-fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -DLATCH_HOST_SIM"; \
+	ASAN_FLAGS="-fsanitize=address,undefined -std=c11 -Wall -Wextra -O1 -g -I. -D_POSIX_C_SOURCE=200809L -DLATCH_HOST_SIM"; \
 	$$ASAN_CC $$ASAN_FLAGS governor_policy.c governor_policy_test.c -o $(BUILD_DIR)/asan/governor_policy_test -lm && \
 	./$(BUILD_DIR)/asan/governor_policy_test && \
 	$$ASAN_CC $$ASAN_FLAGS governor_wire.c governor_wire_test.c -o $(BUILD_DIR)/asan/governor_wire_test -lm && \
@@ -285,7 +295,9 @@ check-asan:
 	$$ASAN_CC $$ASAN_FLAGS latch_guestctl_guard_test.c -o $(BUILD_DIR)/asan/latch_guestctl_guard_test -lpthread -lrt -lm && \
 	./$(BUILD_DIR)/asan/latch_guestctl_guard_test && \
 	$$ASAN_CC $$ASAN_FLAGS latch_ingest_start_test.c -o $(BUILD_DIR)/asan/latch_ingest_start_test -lpthread -lrt -lm && \
-	./$(BUILD_DIR)/asan/latch_ingest_start_test
+	./$(BUILD_DIR)/asan/latch_ingest_start_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_guest_child_test.c -o $(BUILD_DIR)/asan/latch_guest_child_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_guest_child_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -438,6 +450,34 @@ $(BUILD_DIR)/host-sim/latch_ingest_start_test: latch_ingest_start.h latch_ingest
 
 latch-ingest-start-check: $(BUILD_DIR)/host-sim/latch_ingest_start_test
 	./$(BUILD_DIR)/host-sim/latch_ingest_start_test
+
+# THE GUEST CHILD'S LIFECYCLE (NEW-3).
+#
+# `latch_guestd` owns the guest hypervisor as a CHILD PROCESS, and three of
+# its decisions were defects that all failed OPEN:
+#
+#   * the reap's outcome was read WITHOUT its `errno`, so `EINTR` (the call
+#     was interrupted) was read as "there is no such child" -- and a stop
+#     that reports success without stopping the guest lets the caller start
+#     a SECOND guest;
+#   * the SIGCHLD handler reaped ANY child with `waitpid(-1, ...)`, so the
+#     child's PID -- the handle `guest_stop()` sends `SIGKILL` through -- was
+#     released while the daemon still believed the guest was running; and
+#   * `SIGTERM` only cleared the run flag, so the daemon exited and left the
+#     guest hypervisor running as an ORPHAN.
+#
+# The decisions AND the masked kill-then-reap sequence live in the SHIPPED
+# header `qnx/latch_guest_child.h`, and the daemon CALLS them -- so this test
+# runs the daemon's own code.  It is not a copy: the test spawns REAL child
+# processes and proves that the mask keeps the SIGCHLD handler out of the
+# sequence, that the sequence's reap WINS the race against a handler that
+# reaps any child (which is what the old daemon's handler did), and that a
+# child the reap says is STILL RUNNING is never reported as "stopped".
+$(BUILD_DIR)/host-sim/latch_guest_child_test: latch_guest_child.h latch_guest_child_test.c | dirs
+	$(CC) $(CFLAGS) latch_guest_child_test.c -o $@ $(LDFLAGS)
+
+latch-guest-child-check: $(BUILD_DIR)/host-sim/latch_guest_child_test
+	./$(BUILD_DIR)/host-sim/latch_guest_child_test
 
 # THE HEX RENDERING, WITH A BOUNDS CHECK.
 #
