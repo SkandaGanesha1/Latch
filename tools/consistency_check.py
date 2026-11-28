@@ -2084,6 +2084,199 @@ def verify_event_hex_sizing():
                    "is one byte too small")
 
 
+# ---------------------------------------------------------------------------
+# THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY ABOUT IT (NEW-DOC-4)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS A DOCUMENT THAT DISAGREED WITH THE CODE, AND NOTHING
+# COMPARED THEM.
+#
+# `docs/DEVPOST_SUBMISSION.md` -- the submission a judge reads first --
+# called the LPR2 proposal an "LPR2 48-Byte IPC Proposal Subsystem", while
+# RT-02 had appended the session epoch and taken
+# `latch_ipc_proposal_v2_t` to 56 bytes.  The code was right; the
+# document was stale; and nothing in the tree compared a judge's document
+# with the ABI it describes.
+#
+# THE SIZE IS DERIVED, NEVER WRITTEN DOWN HERE.
+#
+# The gate reads the ABI's own declaration --
+# `_Static_assert(sizeof(latch_ipc_proposal_v2_t) == N u)` -- and every
+# number it checks against is that N.  A gate that hard-coded 56 would be
+# wrong the moment the ABI grew again, and the ABI has already grown once:
+# `tools/governor_e2e.py`'s `lpr2_size()` says exactly that in its own
+# docstring ("A literal here would let this test keep passing after the
+# IPC ABI changed -- which is exactly how the 48 -> 56 byte growth could
+# have gone unnoticed").
+#
+# THE SCOPE IS A RULE, NOT A FILE LIST.
+#
+# The judge-facing documents are the README and everything under `docs/`.
+# The CHANGELOG is a HISTORICAL release record -- it describes the ABI as
+# it was at each release -- so it is deliberately outside the scope, and
+# the generated archive under `docs/evidence/` is outside it too, because
+# it is produced from the code and therefore cannot drift.
+#
+# HOW A DOCUMENT'S CLAIM IS FOUND
+# -------------------------------
+# A document's LPR2 size claim is the byte count NEAREST to an LPR2
+# anchor on that line.  The rule is deliberately narrow: a paragraph can
+# legitimately mention several sizes (the LPRP v1 message is 24 bytes, the
+# appended fields are 20, the intended intermediate ABI was 48), and the
+# claim is the one that is ABOUT the LPR2 proposal.
+
+
+def _lpr2_derived_size():
+    """The LPR2 proposal's size, read out of the protocol header.
+
+    Returns (size, error).  The size comes from the header's own
+    compile-time declaration, so a gate that uses it keeps working when
+    the ABI grows.
+    """
+    proto_path = os.path.join(REPO_ROOT, "qnx", "latch_protocol.h")
+    if not os.path.isfile(proto_path):
+        return None, "qnx/latch_protocol.h is missing."
+    with io.open(proto_path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    m = re.search(
+        r"_Static_assert\s*\(\s*sizeof\s*\(\s*latch_ipc_proposal_v2_t\s*\)"
+        r"\s*==\s*(\d+)u", text)
+    if not m:
+        return None, ("qnx/latch_protocol.h does not declare the LPR2 "
+                      "proposal's size as "
+                      "`_Static_assert(sizeof(latch_ipc_proposal_v2_t) == N)`. "
+                      "That declaration is the ABI's single source of truth, "
+                      "and every number about the LPR2 size has to be "
+                      "derived from it.")
+    return int(m.group(1)), None
+
+
+def _lpr2_document_scope():
+    """The judge-facing documents: the README and everything under docs/.
+
+    Derived from the tree, not from a hard-coded list -- a list has to be
+    edited every time a file is added, and the day it is not edited is the
+    day it stops covering anything.
+    """
+    scope = []
+    readme = os.path.join(REPO_ROOT, "README.md")
+    if os.path.isfile(readme):
+        scope.append(readme)
+    docs_root = os.path.join(REPO_ROOT, "docs")
+    for dirpath, dirnames, filenames in os.walk(docs_root):
+        # The generated archive is produced FROM the code, so it cannot
+        # drift; and it is regenerated, so a gate on it would be a gate on
+        # the generator's output rather than on a claim.
+        dirnames[:] = [d for d in dirnames if d != "evidence"]
+        for name in sorted(filenames):
+            if name.endswith(".md"):
+                scope.append(os.path.join(dirpath, name))
+    return sorted(scope)
+
+
+def verify_lpr2_size_claims():
+    """The LPR2 proposal's size is DERIVED, and the documents agree with it."""
+    size, err = _lpr2_derived_size()
+    if err:
+        fail(err)
+        return
+
+    anchor_re = re.compile(r"LPR2|latch_ipc_proposal_v2_t")
+    byte_re = re.compile(r"(\d+)[\-\u2013]?\s*[Bb]ytes?\b")
+
+    checked = 0
+    for path in _lpr2_document_scope():
+        rel = os.path.relpath(path, REPO_ROOT)
+        with io.open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        for lineno, line in enumerate(lines, 1):
+            anchors = [m.start() for m in anchor_re.finditer(line)]
+            if not anchors:
+                continue
+            candidates = [(m.start(), m.group(1)) for m in byte_re.finditer(line)]
+            if not candidates:
+                continue
+            # The document's LPR2 size claim is the byte count NEAREST an
+            # LPR2 anchor.  A paragraph may legitimately mention other
+            # sizes (the LPRP v1 message, the appended fields); the claim
+            # is the one that is ABOUT the LPR2 proposal.
+            pos, claimed = min(
+                candidates,
+                key=lambda c: min(abs(c[0] - a) for a in anchors))
+            checked += 1
+            if int(claimed) != size:
+                fail("%s:%d says the LPR2 proposal is %s bytes, but "
+                     "`latch_ipc_proposal_v2_t` is %d bytes "
+                     "(`_Static_assert(sizeof(latch_ipc_proposal_v2_t) == "
+                     "%du)` in qnx/latch_protocol.h). A judge reads this "
+                     "document and then opens the code, and the two must "
+                     "say the same thing."
+                     % (rel, lineno, claimed, size, size))
+
+    # --- THE README'S LPR2 FIELD TABLE MUST END AT THE DERIVED SIZE -----
+    #
+    # The README carries the LPR2 layout as a byte-range table, and the
+    # LAST row's upper bound IS the message's size.  A table that still
+    # ended at 48 would be a 48-byte proposal described in a document
+    # whose heading said 56 -- and the two halves of the same section
+    # disagreeing is the shape a reader cannot see.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    if os.path.isfile(readme_path):
+        with io.open(readme_path, encoding="utf-8", errors="replace") as f:
+            readme_lines = f.read().splitlines()
+        section = None
+        for i, line in enumerate(readme_lines):
+            if re.match(r"^#{2,4}\s", line) and "LPR2" in line:
+                section = i
+                break
+        if section is None:
+            fail("README.md has no heading for the LPR2 internal IPC "
+                 "proposal, so its field layout cannot be checked against "
+                 "the ABI.")
+        else:
+            ranges = []
+            for line in readme_lines[section:]:
+                if re.match(r"^#{1,2}\s", line) or re.match(r"^---\s*$", line):
+                    break
+                # The table's ranges are half-open intervals, written the
+                # way the header writes them: `[0..4)`.
+                for m in re.finditer(
+                        r"\[\s*(\d+)\s*\.\.\s*(\d+)\s*[\)\]]", line):
+                    ranges.append((int(m.group(1)), int(m.group(2))))
+            if not ranges:
+                fail("README.md's LPR2 section carries no byte-range field "
+                     "table, so the layout a judge reads cannot be checked "
+                     "against the ABI.")
+            else:
+                table_hi = max(hi for _lo, hi in ranges)
+                if table_hi != size:
+                    fail("README.md's LPR2 field table ends at byte %d, but "
+                         "`latch_ipc_proposal_v2_t` is %d bytes. The table is "
+                         "the ABI described to a judge, so its last row has "
+                         "to end where the struct does."
+                         % (table_hi, size))
+
+            # --- AND THE README'S OWN ASSERT CITATION MUST AGREE --------
+            m_cite = re.search(
+                r"_Static_assert\s*\(\s*sizeof\s*\(\s*latch_ipc_proposal_v2_t"
+                r"\s*\)\s*==\s*(\d+)", "\n".join(readme_lines))
+            if not m_cite:
+                fail("README.md no longer cites the LPR2 size's "
+                     "compile-time assertion, so the document's number and "
+                     "the ABI's number cannot be compared.")
+            elif int(m_cite.group(1)) != size:
+                fail("README.md cites `_Static_assert(sizeof("
+                     "latch_ipc_proposal_v2_t) == %s)`, but the header says "
+                     "%d. The README quotes the assertion, so the two must "
+                     "be the same number." % (m_cite.group(1), size))
+
+    if checked:
+        pass_check("the LPR2 proposal's size is DERIVED from "
+                   "`sizeof(latch_ipc_proposal_v2_t)` (%d bytes) and every "
+                   "judge-facing document agrees with it (%d claim(s) "
+                   "checked)" % (size, checked))
+
+
 def verify_first_reader_decision():
     """The first-reader decision is shared, host-tested, and atomic.
 
@@ -5743,6 +5936,15 @@ def main():
     # the shared renderer refuses a buffer that is too small instead of
     # overflowing it.  See `verify_event_hex_sizing()`.
     verify_event_hex_sizing()
+
+    # --- THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY (NEW-DOC-4)
+    #
+    # `docs/DEVPOST_SUBMISSION.md` -- the submission a judge reads first --
+    # called the LPR2 proposal 48 bytes while RT-02 had taken
+    # `latch_ipc_proposal_v2_t` to 56.  The size is DERIVED from the
+    # header's own assertion now, so the documents cannot drift away from
+    # the ABI.  See `verify_lpr2_size_claims()`.
+    verify_lpr2_size_claims()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #

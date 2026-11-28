@@ -1459,6 +1459,59 @@ MUTATIONS = [
      "renderer's refusal of a too-small buffer would have no proof)",
      "qnx/Makefile",
      [("\t$(MAKE) --no-print-directory latch-hex-check\n", "")]),
+
+    # ------------------------------------------------------------------------
+    # NEW-DOC-4: THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY
+    # ------------------------------------------------------------------------
+    #
+    # `docs/DEVPOST_SUBMISSION.md` -- the submission a judge reads first --
+    # called the LPR2 proposal an "LPR2 48-Byte IPC Proposal Subsystem",
+    # while RT-02 had appended the session epoch and taken
+    # `latch_ipc_proposal_v2_t` to 56 bytes.  The code was right, the
+    # document was stale, and nothing in the tree compared a judge's
+    # document with the ABI it describes.
+    #
+    # The gate DERIVES the size from the header's own
+    # `_Static_assert(sizeof(latch_ipc_proposal_v2_t) == N u)`, so these
+    # mutations cover both halves: the documents must agree with the
+    # derived size, AND the derived size must actually MOVE when the ABI
+    # moves (which is what a gate carrying a hard-coded 56 could never
+    # notice).
+
+    ("NEW-DOC-4: the Devpost submission calls the LPR2 proposal 48 bytes "
+     "again (RT-02 took `latch_ipc_proposal_v2_t` to 56, and the submission "
+     "is the document a judge reads FIRST)",
+     "docs/DEVPOST_SUBMISSION.md",
+     [("**LPR2 56-Byte IPC Proposal Subsystem**",
+       "**LPR2 48-Byte IPC Proposal Subsystem**")]),
+
+    ("NEW-DOC-4: the README's LPR2 field table stops at 48 bytes (the table "
+     "is the ABI described to a judge, so its last row has to end where the "
+     "struct does)",
+     "README.md",
+     [("| `[52..56)` | `uint32_t` | `reserved1` |",
+       "| `[52..48)` | `uint32_t` | `reserved1` |")]),
+
+    ("NEW-DOC-4: the README cites a stale size for the LPR2 assertion (the "
+     "README quotes the assertion, so the two numbers must be the same)",
+     "README.md",
+     [("`_Static_assert(sizeof(latch_ipc_proposal_v2_t) == 56)`",
+       "`_Static_assert(sizeof(latch_ipc_proposal_v2_t) == 48)`")]),
+
+    ("NEW-DOC-4: THE ABI GROWS AND THE DOCUMENTS DO NOT (the struct gains a "
+     "field and the compile-time declaration moves with it, so the tree "
+     "still COMPILES -- and every document is now stale. A gate that "
+     "carried a hard-coded 56 would keep passing here, which is exactly "
+     "how the 48 -> 56 growth went unnoticed in the first place)",
+     "qnx/latch_protocol.h",
+     [("    uint32_t session_epoch;\n    uint32_t reserved1;\n} "
+       "latch_ipc_proposal_v2_t;\n\n_Static_assert(sizeof("
+       "latch_ipc_proposal_v2_t) == 56u,\n               \"latch_ipc_"
+       "proposal_v2_t must be exactly 56 bytes\");",
+       "    uint32_t session_epoch;\n    uint32_t reserved1;\n    uint32_t "
+       "reserved2;\n} latch_ipc_proposal_v2_t;\n\n_Static_assert(sizeof("
+       "latch_ipc_proposal_v2_t) == 60u,\n               \"latch_ipc_"
+       "proposal_v2_t must be exactly 60 bytes\");")]),
 ]
 
 

@@ -34,6 +34,7 @@ exit status: 0
 [CONSISTENCY PASS] C-3 publisher lifetime: the mutex and the condvar are process-lifetime objects -- they are initialised exactly once by pthread_once, never destroyed, and the shipped host test proves that a refused publish, a status snapshot and a RESTART all work after a stop
 [CONSISTENCY PASS] NEW-4 hold ordering: the shared decision takes the snapshot BEFORE it writes, both call sites use it, and the shipped host test proves that a refused command changes NOTHING
 [CONSISTENCY PASS] EVHEX hex sizing: no hex buffer carries a literal length, both sizes are derived from the things they render, and the shared renderer REFUSES a buffer that is one byte too small
+[CONSISTENCY PASS] the LPR2 proposal's size is DERIVED from `sizeof(latch_ipc_proposal_v2_t)` (56 bytes) and every judge-facing document agrees with it (10 claim(s) checked)
 [CONSISTENCY PASS] Feedback-transport probe (W4): read-only verdict file on virtio-blk, the sink is its only writer and writes on a dedicated thread, the probe reads with pread64 before the session opens, one console report, the production LFBK frame format, experiment's policy additions kept out of the deployment
 [CONSISTENCY PASS] LFBK feedback frame (W5): 28 bytes, session epoch beside the sequence number, CRC over the first 24, sequence+epoch correlation, zero epoch rejected
 [CONSISTENCY PASS] W5 verdict vocabulary: closed on both sides, the two implementations agree on the numbers, an unknown verdict is -EBADMSG, and the timeout verdict and the timeout flag must agree in both directions
@@ -96,7 +97,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2455 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2174 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)
