@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check latch-guestctl-guard-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -194,6 +194,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory latch-soak-pace-check
 	$(MAKE) --no-print-directory latch-hold-check
 	$(MAKE) --no-print-directory latch-hex-check
+	$(MAKE) --no-print-directory latch-guestctl-guard-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
@@ -279,7 +280,9 @@ check-asan:
 	$$ASAN_CC $$ASAN_FLAGS latch_hold_test.c -o $(BUILD_DIR)/asan/latch_hold_test -lpthread -lrt -lm && \
 	./$(BUILD_DIR)/asan/latch_hold_test && \
 	$$ASAN_CC $$ASAN_FLAGS latch_hex_test.c -o $(BUILD_DIR)/asan/latch_hex_test -lpthread -lrt -lm && \
-	./$(BUILD_DIR)/asan/latch_hex_test
+	./$(BUILD_DIR)/asan/latch_hex_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_guestctl_guard_test.c -o $(BUILD_DIR)/asan/latch_guestctl_guard_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_guestctl_guard_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -388,6 +391,26 @@ $(BUILD_DIR)/host-sim/latch_hold_test: latch_hold.h latch_protocol.h latch_hold_
 
 latch-hold-check: $(BUILD_DIR)/host-sim/latch_hold_test
 	./$(BUILD_DIR)/host-sim/latch_hold_test
+
+# THE GUEST-CONTROL GATE (C-7).
+#
+# `/dev/latch/guestctl` can stop and start the guest VM.  Before the fix it
+# had no access control of its own: the node was world read/write, the
+# client opened it read-only, and the mutating devctls checked NOTHING -- so
+# "may connect to the channel" silently meant "may kill the guest".
+#
+# The fix is TWO INDEPENDENT checks -- the open must carry `_IO_FLAG_WR`,
+# and the client must hold the dedicated `latch/guestctl` ability -- and
+# the DECISION lives in the SHIPPED header `qnx/latch_guestctl_guard.h`, so
+# the resource manager and this test run the same code.  The decisive
+# assertion is the COUNT: of the four (write flag, ability) combinations,
+# EXACTLY ONE allows the mutation.  One check alone would allow three, so
+# a future edit that weakens the gate to a single check fails here.
+$(BUILD_DIR)/host-sim/latch_guestctl_guard_test: latch_guestctl_guard.h latch_guestctl_guard_test.c | dirs
+	$(CC) $(CFLAGS) latch_guestctl_guard_test.c -o $@ $(LDFLAGS)
+
+latch-guestctl-guard-check: $(BUILD_DIR)/host-sim/latch_guestctl_guard_test
+	./$(BUILD_DIR)/host-sim/latch_guestctl_guard_test
 
 # THE HEX RENDERING, WITH A BOUNDS CHECK.
 #

@@ -1851,6 +1851,127 @@ v14 P0 finding C-3. Read them before touching
   reproduce the module's own build flags exactly, or it is testing
   something the module does not ship.
 
+### 4i. Facts about the GUEST-CONTROL GATE (C-7)
+
+These were measured on this tree on 2026-11-28, while remediating the v13
+audit finding C-7 (`/dev/latch/guestctl` had no access control of its
+own). Read them before touching `qnx/latch_guestd.c` or the policy's
+`guest_ctl_t` rules.
+
+- **"MAY CONNECT" AND "MAY MUTATE" ARE TWO DIFFERENT GRANTS, AND THE
+  CHANNEL TYPE ONLY EXPRESSES THE FIRST.** `/dev/latch/guestctl` is the one
+  channel that can STOP and START the guest VM — the VM the whole safety
+  envelope is built around — and before the fix it had NO access control
+  of its own: the node was `S_IFCHR | 0666` (world read/write), `latchctl`
+  opened it `O_RDONLY`, and the `STOP`/`START` devctls checked **NOTHING**.
+  The policy limited *which types may connect* (`guest_ctl_t`), and that
+  was silently read as "may kill the guest": every type that could open
+  the node could also respawn it. **A channel type is an ACCESS rule, and
+  a mutating device needs a GRANT as well.**
+
+- **THE TWO GATES ANSWER TWO DIFFERENT QUESTIONS, AND NEITHER IMPLIES THE
+  OTHER.** There are four (open-flag, ability) combinations, of which
+  exactly ONE allows the mutation:
+
+  | open carries `_IO_FLAG_WR` | client holds `latch/guestctl` | result |
+  |---|---|---|
+  | no | no | REFUSED (no write flag) |
+  | no | yes | REFUSED (no write flag) |
+  | yes | no | REFUSED (no ability) |
+  | yes | yes | ALLOWED |
+
+  The **write flag** separates MUTATE from OBSERVE: a read-only open can
+  read the guest's status and can do nothing else. The **ability**
+  separates a NAMED, REVOCABLE GRANT from an IMPLICIT CONNECT. One gate
+  alone would allow three of the four rows, which is why the host test
+  asserts the **COUNT** and not merely the individual verdicts.
+
+- **THE OPERATOR SHELL KEEPS THE ABILITY, AND THAT IS DELIBERATE — THE
+  PLAN'S FIRST DRAFT GOT IT WRONG.** The v15 plan's §5.2 originally said
+  "the operator shell does not hold it, so the guest-restart verb from the
+  operator shell is refused". That would have broken the product:
+  `latchctl guest-restart` is U-1's **recovery path**, and
+  `tools/qemu_guest_kill.py` PHASE 9 depends on it. The operator shell
+  therefore holds `latch/guestctl`, and what the gate removes is the
+  "connect implies mutate" implication — not the operator's ability to
+  recover the guest. **A security change that silently removes an
+  operator's recovery path is a functional regression wearing a
+  security hat.** If a future change does refuse the operator shell, the
+  recovery path has to be re-designed in the SAME change, not left
+  broken.
+
+- **`iofunc_client_info_able()` RETURNS `EOK` AND *SETS* `_NTO_CI_UNABLE`
+  WHEN THE CLIENT LACKS THE ABILITY.** The QNX 8.0 reference says the
+  function returns `EOK` if the client information was obtained, and the
+  `info->flags` field carries `_NTO_CI_UNABLE` (`0x00000100U`) when the
+  client lacks **any** of the listed abilities. It returns an error only
+  when the client information **itself** cannot be obtained (`EINVAL` /
+  `ENOMEM`). So the verdict has to be READ OUT of `info->flags`, and a
+  daemon that asserts `has_ability = true` is not checking anything. The
+  client information is released with `iofunc_client_info_ext_free()`.
+
+- **`procmgr_ability_create(name, 0)` IS IDEMPOTENT, AND CREATING AN
+  ABILITY NEEDS `able_create`.** The QNX 8.0 reference says a subsequent
+  call whose flags do not omit a privilege domain included at creation
+  returns the ability id without changing the permissions; flags `0`
+  includes no domain, so a daemon restart finds the same ability.
+  Creating an ability requires the `able_create` (`PROCMGR_AID_ABLE_CREATE`)
+  ability, so `latch_guestd_t` has to hold it — which is why the policy
+  grant grew by exactly one line.
+
+- **FLAGS `0` IS WHAT MAKES AN ABILITY A GRANT RATHER THAN A DEFAULT.**
+  `procmgr_ability_create(name, 0)` means NEITHER root nor non-root
+  receives the ability unless the policy names a type, so the only way to
+  hold `latch/guestctl` is to be granted it by name.
+
+- **THE GRANT SET AND THE CONNECT SET MUST BE THE SAME SET, IN BOTH
+  DIRECTIONS.** `tools/consistency_check.py` derives both from
+  `qnx/latch.secpol` — the connect set from the `allow <type>
+  guest_ctl_t:channel connect;` rules, the holder set from the
+  `allow <type> self:ability { … }` blocks that name the ability — and
+  fails if they differ in either direction. The invariant is what makes
+  the gate worth having: a type can be added to the connect list without
+  silently acquiring the power to stop the guest, and a type that cannot
+  reach the channel cannot carry a grant to change the guest through it.
+  The ability's NAME is defined **once**, in the shipped header
+  `qnx/latch_guestctl_guard.h`, and the checker reads it from there — so
+  the daemon, the policy and the gate cannot drift onto three different
+  spellings.
+
+- **THE DECISION HAS TO LIVE IN A SHIPPED HEADER, BECAUSE THE QNX PATH
+  CANNOT BE EXERCISED OFF-TARGET.** `qnx/latch_guestctl_guard.h` holds
+  `latch_guestctl_decide()`; the resource manager and the host test both
+  run it. The decision **fails closed**: `ALLOW` is the zero value, every
+  other value is a refusal, and an out-of-range value is refused too. The
+  success errno is spelled `LATCH_GUESTCTL_OK 0` rather than `EOK`,
+  because `EOK` is a QNX-only name and the header is host-compiled.
+
+- **THE NODE'S MODE IS `0660`, AND THAT IS NOT THE WHOLE FIX.** The mode
+  stops the world from opening the node; the write-flag check stops a
+  read-only descriptor from mutating; the ability check stops a connecting
+  type from mutating without a named grant. Three gates, and the mode is
+  the weakest of them — but it is also the one a reader can see with
+  `ls`, so it is worth having.
+
+- **THE MUTATING VERBS MUST CHECK BEFORE THEY TOUCH ANYTHING.** The
+  authority check is the FIRST thing both the `STOP` and the `START`
+  cases do, and the read-only `GET_GUEST_STATUS` case deliberately does
+  **not** call it — observing the guest's state is not a mutation, and
+  the whole point of the gate is that OBSERVE and MUTATE are different
+  operations. The client's access mode is therefore part of the
+  protocol: `guest_open_ctl(true)` opens `O_WRONLY` for the mutating
+  verbs and `guest_open_ctl(false)` opens `O_RDONLY` for the status one.
+
+- **THE ON-TARGET NEGATIVE CASE IS NOT REACHABLE WITH THE SHIPPED
+  CLIENTS, AND THAT MUST BE STATED HONESTLY.** Because the grant set
+  equals the connect set, every type that can open the node can also
+  mutate it, so the "no ability" refusal cannot be demonstrated on the
+  target with the shipped clients. What the target CAN show is the mode
+  (`0660`), the status verb working through a read-only open, and the
+  restart working through a write open with the grant held. The
+  ability's negative case is proved **off-target**, by the host test's
+  truth table.
+
 ---
 
 ## 5. What this project must never claim

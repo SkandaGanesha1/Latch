@@ -539,12 +539,24 @@ static int do_session_status(int fd) {
  * and which therefore never streams -- a silent failure that looks like a
  * working system.  Leaving the guest down is the safe direction: the
  * supervisor is in LATCH, the plant is frozen, and the operator is told.
+ *
+ * THE OPEN'S ACCESS MODE IS PART OF THE PROTOCOL (C-7).
+ *
+ * The daemon refuses a mutating devctl unless the open that carries it was
+ * opened for WRITING (`_IO_FLAG_WR`), and unless the client holds the
+ * dedicated `latch/guestctl` ability.  So this client opens the node
+ * `O_WRONLY` for the verbs that change the guest's state, and `O_RDONLY`
+ * for the verb that only observes it.  The two are separate opens on
+ * purpose: the read-only verb must work for a client that has no mutation
+ * authority at all, and the mutating verbs must not be reachable through a
+ * descriptor that was never opened for writing.
  */
-static int guest_open_ctl(void) {
-    int fd = open(LATCH_DEV_GUESTCTL, O_RDONLY);
+static int guest_open_ctl(bool for_mutation) {
+    int fd = open(LATCH_DEV_GUESTCTL, for_mutation ? O_WRONLY : O_RDONLY);
     if (fd < 0) {
-        fprintf(stderr, "latchctl: Cannot open '%s': %s\n",
-                LATCH_DEV_GUESTCTL, strerror(errno));
+        fprintf(stderr, "latchctl: Cannot open '%s'%s: %s\n",
+                LATCH_DEV_GUESTCTL, for_mutation ? " for writing" : "",
+                strerror(errno));
         fprintf(stderr, "latchctl: (the guest-lifecycle daemon is present only on "
                         "profiles that run a guest VM)\n");
         return -1;
@@ -568,7 +580,9 @@ static int guest_devctl(int fd, unsigned int dcmd, latch_guest_status_t *rep) {
 }
 
 static int do_guest_status(void) {
-    int fd = guest_open_ctl();
+    /* The READ-ONLY verb: an `O_RDONLY` open, and no mutation authority
+     * required.  Observing the guest's state is not a mutation. */
+    int fd = guest_open_ctl(false);
     if (fd < 0) {
         return 1;
     }
@@ -617,7 +631,10 @@ static int do_guest_restart(int argc, char *argv[]) {
         }
     }
 
-    int ctl_fd = guest_open_ctl();
+    /* The MUTATING verbs below (STOP and START) need an `O_WRONLY` open:
+     * the daemon refuses a mutation unless the descriptor carries
+     * `_IO_FLAG_WR` AND the client holds the `latch/guestctl` ability. */
+    int ctl_fd = guest_open_ctl(true);
     if (ctl_fd < 0) {
         return 1;
     }

@@ -35,6 +35,7 @@ exit status: 0
 [CONSISTENCY PASS] C-3 publisher lifetime: the mutex and the condvar are process-lifetime objects -- they are initialised exactly once by pthread_once, never destroyed, and the shipped host test proves that a refused publish, a status snapshot and a RESTART all work after a stop
 [CONSISTENCY PASS] NEW-4 hold ordering: the shared decision takes the snapshot BEFORE it writes, both call sites use it, and the shipped host test proves that a refused command changes NOTHING
 [CONSISTENCY PASS] EVHEX hex sizing: no hex buffer carries a literal length, both sizes are derived from the things they render, and the shared renderer REFUSES a buffer that is one byte too small
+[CONSISTENCY PASS] C-7 guest-control gate: the node is 0660, the two independent checks are in one helper, both mutating verbs call it, the read-only verb does not, the ability is a named grant held by exactly the types that may connect, the client opens the node the way the gate expects, and the shipped host test proves that EXACTLY ONE of the four combinations allows the mutation
 [CONSISTENCY PASS] the LPR2 proposal's size is DERIVED from `sizeof(latch_ipc_proposal_v2_t)` (56 bytes) and every judge-facing document agrees with it (10 claim(s) checked)
 [CONSISTENCY PASS] every signed contract's sidecar is a `sha256sum` line naming the contract by its repository-root-relative path, and `sha256sum -c` verifies all 5 of them from the repository root
 [CONSISTENCY PASS] the guest's cross-core words are published with HARDWARE barriers: 6 cross-core scalar(s) (g_fb_cmd_seq, g_fb_seq_sent, g_fb_verdict_word, g_fb_watcher_state, g_fb_watcher_stop_requested, g_fb_watcher_stopped) reach the other core only through guest/latch_fb_publish.h, 1 cross-core aggregate(s) (g_fb_summary) are published behind one flag, and every accessor compiles to a real `dmb` on AArch64 (aarch64-linux-gnu-gcc, clang --target=aarch64-linux-gnu)
@@ -100,7 +101,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2194 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2094 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)

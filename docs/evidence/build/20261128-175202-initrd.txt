@@ -1,7 +1,7 @@
 ==============================================================================
 LATCH guest initramfs forensics
 ==============================================================================
-Path : /home/skanda/.opencode/work/fix/Latch/guest/linux-guest.initrd
+Path : /home/skanda/.opencode/work/Latch/guest/linux-guest.initrd
 Size : 3431 bytes
 
 Uncompressed cpio archive: 68608 bytes

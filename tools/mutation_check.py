@@ -1711,6 +1711,96 @@ MUTATIONS = [
        "static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
        "                                                    uint32_t value) {\n"
        "    if (0) { __atomic_thread_fence(__ATOMIC_RELEASE); }")]),
+
+    # ------------------------------------------------------------------------
+    # C-7: THE GUEST-CONTROL GATE
+    # ------------------------------------------------------------------------
+    #
+    # `/dev/latch/guestctl` can stop and start the guest VM -- the VM the
+    # whole safety envelope is built around -- and it had NO access control
+    # of its own.  The node was world read/write, the client opened it
+    # read-only, and the mutating devctls checked NOTHING, so "may connect
+    # to the channel" silently meant "may kill the guest".
+    #
+    # The fix is TWO INDEPENDENT checks -- the open must carry
+    # `_IO_FLAG_WR`, and the client must hold the dedicated `latch/guestctl`
+    # ability -- and of the four (write flag, ability) combinations, EXACTLY
+    # ONE allows the mutation.  One check alone would allow three, so every
+    # mutation below attacks ONE of the two gates, the grant, or the proof
+    # that they are both there.
+    #
+    # The LAST one is the interesting one: it weakens the SHIPPED HEADER,
+    # which is what the resource manager and the host test both run, so it
+    # is the only mutation that the compiled half of the gate can catch.
+
+    ("C-7: the guest-control node is world read/write again (0666 instead of "
+     "0660 -- every process on the system could open it)",
+     "qnx/latch_guestd.c",
+     [("iofunc_attr_init(&g_guest_attr.attr, S_IFCHR | 0660, NULL, NULL);",
+       "iofunc_attr_init(&g_guest_attr.attr, S_IFCHR | 0666, NULL, NULL);")]),
+
+    ("C-7: the WRITE-FLAG check is removed (a client that opened the node "
+     "READ-ONLY could still stop the guest -- one gate is not enough)",
+     "qnx/latch_guestd.c",
+     [("    bool has_write_flag = (io_ocb->ioflag & _IO_FLAG_WR) != 0;",
+       "    bool has_write_flag = true;")]),
+
+    ("C-7: the ABILITY verdict is ASSERTED instead of read out of the "
+     "client information (the kernel's answer is overridden by a constant)",
+     "qnx/latch_guestd.c",
+     [("    has_ability = (info != NULL) && ((info->flags & _NTO_CI_UNABLE) == 0u);",
+       "    has_ability = true;")]),
+
+    ("C-7: the START verb stops calling the authority helper (the STOP verb "
+     "is still checked, so the two mutating verbs drift apart)",
+     "qnx/latch_guestd.c",
+     [("        case (unsigned int)DCMD_LATCH_GUEST_START: {\n"
+       "            /* THE AUTHORITY CHECK COMES FIRST, exactly as it does for the\n"
+       "             * STOP verb: no request without the write flag and the\n"
+       "             * `latch/guestctl` ability reaches the spawn path. */\n"
+       "            int auth = guest_require_mutation_authority(ctp, io_ocb);\n"
+       "            if (auth != EOK) {\n"
+       "                return auth;\n"
+       "            }\n",
+       "        case (unsigned int)DCMD_LATCH_GUEST_START: {\n")]),
+
+    ("C-7: the guest-control ability is granted to a type that may NOT "
+     "connect to the guest-control channel (the grant and the connect rule "
+     "have to be the SAME set)",
+     "qnx/latch.secpol",
+     [("allow latchd_t self:ability {\n"
+       "    able_create\n"
+       "    mem_lock\n"
+       "    pathspace\n"
+       "    priority\n"
+       "    runstate\n"
+       "    public_channel\n"
+       "    latch/actuator\n"
+       "};",
+       "allow latchd_t self:ability {\n"
+       "    able_create\n"
+       "    mem_lock\n"
+       "    pathspace\n"
+       "    priority\n"
+       "    runstate\n"
+       "    public_channel\n"
+       "    latch/actuator\n"
+       "    latch/guestctl\n"
+       "};")]),
+
+    ("C-7: the guest-control gate's host test is dropped from the regression "
+     "suite (the truth table is then a file nobody runs)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-guestctl-guard-check\n", "")]),
+
+    ("C-7: the SHIPPED guard header stops checking the ability (the "
+     "resource manager and the host test both run this header, so the "
+     "compiled half of the gate is the only thing that can catch it)",
+     "qnx/latch_guestctl_guard.h",
+     [("    if (!has_ability) {\n"
+       "        return LATCH_GUESTCTL_DENY_NO_ABILITY;\n"
+       "    }\n",
+       "    (void)has_ability;\n")]),
 ]
 
 

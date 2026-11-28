@@ -72,6 +72,7 @@
 #include <sys/iofunc.h>
 #include <sys/iomsg.h>
 #include <sys/neutrino.h>
+#include <sys/procmgr.h>
 #include <sys/resmgr.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -80,6 +81,15 @@
 #include <secpol/secpol.h>
 
 #include "latch_protocol.h"
+
+/* THE GUEST-CONTROL GATE (C-7).
+ *
+ * The decision -- "may this open mutate the guest's state?" -- lives in
+ * this SHIPPED header, so the resource manager and the host test exercise
+ * the same code.  The two checks it makes are INDEPENDENT: the open must
+ * carry `_IO_FLAG_WR`, and the client must hold the dedicated
+ * `latch/guestctl` ability. */
+#include "latch_guestctl_guard.h"
 
 /* THE RESOURCE MANAGER'S ATTRIBUTE LOCK.  Every iofunc entry point this
  * resource manager calls goes through the wrappers in this header, so
@@ -133,6 +143,14 @@ static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_pending_reaped = 0;
 static pid_t       g_pending_pid    = -1;
 static uint32_t    g_pending_status = 0u;
+
+/* The dedicated `latch/guestctl` ability (C-7).  It is created by the
+ * daemon at start-up with flags 0 -- neither root nor non-root receives it
+ * by default -- so the ONLY way to hold it is to be granted it by name in
+ * the security policy.  That is what makes it a grant rather than a
+ * default: a type that can CONNECT to the guest-control channel does not
+ * thereby gain the power to stop the guest. */
+static int         g_ability_guestctl_id = -1;
 
 /* -------------------------------------------------------------------------
  * Helpers
@@ -367,6 +385,75 @@ static void guest_fill_status(latch_guest_status_t *st) {
  * Resource manager
  * ------------------------------------------------------------------------- */
 
+/*
+ * THE MUTATION AUTHORITY CHECK (C-7).
+ *
+ * Two INDEPENDENT checks, and the decision lives in the shipped header
+ * `qnx/latch_guestctl_guard.h` so that the host test exercises the same
+ * code the resource manager runs:
+ *
+ *   1. THE WRITE FLAG.  The open that carries this devctl must have been
+ *      opened for writing (`_IO_FLAG_WR`).  This is what separates MUTATE
+ *      from OBSERVE: a read-only open can read the guest's status and can
+ *      do nothing else.  It is checked on the OCB's ioflag, so it cannot
+ *      be spoofed by the message.
+ *
+ *   2. THE ABILITY.  The client must hold the dedicated `latch/guestctl`
+ *      ability.  This is what separates a NAMED, REVOCABLE GRANT from an
+ *      IMPLICIT CONNECT: the channel-connect rule says who may talk to
+ *      the daemon, and the ability says who may change the guest.
+ *
+ * NEITHER CHECK IMPLIES THE OTHER, and there are four combinations of
+ * them, of which exactly ONE allows the mutation.  `latchctl` therefore
+ * opens the node `O_WRONLY` for the mutating verbs and `O_RDONLY` for the
+ * read-only one.
+ *
+ * IT FAILS CLOSED: if the ability cannot be established, the request is
+ * REFUSED -- exactly like a client that demonstrably lacks it.
+ */
+static int guest_require_mutation_authority(resmgr_context_t *ctp,
+                                             iofunc_ocb_t *io_ocb) {
+    bool has_write_flag = (io_ocb->ioflag & _IO_FLAG_WR) != 0;
+    bool has_ability = false;
+
+    struct _client_info *info = NULL;
+    struct _client_able  able;
+    memset(&able, 0, sizeof(able));
+    able.ability = (uint32_t)g_ability_guestctl_id;
+    able.flags   = 0u;
+    able.range_lo = 0u;
+    able.range_hi = 0u;
+
+    /*
+     * `iofunc_client_info_able()` returns EOK and sets `_NTO_CI_UNABLE` in
+     * `info->flags` when the client does not hold ALL of the listed
+     * abilities; it returns an error only when the client information
+     * could not be obtained at all.  Both are refusals, and the error is
+     * passed through unchanged so the caller can tell the two apart.
+     */
+    int status = iofunc_client_info_able(ctp, io_ocb->ioflag, &info, 0, &able, 1);
+    if (status != EOK) {
+        if (info != NULL) {
+            iofunc_client_info_ext_free(&info);
+        }
+        return status;
+    }
+
+    has_ability = (info != NULL) && ((info->flags & _NTO_CI_UNABLE) == 0u);
+    iofunc_client_info_ext_free(&info);
+
+    latch_guestctl_decision_t decision = latch_guestctl_decide(has_write_flag,
+                                                              has_ability);
+    if (!latch_guestctl_allowed(decision)) {
+        fprintf(stderr,
+                "latch_guestd: REFUSED a guest-control mutation (write_flag=%d "
+                "ability=%d)\n",
+                has_write_flag ? 1 : 0, has_ability ? 1 : 0);
+        return latch_guestctl_errno(decision);
+    }
+    return EOK;
+}
+
 static int guest_io_open(resmgr_context_t *ctp,
                          io_open_t *msg,
                          RESMGR_HANDLE_T *handle,
@@ -375,11 +462,11 @@ static int guest_io_open(resmgr_context_t *ctp,
     (void)handle;
     (void)extra;
     /*
-     * The channel type (`guest_ctl_t`) is what actually gates access: the
-     * security policy allows only `latchctl_t` and `operator_shell_t` to
-     * connect to a channel of that type.  The node itself is opened
-     * read-only by default; the mutating devctls are the only way to
-     * change the guest's state.
+     * The channel type (`guest_ctl_t`) limits WHICH TYPES may connect, and
+     * the dedicated `latch/guestctl` ability limits WHO MAY MUTATE.  The
+     * node itself is not world-accessible any more: it is `0660`, and the
+     * mutating verbs additionally require an open that carries
+     * `_IO_FLAG_WR` (see `guest_require_mutation_authority()`).
      */
     (void)msg;
     return latch_rm_open_default(ctp, msg, handle, extra);
@@ -404,6 +491,15 @@ static int guest_io_devctl(resmgr_context_t *ctp,
 
     switch ((unsigned int)msg->i.dcmd) {
         case (unsigned int)DCMD_LATCH_GUEST_STOP: {
+            /*
+             * THE AUTHORITY CHECK COMES FIRST, before anything is touched:
+             * a client without the write flag or without the ability is
+             * refused before the daemon looks at the request at all.
+             */
+            int auth = guest_require_mutation_authority(ctp, io_ocb);
+            if (auth != EOK) {
+                return auth;
+            }
             if (msg->i.nbytes < sizeof(latch_guest_status_t) ||
                 ctp->msg_max_size < sizeof(msg->o) + sizeof(latch_guest_status_t) ||
                 ctp->info.dstmsglen < 0 ||
@@ -421,6 +517,13 @@ static int guest_io_devctl(resmgr_context_t *ctp,
             break;
         }
         case (unsigned int)DCMD_LATCH_GUEST_START: {
+            /* THE AUTHORITY CHECK COMES FIRST, exactly as it does for the
+             * STOP verb: no request without the write flag and the
+             * `latch/guestctl` ability reaches the spawn path. */
+            int auth = guest_require_mutation_authority(ctp, io_ocb);
+            if (auth != EOK) {
+                return auth;
+            }
             if (msg->i.nbytes < sizeof(latch_guest_status_t) ||
                 ctp->msg_max_size < sizeof(msg->o) + sizeof(latch_guest_status_t) ||
                 ctp->info.dstmsglen < 0 ||
@@ -438,6 +541,14 @@ static int guest_io_devctl(resmgr_context_t *ctp,
             break;
         }
         case (unsigned int)DCMD_LATCH_GET_GUEST_STATUS: {
+            /*
+             * THE READ-ONLY VERB.  It deliberately does NOT call
+             * `guest_require_mutation_authority()`: observing the guest's
+             * state is not a mutation, and the whole point of the
+             * mutate-vs-observe separation is that a read-only open is
+             * enough to read.  What a read-only open is NOT enough for is
+             * the STOP and START verbs above.
+             */
             if (msg->i.nbytes < sizeof(latch_guest_status_t) ||
                 ctp->msg_max_size < sizeof(msg->o) + sizeof(latch_guest_status_t) ||
                 ctp->info.dstmsglen < 0 ||
@@ -568,12 +679,36 @@ int main(int argc, char *argv[]) {
     io_funcs.devctl    = guest_io_devctl;
 
     /*
-     * The node is world-readable so that the OPERATOR's `latchctl` can open
-     * it.  Access is still governed by the channel type: the policy grants
-     * `channel connect` on `guest_ctl_t` only to `latchctl_t` and
-     * `operator_shell_t`, so an unrelated process cannot even open it.
+     * Create the dedicated `latch/guestctl` ability (C-7).
+     *
+     * flags 0 means NEITHER root nor non-root receives it by default, so
+     * the only way to hold it is to be granted it by name in the security
+     * policy.  Creating it needs the `able_create` ability, which the
+     * policy grants to `latch_guestd_t` and to no other type in this
+     * daemon's neighbourhood.
+     *
+     * Re-creating an ability that already exists is NOT an error: the
+     * QNX 8.0 reference says that a subsequent call whose flags do not
+     * omit a privilege domain included at creation returns the ability id
+     * without changing the permissions.  flags 0 includes no domain, so a
+     * restart of the daemon finds the same ability.
      */
-    iofunc_attr_init(&g_guest_attr.attr, S_IFCHR | 0666, NULL, NULL);
+    g_ability_guestctl_id = procmgr_ability_create(LATCH_GUESTCTL_ABILITY_NAME, 0);
+    if (g_ability_guestctl_id < 0) {
+        fprintf(stderr, "latch_guestd: procmgr_ability_create(%s) failed: %s\n",
+                LATCH_GUESTCTL_ABILITY_NAME, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    /*
+     * The node is NOT world-accessible any more: it is `0660` (C-7).
+     * Access is still governed by the channel type -- the policy grants
+     * `channel connect` on `guest_ctl_t` only to `latchctl_t` and
+     * `operator_shell_t` -- and, on top of that, the mutating verbs
+     * require an open that carries `_IO_FLAG_WR` AND a client that holds
+     * the `latch/guestctl` ability.
+     */
+    iofunc_attr_init(&g_guest_attr.attr, S_IFCHR | 0660, NULL, NULL);
 
     resmgr_attr_t rattr;
     memset(&rattr, 0, sizeof(rattr));

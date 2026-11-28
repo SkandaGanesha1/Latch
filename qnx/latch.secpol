@@ -20,6 +20,9 @@
 #   5. Denies `qvm_host_t` and `latch_ingest_t` any connection or ability toward actuators.
 #   6. Confines the guest-lifecycle daemon (`latch_guestd_t`) to ONE channel type
 #      (`guest_ctl_t`) that grants no actuator ability and no proposal access.
+#   7. Separates CONNECTING to the guest-control channel from MUTATING the
+#      guest through it: the dedicated `latch/guestctl` ability is the grant
+#      (C-7), and it is held by exactly the types that may connect.
 # ==============================================================================
 
 # 1. Process Types
@@ -50,6 +53,11 @@ type operator_shell_t;
 # 2. Custom Ability Declaration (created at runtime via procmgr_ability_create)
 ability latch/actuator;
 ability latch/propose;
+# The guest-control ability (C-7).  Created by `latch_guestd` with flags 0,
+# so it is held ONLY by the types the policy names below.  It is what makes
+# "may connect to the guest-control channel" and "may stop the guest" two
+# DIFFERENT grants.
+ability latch/guestctl;
 # Looked up by the pipe resource manager before it registers as pipe handler
 ability iofunc/exec;
 
@@ -67,6 +75,7 @@ allow latchd_t self:ability {
 allow latchctl_t self:ability {
     nonroot
     latch/actuator
+    latch/guestctl
 };
 
 # Ingest runs least-privilege without latch/actuator, hardware I/O, or able_create
@@ -103,10 +112,17 @@ allow latch_verify_t self:ability {
 
 # The operator shell: an ordinary unprivileged domain with NO `latch/actuator`.
 # `latchctl grant-check` run from this shell must print DENIED.
+#
+# It DOES hold `latch/guestctl` (C-7), and that is deliberate: the operator's
+# `latchctl guest-restart` is U-1's RECOVERY PATH, and
+# `tools/qemu_guest_kill.py` PHASE 9 depends on it.  What the ability does
+# NOT do is make "connect" imply "mutate": the grant is named, it is
+# revocable, and it is checked separately from the channel-connect rule.
 allow operator_shell_t self:ability {
     nonroot
     pathspace
     public_channel
+    latch/guestctl
 };
 
 allow qvm_host_t self:ability {
@@ -130,23 +146,27 @@ allow qvm_host_t self:ability {
 
 # The guest-lifecycle daemon (U-1).
 #
-# It needs exactly four things:
+# It needs exactly five things:
 #   pathspace + public_channel  -- to be a resource manager and attach its
 #                                  node (same as every other daemon here)
 #   spawn                        -- to start the guest VM child
 #   settypeid:qvm_host_t         -- to give that child the hypervisor
 #                                  type it needs, and ONLY that type
+#   able_create                  -- to CREATE the dedicated `latch/guestctl`
+#                                  ability it then checks on every mutating
+#                                  devctl (C-7)
 #
 # It does NOT get `hyp`, `mem_phys`, `io`, `interrupt`, `rsrcdbmgr`,
 # `timer`, `event`, `schedule`, `fork`, `latch/actuator` or
 # `latch/propose`.  The hypervisor privileges belong to the CHILD it
 # spawns; the daemon itself holds only the power to create and destroy
-# that child.
+# that child -- and to REFUSE a mutation it has no authority for.
 allow latch_guestd_t self:ability {
     pathspace
     public_channel
     spawn
     settypeid:qvm_host_t
+    able_create
 };
 
 # 4. Pathspace Ownership (allow_attach)
@@ -223,5 +243,21 @@ allow qvm_host_t slogger2_t:channel connect;
 # The operator could already stop the guest with `slay -9 qvm`; this grant
 # adds the ability to START it again, with a fixed binary and a fixed
 # configuration that the operator cannot choose.
+#
+# CONNECTING IS NOT MUTATING (C-7).
+#
+# The two rules below are the CONNECT rules.  The MUTATE rules are the
+# `latch/guestctl` ability grants in section 3 -- and they are held by
+# EXACTLY the types that appear here, which is the invariant
+# `tools/consistency_check.py` derives and checks:
+#
+#   * every type that may connect to `guest_ctl_t` holds `latch/guestctl`;
+#   * no type that may NOT connect holds it.
+#
+# So a type can be added to the connect list without silently acquiring
+# the power to stop the guest, and the grant can be revoked at runtime
+# without editing this file.  On top of the ability, the daemon requires
+# the open that carries a mutating devctl to have been opened for WRITING
+# (`_IO_FLAG_WR`), and the node's mode is `0660` rather than `0666`.
 allow latchctl_t guest_ctl_t:channel connect;
 allow operator_shell_t guest_ctl_t:channel connect;

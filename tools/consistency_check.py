@@ -2254,6 +2254,384 @@ def verify_event_hex_sizing():
 
 
 # ---------------------------------------------------------------------------
+# THE GUEST-CONTROL GATE (C-7)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS "MAY CONNECT" SILENTLY MEANING "MAY MUTATE".
+#
+# `/dev/latch/guestctl` is the one channel that can STOP and START the guest
+# VM -- the VM the whole safety envelope is built around.  It had no access
+# control of its own:
+#
+#   * the node was `S_IFCHR | 0666` (world read/write),
+#   * `latchctl` opened it `O_RDONLY`,
+#   * and the `STOP` / `START` devctls checked NOTHING.
+#
+# The security policy limited *which types may connect* to the channel
+# (`guest_ctl_t`), and "may connect" was silently read as "may mutate": every
+# type that could open the node could also kill and respawn the guest.
+#
+# TWO INDEPENDENT CHECKS, BECAUSE ONE IS NOT ENOUGH.
+#
+#   1. THE WRITE FLAG separates MUTATE from OBSERVE: the open that carries a
+#      mutating devctl must carry `_IO_FLAG_WR`.
+#   2. THE ABILITY separates a NAMED, REVOCABLE GRANT from an IMPLICIT
+#      CONNECT: the client must hold the dedicated `latch/guestctl` ability.
+#
+# Of the four (write flag, ability) combinations, EXACTLY ONE allows the
+# mutation.  One check alone would allow three, so the host test asserts the
+# COUNT and not merely the individual verdicts.
+#
+# THE CHECKS ARE DERIVED, NOT HARD-CODED.
+#
+# The gate reads the ability's NAME out of the shipped header and then
+# requires the policy to declare THAT name, the daemon to create THAT name,
+# and the grant set to be EXACTLY the set of types that may connect to
+# `guest_ctl_t` -- both directions.  So a type can be added to the connect
+# list without silently acquiring the power to stop the guest, and a type
+# that cannot connect cannot carry the grant.
+#
+# A NOTE ON WHAT THE ABILITY DOES *NOT* SAY.
+#
+# It is tempting to read the ability check as "the operator shell must not
+# be able to stop the guest".  That is NOT what it says, and the plan's
+# first draft said so -- which was wrong: `latchctl guest-restart` IS the
+# operator's deliberate recovery path (U-1), and `tools/qemu_guest_kill.py`
+# PHASE 9 depends on it.  The operator shell therefore KEEPS the ability.
+# What the gate removes is the "connect implies mutate" implication.
+
+
+def verify_guestctl_is_guarded():
+    """The guest-control node: TWO independent gates, and a named grant."""
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    guard_h_path = os.path.join(qnx_dir, "latch_guestctl_guard.h")
+    guestd_path = os.path.join(qnx_dir, "latch_guestd.c")
+    ctl_path = os.path.join(qnx_dir, "latchctl.c")
+    test_path = os.path.join(qnx_dir, "latch_guestctl_guard_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+    secpol_path = os.path.join(qnx_dir, "latch.secpol")
+
+    for p in (guard_h_path, guestd_path, ctl_path, test_path,
+              makefile_path, secpol_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(guard_h_path, encoding="utf-8", errors="replace") as f:
+        guard_h = f.read()
+    with io.open(guestd_path, encoding="utf-8", errors="replace") as f:
+        guestd = f.read()
+    with io.open(ctl_path, encoding="utf-8", errors="replace") as f:
+        ctl = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+    with io.open(secpol_path, encoding="utf-8", errors="replace") as f:
+        secpol = f.read()
+
+    guard_code = strip_c_comments(guard_h)
+    guestd_code = strip_c_comments(guestd)
+    ctl_code = strip_c_comments(ctl)
+    test_code = strip_c_comments(test_src)
+
+    # --- 1. THE NODE IS NOT WORLD-ACCESSIBLE ----------------------------
+    #
+    # `0666` is world read/write.  The node is `0660`.
+    if not re.search(r"iofunc_attr_init\s*\(\s*&g_guest_attr\.attr\s*,\s*"
+                     r"S_IFCHR\s*\|\s*0660\s*,", guestd_code):
+        fail("qnx/latch_guestd.c must create the guest-control node as "
+             "`S_IFCHR | 0660`. The node was `0666` -- world read/write -- "
+             "so every process on the system could open it, and the channel "
+             "type was the only thing between it and the guest VM.")
+    if re.search(r"(?<![\w])0666(?![\w])", guestd_code):
+        fail("qnx/latch_guestd.c still carries a 0666 mode. The guest-control "
+             "node must be `0660`: the power to stop the guest is granted by "
+             "name, not by the file mode.")
+
+    # --- 2. THE TWO CHECKS ARE IN ONE HELPER ----------------------------
+    #
+    # The gate has to be ONE place, or the STOP verb and the START verb can
+    # drift apart -- which is how one of them ends up unchecked.
+    helper = _c_inline_func_body(guestd_code, "guest_require_mutation_authority")
+    if not helper:
+        fail("qnx/latch_guestd.c does not define "
+             "guest_require_mutation_authority(): the guest-control gate has "
+             "to be ONE place, or the STOP verb and the START verb can drift "
+             "apart -- which is how one of them ends up unchecked.")
+    else:
+        if "_IO_FLAG_WR" not in helper:
+            fail("qnx/latch_guestd.c: guest_require_mutation_authority() must "
+                 "test `_IO_FLAG_WR` on the open that carries the devctl. "
+                 "Without it, a client that opened the node READ-ONLY could "
+                 "still stop the guest.")
+        if "iofunc_client_info_able" not in helper:
+            fail("qnx/latch_guestd.c: guest_require_mutation_authority() must "
+                 "ask the kernel whether the client holds the "
+                 "`latch/guestctl` ability, with iofunc_client_info_able(). "
+                 "The grant is the point of the second gate.")
+
+        # The verdict must be READ OUT of the client information, not
+        # asserted.  A constant `has_ability = true` is not a check.
+        assigns = re.findall(r"\bhas_ability\s*=\s*([^;]+);", helper)
+        if not assigns:
+            fail("qnx/latch_guestd.c: guest_require_mutation_authority() "
+                 "never assigns the ability verdict, so it cannot be using "
+                 "it.")
+        else:
+            derived = [a for a in assigns if "_NTO_CI_UNABLE" in a]
+            if not derived:
+                fail("qnx/latch_guestd.c: the ability verdict must be READ "
+                     "OUT of the client information (`info->flags & "
+                     "_NTO_CI_UNABLE`), not asserted. A constant "
+                     "`has_ability = true` is not a check.")
+            elif assigns[-1] != derived[-1]:
+                fail("qnx/latch_guestd.c: the ability verdict must be the "
+                     "LAST thing assigned to `has_ability`, so a later "
+                     "assignment cannot OVERRIDE the kernel's answer.")
+
+    # The shared decision must consult BOTH inputs.  This is the structural
+    # half of the "one gate is not enough" claim; the host test is the
+    # behavioural half.
+    decide_body = _c_inline_func_body(guard_code, "latch_guestctl_decide")
+    if not decide_body:
+        fail("qnx/latch_guestctl_guard.h does not define "
+             "latch_guestctl_decide(): the guest-control decision has to live "
+             "in the SHIPPED header, so the resource manager and the host "
+             "test run the same code.")
+    else:
+        if not re.search(r"!\s*has_write_flag", decide_body):
+            fail("qnx/latch_guestctl_guard.h: latch_guestctl_decide() must "
+                 "REFUSE when the open does not carry the write flag. One "
+                 "gate alone would allow three of the four combinations.")
+        if not re.search(r"!\s*has_ability", decide_body):
+            fail("qnx/latch_guestctl_guard.h: latch_guestctl_decide() must "
+                 "REFUSE when the client holds no ability. One gate alone "
+                 "would allow three of the four combinations.")
+
+    # --- 3. BOTH MUTATING VERBS CALL THE HELPER -------------------------
+    for label, anchor in (
+            ("the STOP verb", "case (unsigned int)DCMD_LATCH_GUEST_STOP: {"),
+            ("the START verb", "case (unsigned int)DCMD_LATCH_GUEST_START: {")):
+        i = guestd_code.find(anchor)
+        if i < 0:
+            fail("qnx/latch_guestd.c no longer has %s (the anchor %r is "
+                 "gone), so the guest-control gate cannot be checked for it."
+                 % (label, anchor))
+            continue
+        j = guestd_code.find("case (unsigned int)", i + len(anchor))
+        window = guestd_code[i:j if j > 0 else i + 3000]
+        if "guest_require_mutation_authority(" not in window:
+            fail("qnx/latch_guestd.c: %s must call "
+                 "guest_require_mutation_authority() before it touches the "
+                 "guest. The guest-control gate is checked ONCE, for both "
+                 "mutating verbs -- a verb that skips it is a verb that "
+                 "stops the guest with no authority at all." % label)
+
+    # --- 4. THE READ-ONLY VERB DOES NOT REQUIRE MUTATION AUTHORITY ------
+    #
+    # Observing the guest's state is not a mutation.  If the status verb
+    # required the mutation grant, the mutate-vs-observe separation would
+    # be gone and the read-only path would be unusable without the ability.
+    i = guestd_code.find("case (unsigned int)DCMD_LATCH_GET_GUEST_STATUS: {")
+    if i < 0:
+        fail("qnx/latch_guestd.c no longer has the GET_GUEST_STATUS case, so "
+             "the read-only path cannot be checked.")
+    else:
+        j = guestd_code.find("case (unsigned int)", i + 10)
+        window = guestd_code[i:j if j > 0 else i + 3000]
+        if "guest_require_mutation_authority(" in window:
+            fail("qnx/latch_guestd.c: the READ-ONLY status verb must NOT "
+                 "require mutation authority. Observing the guest's state is "
+                 "not a mutation, and the whole point of the gate is that "
+                 "OBSERVE and MUTATE are different operations.")
+
+    # --- 5. THE ABILITY'S NAME IS WRITTEN DOWN ONCE ----------------------
+    m_name = re.search(r"#define\s+LATCH_GUESTCTL_ABILITY_NAME\s+\"([^\"]+)\"",
+                       guard_code)
+    if not m_name:
+        fail("qnx/latch_guestctl_guard.h must define "
+             "LATCH_GUESTCTL_ABILITY_NAME: the ability's NAME is the "
+             "contract between the daemon that creates it, the policy that "
+             "grants it and the gate that checks it, so it has to be written "
+             "down ONCE.")
+        ability_name = "latch/guestctl"
+    else:
+        ability_name = m_name.group(1)
+
+    if not re.search(r"procmgr_ability_create\s*\(\s*LATCH_GUESTCTL_ABILITY_NAME"
+                     r"\s*,\s*0\s*\)", guestd_code):
+        fail("qnx/latch_guestd.c must create the ability with "
+             "procmgr_ability_create(LATCH_GUESTCTL_ABILITY_NAME, 0). The "
+             "flags argument 0 is what makes it a GRANT rather than a "
+             "default: neither root nor non-root receives it unless the "
+             "policy names a type.")
+
+    # --- 6. THE GRANT SET IS EXACTLY THE CONNECT SET --------------------
+    #
+    # BOTH directions, and both DERIVED from the policy file itself.
+    connect_types = set(re.findall(
+        r"(?m)^\s*allow\s+([A-Za-z_][A-Za-z0-9_]*)\s+guest_ctl_t\s*:\s*"
+        r"channel\s+connect\s*;", secpol))
+    if not connect_types:
+        fail("qnx/latch.secpol has no `allow <type> guest_ctl_t:channel "
+             "connect;` rule, so the set of types that may talk to the "
+             "guest-control channel cannot be derived.")
+
+    holder_types = set()
+    for m in re.finditer(
+            r"(?ms)^\s*allow\s+([A-Za-z_][A-Za-z0-9_]*)\s+self:ability\s*"
+            r"\{(.*?)\};", secpol):
+        if re.search(r"(?<![\w/])" + re.escape(ability_name) + r"(?![\w/])",
+                     m.group(2)):
+            holder_types.add(m.group(1))
+
+    missing = sorted(connect_types - holder_types)
+    if missing:
+        fail("qnx/latch.secpol: the type(s) %s may CONNECT to the "
+             "guest-control channel but do not hold the `%s` ability, so "
+             "they could observe the guest and not change it. The connect "
+             "rule and the grant have to agree."
+             % (", ".join(missing), ability_name))
+    extra = sorted(holder_types - connect_types)
+    if extra:
+        fail("qnx/latch.secpol: the type(s) %s hold the `%s` ability but may "
+             "NOT connect to the guest-control channel. The ability is the "
+             "grant; a type that cannot reach the channel must not carry a "
+             "grant to change the guest through it."
+             % (", ".join(extra), ability_name))
+
+    # The daemon needs `able_create` to CREATE the ability it checks.
+    m_guestd_block = re.search(
+        r"(?ms)^\s*allow\s+latch_guestd_t\s+self:ability\s*\{(.*?)\};", secpol)
+    if not m_guestd_block:
+        fail("qnx/latch.secpol has no ability block for latch_guestd_t -- "
+             "the guest-lifecycle daemon would run with undeclared "
+             "privileges.")
+    elif not re.search(r"(?<![\w])able_create(?![\w])", m_guestd_block.group(1)):
+        fail("qnx/latch.secpol: latch_guestd_t must hold `able_create` -- "
+             "creating the dedicated `%s` ability needs it, and without it "
+             "the daemon would have to run the gate against an ability id "
+             "it never created." % ability_name)
+
+    # --- 7. THE CLIENT OPENS THE NODE THE WAY THE GATE EXPECTS ----------
+    #
+    # The access mode the client opens the node with IS part of the
+    # protocol: a mutating verb needs a descriptor that carries
+    # `_IO_FLAG_WR`, and the observing verb needs one that does not.
+    open_body = _c_inline_func_body(ctl_code, "guest_open_ctl")
+    if not open_body:
+        fail("qnx/latchctl.c does not define guest_open_ctl(): the "
+             "guest-control client's open has to be one place.")
+    else:
+        if not re.search(r"bool\s+for_mutation", open_body):
+            fail("qnx/latchctl.c: guest_open_ctl() must take the MUTATION "
+                 "intent as an argument. The access mode the node is opened "
+                 "with IS part of the protocol -- it is what the daemon's "
+                 "`_IO_FLAG_WR` check reads.")
+        if "O_WRONLY" not in open_body or "O_RDONLY" not in open_body:
+            fail("qnx/latchctl.c: guest_open_ctl() must open the node "
+                 "`O_WRONLY` for a mutation and `O_RDONLY` for an "
+                 "observation.")
+
+    if re.search(r"guest_open_ctl\s*\(\s*\)", ctl_code):
+        fail("qnx/latchctl.c: guest_open_ctl() is called with no argument. "
+             "Every call site has to say whether it is about to MUTATE, "
+             "because the access mode is what the daemon's write-flag check "
+             "reads.")
+
+    m_restart = _c_inline_func_body(ctl_code, "do_guest_restart")
+    if not m_restart:
+        fail("qnx/latchctl.c does not define do_guest_restart(): the "
+             "mutating client path cannot be checked.")
+    elif "guest_open_ctl(true)" not in m_restart:
+        fail("qnx/latchctl.c: do_guest_restart() must open the guest-control "
+             "node with guest_open_ctl(true), so the descriptor carries "
+             "`_IO_FLAG_WR`. The STOP and START verbs are refused without it.")
+
+    m_status = _c_inline_func_body(ctl_code, "do_guest_status")
+    if not m_status:
+        fail("qnx/latchctl.c does not define do_guest_status(): the "
+             "read-only client path cannot be checked.")
+    elif "guest_open_ctl(false)" not in m_status:
+        fail("qnx/latchctl.c: do_guest_status() must open the guest-control "
+             "node with guest_open_ctl(false). Observing the guest must not "
+             "need a write descriptor.")
+
+    # --- 8. THE HOST TEST IS PART OF THE REGRESSION SUITE ----------------
+    #
+    # The decisive property -- EXACTLY ONE of the four combinations allows
+    # the mutation -- is a PROPERTY, not a derivation, so it has to be
+    # EXECUTED.  The test has to be in the suite, or it is a file nobody
+    # runs.
+    if "latch-guestctl-guard-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-guestctl-guard-check` target: the "
+             "guest-control gate's truth table has no proof at all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-guestctl-guard-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-guestctl-guard-check, or the guest-control gate's truth "
+             "table is not part of the regression suite.")
+
+    # The test has to walk the WHOLE table, or the "exactly one allowing
+    # row" claim is not being made.
+    if "latch_guestctl_decide(" not in test_code:
+        fail("qnx/latch_guestctl_guard_test.c must call the shipped "
+             "latch_guestctl_decide(). A test that re-implements the "
+             "decision proves nothing about the decision.")
+
+    # --- 9. THE SHIPPED HEADER COMPILES AND BEHAVES ---------------------
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("C-7 guest-control gate: the node is 0660, the two "
+                   "independent checks are in one helper, both mutating "
+                   "verbs call it, the read-only verb does not, the ability "
+                   "is a named grant held by exactly the types that may "
+                   "connect, the client opens the node the way the gate "
+                   "expects, and the host test is in the regression suite "
+                   "(the COMPILED proof was skipped -- no C compiler on "
+                   "PATH, so only the structural half of the gate ran)")
+    else:
+        tmp = tempfile.mkdtemp(prefix="latch_guestctl_")
+        try:
+            test_bin = os.path.join(tmp, "latch_guestctl_guard_test")
+            comp = subprocess.run(
+                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
+                 "-I", qnx_dir, test_path, "-o", test_bin,
+                 "-lpthread", "-lrt", "-lm"],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                fail("the shipped qnx/latch_guestctl_guard.h does not "
+                     "compile against its own host test: %s. The guest-control "
+                     "gate has to be reachable from a HOST test, or the "
+                     "property it encodes cannot be proved off-target."
+                     % (comp.stderr.strip() or comp.stdout.strip()))
+            else:
+                run = subprocess.run([test_bin], capture_output=True, text=True,
+                                     timeout=120)
+                if run.returncode != 0:
+                    detail = (run.stdout.strip() or run.stderr.strip() or
+                              "exit status %d" % run.returncode)
+                    fail("the guest-control gate does NOT hold: %s. Of the "
+                         "four (write flag, ability) combinations, EXACTLY "
+                         "ONE may allow the mutation -- one gate alone would "
+                         "allow three, which is the defect." % detail)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        pass_check("C-7 guest-control gate: the node is 0660, the two "
+                   "independent checks are in one helper, both mutating "
+                   "verbs call it, the read-only verb does not, the ability "
+                   "is a named grant held by exactly the types that may "
+                   "connect, the client opens the node the way the gate "
+                   "expects, and the shipped host test proves that EXACTLY "
+                   "ONE of the four combinations allows the mutation")
+
+
+# ---------------------------------------------------------------------------
 # THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY ABOUT IT (NEW-DOC-4)
 # ---------------------------------------------------------------------------
 #
@@ -7215,6 +7593,19 @@ def main():
     # the shared renderer refuses a buffer that is too small instead of
     # overflowing it.  See `verify_event_hex_sizing()`.
     verify_event_hex_sizing()
+
+    # --- THE GUEST-CONTROL GATE (C-7) -----------------------------------
+    #
+    # `/dev/latch/guestctl` can stop and start the guest VM, and it had no
+    # access control of its own: the node was world read/write, the client
+    # opened it read-only, and the mutating devctls checked NOTHING -- so
+    # "may connect to the channel" silently meant "may kill the guest".
+    #
+    # There are now TWO independent gates -- the open must carry
+    # `_IO_FLAG_WR`, and the client must hold the dedicated `latch/guestctl`
+    # ability -- and of the four combinations, exactly ONE allows the
+    # mutation.  See `verify_guestctl_is_guarded()`.
+    verify_guestctl_is_guarded()
 
     # --- THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY (NEW-DOC-4)
     #

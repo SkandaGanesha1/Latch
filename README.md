@@ -160,10 +160,10 @@ GOVERNOR is not an abstract concept; it is an engineered QNX 8.0 application uti
 | `ClockCycles()` | `latch/qnx/latchd.c:356`<br>`latch/qnx/latch_ingest.c:69` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
 | `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:3105` | Allocates non-blocking microkernel pulse pool for deterministic 1.000 ms periodic decision events. |
 | `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:3126` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
-| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:3009, 3056, 3543, 3549, (+3 more)`<br>`latch/qnx/latchctl.c:142, 804` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
+| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:3009, 3056, 3543, 3549, (+3 more)`<br>`latch/qnx/latchctl.c:142, 821` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
 | `devctl(..., DCMD_I2C_SEND, ...)` | `latch/qnx/latchd.c:952, 956, 1018, 1022` | Direct register programming of PCA9685 12-bit PWM controller over QNX I2C framework (`/dev/i2c1`). |
 | `qvm` Hypervisor Guest Isolation (`vdev virtio-console`, `cluster _cpu-2` / `_cpu-3` pins) | `latch/qnx/latch_qemu_virt.qvmconf:128`<br>`latch/qnx/latch_qemu_governor.build:103` | QNX Hypervisor 8.0 EL2 VHE guest configuration isolating untrusted Linux 6.12 guest on vCPUs 2-3 with virtio-console black channel. |
-| `secpolcompile` / `secpolpush` (`type latchd_t`, `type latch_ingest_t`, `type qvm_host_t`) | `latch/qnx/latch.secpol:26`<br>`latch/qnx/latch_qemu.build:41, latch_qemu_governor.build:41` | QNX 8.0 declarative Mandatory Access Control (MAC) enforcing process type isolation (`latchd_t`, `latch_ingest_t`, `qvm_host_t`). |
+| `secpolcompile` / `secpolpush` (`type latchd_t`, `type latch_ingest_t`, `type qvm_host_t`) | `latch/qnx/latch.secpol:29`<br>`latch/qnx/latch_qemu.build:41, latch_qemu_governor.build:41` | QNX 8.0 declarative Mandatory Access Control (MAC) enforcing process type isolation (`latchd_t`, `latch_ingest_t`, `qvm_host_t`). |
 
 ---
 
