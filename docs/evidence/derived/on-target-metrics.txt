@@ -22,7 +22,7 @@ Scope          : TAPE-WINDOW ANALYSIS -- every number below is computed
                 `derived/on-target-numbers.txt` (and the session's
                 `-console.txt` / `-verify.txt` artifacts), not this file.
                 This window is the LAST 128 rows of the session tape, captured by
-                the `latchctl tape-dump` call in the session script. The session
+                the `latchctl dump` call in the session script. The session
                 itself ran for many more ticks before the dump was taken, which
                 is why the whole-session `Proposals Received` counter is larger
                 than anything visible here.

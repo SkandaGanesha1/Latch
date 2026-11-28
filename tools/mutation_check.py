@@ -81,6 +81,17 @@ def sha256_file(path):
 # An edit may carry a third element: the expected occurrence count (the
 # default is 1).
 #
+# The count may also be the string "all", which means "the anchor occurs an
+# unpredictable number of times -- replace EVERY occurrence".  The anchor
+# must still EXIST (a mutation whose anchor is gone is still stale), but
+# its count is not pinned.  This is what a mutation that REMOVES A SUBJECT
+# FROM A DOCUMENT needs: a document that names a module in a heading, in
+# the running text and beside every file name mentions it an unpredictable
+# number of times, and pinning the count would turn every harmless rewording
+# of the document into a stale mutation.  The count exists to catch a
+# mutation whose anchor has been eaten by an unrelated edit; "all" keeps
+# that protection (the anchor has to be there) without freezing the prose.
+#
 # AN ANCHOR MAY BE A CALLABLE.  It is handed the file's text and returns the
 # literal string to replace, or None if the anchor is stale.  This is what a
 # mutation whose text DEPENDS on a measured value needs: the plan row's U-4
@@ -1116,6 +1127,111 @@ MUTATIONS = [
        "{\n"
        "    (void)iofunc_notify(NULL, NULL, nop, 0, NULL, NULL);\n"
        "}\n")]),
+
+    # ===================== THE DOCUMENTATION CLAIMS ====================
+    #
+    # A DOCUMENT IS A CLAIM ABOUT THE CODE.  These five mutations are the
+    # five measured drifts that `verify_documentation_claims()` closes:
+    # the LFBK frame size, HOMEOSTAT's invisibility, the second video
+    # storyboard, the codelab's dead CLI verb, and the quarantined
+    # artefact that could be read as a live measurement.
+    #
+    # Each one is the kind of drift that costs nothing to make and
+    # everything to a judge: the tree stays green, the CI stays green, and
+    # the document is simply wrong.
+
+    ("D-3: the README states the LFBK verdict frame's size as 24 bytes (the "
+     "frame is 28; the 24 is the CRC COVERAGE, and a reader told the frame "
+     "is 24 bytes rejects a valid 28-byte frame)",
+     "README.md",
+     [("    latch_feedback.h, .c         # 28-byte LFBK verdict codec",
+       "    latch_feedback.h, .c         # 24-byte LFBK verdict codec")]),
+
+    ("D-3: the Devpost submission stops mentioning HOMEOSTAT (the module, "
+     "its signed contract, its unit test and its runtime proof all ship; a "
+     "judge-facing document that never mentions it cannot score it)",
+     "docs/DEVPOST_SUBMISSION.md",
+     # The anchor counts are NOT pinned: the document names the module in a
+     # heading, in the running text and beside every file name, and it is
+     # rewritten from time to time.  Every occurrence has to go, or the
+     # document still mentions the module and the gate stays green -- so
+     # the count is "all" and the ANCHOR still has to be there.
+     [("HOMEOSTAT", "the adaptive outer loop", "all"),
+      ("homeostat", "adaptive", "all")]),
+
+    ("D-3: the video script describes HOMEOSTAT as always-on (the loop is "
+     "DEFAULT-OFF -- it runs only when the signed manifest carries a "
+     "`homeostat` section, and the frozen host-sim evidence signature "
+     "asserts the supervisor behaves bit-identically without it)",
+     "docs/DEMO_VIDEO_SCRIPT.md",
+     [("default-off", "always-on", "all")]),
+
+    ("D-3: the supervisor stops refusing to scale the velocity ceiling when "
+     "the manifest disables HOMEOSTAT (the default-off property is what the "
+     "frozen host-sim evidence signature asserts, and the gate derives the "
+     "property from THIS source rather than from a document)",
+     "qnx/latchd.c",
+     [("    if (st == NULL || !g_manifest.homeostat_present ||\n"
+       "        g_manifest.homeostat.enabled == 0u) {",
+       "    if (st == NULL || !g_manifest.homeostat_present ||\n"
+       "        g_manifest.homeostat.enabled == 99u) {")]),
+
+    ("D-4: a SECOND video storyboard appears (two storyboards are two "
+     "scripts, one of them stale, and an operator filming from the wrong "
+     "file films a storyboard the code contradicts)",
+     "docs/VIDEO_SCRIPT_AND_SUBMISSION.md",
+     [("## Where everything went",
+       "| **0:00 – 0:13**<br>*(13 sec)* | Stale copy | Stale copy | Stale copy |\n"
+       "\n"
+       "## Where everything went")]),
+
+    ("D-4: a superseded video plan loses its SUPERSEDED banner (the "
+     "canonical storyboard is derived from the documents themselves, so a "
+     "stale copy that no longer says it is stale reads like the live one)",
+     "docs/06_video_and_submission_plan.md",
+     [("> [!NOTE]\n"
+       "> **SUPERSEDED:** This legacy document has been consolidated into the "
+       "authoritative 3-minute video storyboard:\n"
+       "> **[`docs/DEMO_VIDEO_SCRIPT.md`](DEMO_VIDEO_SCRIPT.md)**\n"
+       ">\n"
+       "> Please refer to `docs/DEMO_VIDEO_SCRIPT.md` for the complete "
+       "time-coded storyboard, narration script, visual layout, recording "
+       "specification, submission timeline and pre-flight checklist.\n"
+       ">\n"
+       "> The **written** Devpost answers live in exactly one place — "
+       "[`docs/DEVPOST_SUBMISSION.md`](DEVPOST_SUBMISSION.md) — and are not "
+       "duplicated in the video plan.\n",
+       "")]),
+
+    ("D-10: the codelab names a `latchctl` verb the CLI does not have (the "
+     "reader follows it literally and gets 'Unknown command')",
+     "codelab/dead-mans-handle.md",
+     [("latchctl events       # queries devctl 0x44",
+       "latchctl dump-gov     # queries devctl 0x44")]),
+
+    ("D-11: a quarantined artefact loses its inline withdrawal banner (the "
+     "notice used to live in a README BESIDE it, so the artefact itself -- "
+     "opened on its own, pasted into a review -- read like a live "
+     "measurement)",
+     "docs/evidence/quarantine/REJECTED-governor-LATENCY.md",
+     [("> **WITHDRAWN -- NOT EVIDENCE.** This artefact is retained for audit history\n"
+       "> only. Its figures were produced by a generator that inserted fixed values,\n"
+       "> and its conclusions are unsupported. **Do not quote it, do not cite it, and\n"
+       "> do not present it as a measurement.** The current, reproducible measurements\n"
+       "> are named by the index at [`docs/evidence/README.md`](../README.md), which\n"
+       "> also records this withdrawal.\n"
+       "\n",
+       "")]),
+
+    ("D-11: the archival tool stops writing the inline banner (a re-run of "
+     "the tool would then strip the banner the archived artefact carries)",
+     "tools/quarantine_secpol_audit.py",
+     # The marker occurs TWICE in the tool: in the assignment that names
+     # it and in the banner text the tool writes.  BOTH have to change,
+     # because the gate looks for the marker in the tool's own text -- a
+     # mutation that only renamed the constant would leave the string in
+     # the banner block and the gate would stay green.
+     [("WITHDRAWN -- NOT EVIDENCE", "WITHDRAWN", "all")]),
 ]
 
 
@@ -1232,7 +1348,19 @@ def main():
                 old, new = r
                 want = edit[2] if len(edit) > 2 else 1
                 n = text.count(old)
-                if n != want:
+                if want == "all":
+                    # The anchor has to EXIST -- a mutation whose anchor has
+                    # been eaten by an unrelated edit is stale, and a stale
+                    # mutation is a hole in the proof.  Its COUNT is not
+                    # pinned: every occurrence is replaced.
+                    if n < 1:
+                        print("[MUTATION][SKIP] %s: the anchor %r occurs 0 times "
+                              "in %s -- the mutation is STALE, and a stale "
+                              "mutation is a hole in the proof"
+                              % (label, old[:60], rel))
+                        bad = True
+                        break
+                elif n != want:
                     print("[MUTATION][SKIP] %s: the anchor %r occurs %d times in "
                           "%s (expected %d) -- the mutation is STALE, and a stale "
                           "mutation is a hole in the proof"

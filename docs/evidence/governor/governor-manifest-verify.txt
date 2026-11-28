@@ -1,6 +1,6 @@
 ==============================================================================
 LATCH GOVERNOR — CRYPTOGRAPHIC MANIFEST SIDECAR ATTESTATION AUDIT
-Date: 20261128-060338
+Date: 20261128-064044
 Tool: latchctl manifest-verify (NIST FIPS 180-2 SHA-256)
 ==============================================================================
 
@@ -13,5 +13,5 @@ Sidecar content: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53
 Sidecar content: 7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd  contracts/syringe_governor.manifest
 
 --- 3. TAMPER-EVIDENCE INTEGRITY PROOF (Modified Contract Rejection) ---
-[MANIFEST] REJECTED: Could not load or validate '/tmp/latch-manifest-audit-qb9hy461/tampered.manifest': Missing mandatory SHA-256 sidecar '/tmp/latch-manifest-audit-qb9hy461/tampered.manifest.sha256' (Fail-Closed)
+[MANIFEST] REJECTED: Could not load or validate '/tmp/latch-manifest-audit-aktp74uj/tampered.manifest': Missing mandatory SHA-256 sidecar '/tmp/latch-manifest-audit-aktp74uj/tampered.manifest.sha256' (Fail-Closed)
 

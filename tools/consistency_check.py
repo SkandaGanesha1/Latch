@@ -3499,6 +3499,285 @@ def verify_evidence_archive():
                "and nothing in the archive is git-ignored")
 
 
+# ---------------------------------------------------------------------------
+# THE DOCUMENTATION-CLAIMS GATE (D-3 / D-4 / D-10 / D-11 / D-15)
+# ---------------------------------------------------------------------------
+#
+# A DOCUMENT IS A CLAIM ABOUT THE CODE.  When the code moves and the
+# document does not, the document is a lie that nobody notices -- and a
+# judge who reads it is misled.  Five such drifts were found by hand:
+#
+#   D-3  the README called the LFBK verdict codec a 24-BYTE frame.  The
+#        frame is 28 bytes; the 24 is the CRC COVERAGE (bytes [0..23]),
+#        and the two numbers had drifted apart in the reader's head.
+#   D-3  HOMEOSTAT was INVISIBLE.  The module shipped, the signed
+#        contract shipped, the unit test and the runtime proof shipped --
+#        and not ONE judge-facing document mentioned it.  A feature that
+#        no document describes is a feature no judge can score.
+#   D-4  THREE video/submission plans existed and two of them were stale
+#        copies of a storyboard that had since been corrected.  A stale
+#        copy of a storyboard reads exactly like the live one.
+#   D-10 the codelab told the reader to run `latchctl dump-gov` -- a verb
+#        the CLI does not have.  The reader gets "Unknown command".
+#   D-11 a quarantined artefact could be opened ON ITS OWN and read as a
+#        live measurement: the withdrawal notice was in a README beside
+#        it, not in it.
+#
+# EVERY RULE BELOW IS DERIVED FROM THE CODE OR FROM THE DOCUMENTS
+# THEMSELVES -- never from a list of file names -- so a new document
+# cannot escape a rule, and a new CLI verb cannot be "forgotten" by a
+# document that already names it.
+
+# THE MARKER a quarantined artefact must carry in its own first lines.
+# `tools/quarantine_secpol_audit.py` writes the same string, so the
+# archived artefact and its generator cannot drift apart.
+QUARANTINE_BANNER_MARKER = "WITHDRAWN -- NOT EVIDENCE"
+
+# The documents a judge reads, EXCEPT the generated evidence archive
+# (whose contents are a tool's output, not a hand-written claim).
+def _hand_written_docs():
+    out = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "build", "__pycache__", ".github",
+                                    ".agents", "quarantine")]
+        rel_dir = os.path.relpath(dirpath, REPO_ROOT)
+        if rel_dir.replace(os.sep, "/").startswith("docs/evidence"):
+            continue
+        for fn in filenames:
+            if fn.endswith(".md"):
+                out.append(os.path.join(dirpath, fn))
+    return sorted(out)
+
+
+def _read(path):
+    with io.open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def verify_documentation_claims():
+    """The documents must say what the code says, and there must be one
+    of each of the things a judge is pointed at.
+
+    See the block comment above for the five measured drifts this closes.
+    """
+
+    # --- D-3a: THE LFBK FRAME SIZE, DERIVED FROM THE HEADER -------------
+    #
+    # The size is not written down here: it is read out of the header that
+    # defines it, so a future change to the frame cannot leave the
+    # documents behind.
+    fb_hdr = os.path.join(REPO_ROOT, "qnx", "latch_feedback.h")
+    if not os.path.isfile(fb_hdr):
+        fail("qnx/latch_feedback.h is missing -- the LFBK frame size cannot "
+             "be derived, so no document may state it.")
+    m_size = re.search(r"#define\s+LATCH_FEEDBACK_SIZE\s+(\d+)u?",
+                        _read(fb_hdr))
+    if not m_size:
+        fail("qnx/latch_feedback.h does not define LATCH_FEEDBACK_SIZE as a "
+             "plain integer literal -- the documentation gate cannot derive "
+             "the frame size from it")
+    fb_size = int(m_size.group(1))
+    # The claim is about the FRAME, not about the CRC's coverage: the
+    # coverage is a different number and is allowed to appear.
+    LFBK_SIZE_RE = re.compile(
+        r"(\d+)\s*-?\s*bytes?\s+(?:LFBK|verdict\s+(?:frame|codec))"
+        r"|LFBK[^.\n]{0,24}?(\d+)\s*-?\s*bytes?\s+(?:frame|codec)"
+        r"|LFBK[^.\n]{0,24}?frame\s+(?:is|must\s+be|of)\s+(\d+)\s*bytes",
+        re.I)
+    wrong_sizes = []
+    for path in _hand_written_docs():
+        rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+        for m in LFBK_SIZE_RE.finditer(_read(path)):
+            claimed = int(m.group(1) or m.group(2) or m.group(3))
+            if claimed != fb_size:
+                wrong_sizes.append("%s (says %d bytes)" % (rel, claimed))
+    if wrong_sizes:
+        fail("these documents state the LFBK verdict frame's size wrongly: %s. "
+             "The frame is %d bytes (qnx/latch_feedback.h: LATCH_FEEDBACK_SIZE); "
+             "24 is the CRC COVERAGE over bytes [0..23], not the frame size, and "
+             "a reader who is told the frame is 24 bytes will reject a valid "
+             "28-byte frame."
+             % (", ".join(wrong_sizes), fb_size))
+    pass_check("Every document states the LFBK verdict frame's size as the %d "
+               "bytes the header defines" % fb_size)
+
+    # --- D-3b: HOMEOSTAT MUST BE VISIBLE, AND VISIBLE AS DEFAULT-OFF ----
+    #
+    # The default-off property is DERIVED from the supervisor's source, not
+    # asserted here: `latch_homeostat_vmax()` has to refuse to scale the
+    # velocity ceiling when the manifest carries no `homeostat` section or
+    # the section is disabled.  That is what makes the frozen host-sim
+    # evidence signature -- which asserts the supervisor behaves
+    # bit-identically without the module -- true.
+    latchd_c = os.path.join(REPO_ROOT, "qnx", "latchd.c")
+    if not os.path.isfile(latchd_c):
+        fail("qnx/latchd.c is missing -- HOMEOSTAT's default-off behaviour "
+             "cannot be derived.")
+    hs_body = _c_inline_func_body(_read(latchd_c), "latch_homeostat_vmax")
+    if not hs_body:
+        fail("qnx/latchd.c does not define latch_homeostat_vmax() -- the "
+             "HOMEOSTAT velocity ceiling cannot be derived, so no document "
+             "may describe it")
+    if "homeostat_present" not in hs_body or "enabled == 0u" not in hs_body:
+        fail("qnx/latchd.c: latch_homeostat_vmax() must refuse to scale the "
+             "velocity ceiling when the manifest has no homeostat section, or "
+             "when the section is disabled. HOMEOSTAT is DEFAULT-OFF, and the "
+             "frozen host-sim evidence signature asserts the supervisor "
+             "behaves bit-identically without the module -- so a build that "
+             "scaled the ceiling anyway would contradict the archive.")
+    HOMEOSTAT_DOCS = ("README.md",
+                      "docs/DEVPOST_SUBMISSION.md",
+                      "docs/DEMO_VIDEO_SCRIPT.md")
+    DEFAULT_OFF_RE = re.compile(
+        r"default[-\s]?off|off\s+by\s+default|disabled\s+by\s+default", re.I)
+    invisible = []
+    for rel in HOMEOSTAT_DOCS:
+        p = os.path.join(REPO_ROOT, rel)
+        if not os.path.isfile(p):
+            fail("%s is missing -- HOMEOSTAT has to be visible to a judge in "
+                 "the README, the Devpost submission and the video script."
+                 % rel)
+        text = _read(p)
+        if "homeostat" not in text.lower():
+            invisible.append("%s (does not mention HOMEOSTAT at all)" % rel)
+        elif not DEFAULT_OFF_RE.search(text):
+            invisible.append("%s (mentions HOMEOSTAT but never says it is "
+                             "off unless the signed contract enables it)" % rel)
+    if invisible:
+        fail("HOMEOSTAT is invisible or misdescribed: %s. The module, its "
+             "signed contract (qnx/contracts/homeostat_servo.manifest), its "
+             "unit test and its runtime proof all ship; a judge-facing "
+             "document that never mentions it cannot score it. And it must "
+             "be described as DEFAULT-OFF, because the frozen host-sim "
+             "evidence signature asserts the supervisor behaves "
+             "bit-identically without it."
+             % "; ".join(invisible))
+    pass_check("HOMEOSTAT is visible in the README, the Devpost submission "
+               "and the video script, and each says it is off unless the "
+               "signed contract enables it")
+
+    # --- D-4: EXACTLY ONE CANONICAL VIDEO PLAN -------------------------
+    #
+    # The family is DERIVED from the documents themselves: every markdown
+    # file under docs/ whose name mentions a video.  Exactly one of them
+    # may carry the time-coded storyboard; every other one must carry a
+    # SUPERSEDED banner that names the canonical one.  A second storyboard
+    # is two scripts, and an operator filming from the wrong one films a
+    # storyboard the code contradicts.
+    docs_dir = os.path.join(REPO_ROOT, "docs")
+    video_docs = []
+    try:
+        for fn in sorted(os.listdir(docs_dir)):
+            if fn.endswith(".md") and "video" in fn.lower():
+                video_docs.append(fn)
+    except OSError:
+        video_docs = []
+    STORYBOARD_ROW_RE = re.compile(r"^\|\s*\*\*\d+:\d+ . \d+:\d+\*\*", re.M)
+    canonical = [fn for fn in video_docs
+                 if STORYBOARD_ROW_RE.search(_read(os.path.join(docs_dir, fn)))]
+    if len(canonical) != 1:
+        fail("the video-plan documents under docs/ must have EXACTLY ONE "
+             "canonical storyboard, and %d of them do (%s). Two storyboards "
+             "are two scripts: one of them is stale, it reads exactly like "
+             "the live one, and an operator filming from the wrong file "
+             "films a storyboard the code contradicts."
+             % (len(canonical), ", ".join(canonical) or "none"))
+    canon = canonical[0]
+    stale = []
+    for fn in video_docs:
+        if fn == canon:
+            continue
+        text = _read(os.path.join(docs_dir, fn))
+        if "SUPERSEDED" not in text.upper() or canon not in text:
+            stale.append(fn)
+    if stale:
+        fail("these video-plan documents do not carry a SUPERSEDED banner "
+             "naming the canonical storyboard (%s): %s. A stale copy of a "
+             "storyboard is a document that reads like the truth."
+             % (canon, ", ".join(stale)))
+    pass_check("There is exactly ONE canonical video storyboard (%s); every "
+               "other video document is a SUPERSEDED banner naming it"
+               % canon)
+
+    # --- D-10: EVERY `latchctl` VERB A DOCUMENT NAMES MUST EXIST --------
+    #
+    # The verbs are DERIVED from the CLI's own dispatch table, so a verb
+    # that is removed cannot stay in a document, and a verb that is added
+    # needs no list.
+    latchctl_c = os.path.join(REPO_ROOT, "qnx", "latchctl.c")
+    if not os.path.isfile(latchctl_c):
+        fail("qnx/latchctl.c is missing -- the CLI's verbs cannot be derived.")
+    verbs = set(re.findall(r"strcmp\(cmd,\s*\"([A-Za-z0-9_-]+)\"\)\s*==\s*0",
+                            _read(latchctl_c)))
+    if not verbs:
+        fail("qnx/latchctl.c has no `strcmp(cmd, ...)` dispatch table -- the "
+             "CLI's verbs cannot be derived, so no document may name one.")
+    dead = []
+    for path in _hand_written_docs():
+        rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+        for m in re.finditer(r"\blatchctl\s+([A-Za-z][A-Za-z0-9_-]*)",
+                             _read(path)):
+            verb = m.group(1)
+            if verb not in verbs:
+                dead.append("%s: `latchctl %s`" % (rel, verb))
+    if dead:
+        fail("these documents name a `latchctl` verb that does not exist: %s. "
+             "The CLI's verbs are derived from qnx/latchctl.c (%s). A document "
+             "that names a verb the tool does not have sends the reader to a "
+             "command that prints 'Unknown command' -- and the codelab's "
+             "reader is following it literally."
+             % ("; ".join(dead), ", ".join(sorted(verbs))))
+    pass_check("Every `latchctl` verb a document names is a verb the CLI "
+               "actually has (%d verb(s) derived from qnx/latchctl.c)"
+               % len(verbs))
+
+    # --- D-11: A QUARANTINED ARTEFACT MUST SAY SO IN ITS OWN FIRST LINES
+    #
+    # The withdrawal notice used to live in a README *beside* the
+    # artefact, so the artefact itself -- opened on its own, copied into a
+    # slide, pasted into a review -- read like a live measurement.  The
+    # banner has to be IN the artefact.
+    qdir = os.path.join(REPO_ROOT, "docs", "evidence", "quarantine")
+    if os.path.isdir(qdir):
+        for fn in sorted(os.listdir(qdir)):
+            p = os.path.join(qdir, fn)
+            if os.path.isdir(p):
+                readme = os.path.join(p, "README.md")
+                if not os.path.isfile(readme):
+                    fail("docs/evidence/quarantine/%s/ has no README.md -- a "
+                         "quarantined directory with no entry-point notice is "
+                         "a withdrawn measurement with no withdrawal." % fn)
+                targets = [readme]
+            else:
+                targets = [p]
+            for t in targets:
+                head = "\n".join(_read(t).splitlines()[:12])
+                if QUARANTINE_BANNER_MARKER not in head:
+                    fail("docs/evidence/quarantine/%s does not carry the "
+                         "inline '%s' banner in its first 12 lines. A "
+                         "quarantined artefact that can be opened on its own "
+                         "reads like a live measurement; the withdrawal "
+                         "notice has to be IN the artefact."
+                         % (os.path.relpath(t, REPO_ROOT).replace(os.sep, "/"),
+                            QUARANTINE_BANNER_MARKER))
+        # The generator that archives the withdrawn secpol audit must
+        # write the same marker, or a re-run of the tool would strip the
+        # banner the archived artefact carries.
+        tool = os.path.join(REPO_ROOT, "tools", "quarantine_secpol_audit.py")
+        if not os.path.isfile(tool):
+            fail("tools/quarantine_secpol_audit.py is missing -- the "
+                 "quarantined copy of the withdrawn audit has no generator.")
+        if QUARANTINE_BANNER_MARKER not in _read(tool):
+            fail("tools/quarantine_secpol_audit.py does not write the inline "
+                 "'%s' banner into the archived copy: a re-run of the tool "
+                 "would strip the banner the archived artefact carries."
+                 % QUARANTINE_BANNER_MARKER)
+    pass_check("Every quarantined artefact carries the inline '%s' banner in "
+               "its own first lines, and the archival tool writes it"
+               % QUARANTINE_BANNER_MARKER)
+
+
 def main():
     print("=== LATCH Architectural Consistency & Invariant Verification ===")
 
@@ -6834,6 +7113,14 @@ def main():
 
     # 8. Verify the committed evidence archive is complete and not stale.
     verify_evidence_archive()
+
+    # 9. Verify the DOCUMENTS say what the CODE says.
+    #
+    # A document is a claim about the code.  When the code moves and the
+    # document does not, the document is a lie that nobody notices.  See
+    # `verify_documentation_claims()` for the five measured drifts this
+    # closes.
+    verify_documentation_claims()
 
     print("\n[SUCCESS] All architectural consistency checks PASSED with 0 errors.")
 

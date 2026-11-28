@@ -192,9 +192,15 @@ rc = devctl(act_fd, DCMD_LATCH_DUMP_GOV_EVENTS, &dump, sizeof(dump), NULL);
 ```
 Or use the operator utility:
 ```bash
-latchctl status     # queries devctl 0x43 (or falls back to 0x40)
-latchctl dump-gov   # queries devctl 0x44 to export JSON flight events
+latchctl status       # queries devctl 0x43 (or falls back to 0x40)
+latchctl events       # queries devctl 0x44 to dump the GOVERNOR flight-event ring
+latchctl events --json   # ...and prints it as JSON
+latchctl events --csv    # ...and prints it as CSV
 ```
+The event ring is a 4096-entry circular buffer and the devctl exposes at most
+`LATCH_GOV_EVENT_DUMP_MAX` (64) entries per call, so page it with
+`latchctl events -n 64 -s <index>` and a monotonically advancing cursor
+rather than expecting one call to return the whole ring.
 
 ### 6.2 Run the Adversarial Attack Rig
 ```bash

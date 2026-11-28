@@ -1,6 +1,15 @@
+==============================================================================
+WITHDRAWN -- NOT EVIDENCE.  QUARANTINED ARTEFACT: retained for audit history
+only.  Its generator inserted fixed latency values and its WCET / determinism
+conclusions are unsupported.  Do not quote its figures, do not cite it, and do
+not present it as a measurement.  The current, reproducible measurements are
+named by the index at docs/evidence/README.md, which also records this
+withdrawal.
+==============================================================================
+
 ================================================================================
- QNX SDP 8.0 vs STOCK LINUX REAL-TIME DETERMINISM EVALUATION (G4)              
- Workload: 1 kHz Periodic Physical AI Safety Interlock Loop (1,000 us Budget)   
+ QNX SDP 8.0 vs STOCK LINUX REAL-TIME DETERMINISM EVALUATION (G4)
+ Workload: 1 kHz Periodic Physical AI Safety Interlock Loop (1,000 us Budget)
 ================================================================================
 
 EXECUTIVE SUMMARY:

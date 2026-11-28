@@ -1,4 +1,24 @@
 ==============================================================================
+WITHDRAWN -- NOT EVIDENCE.  QUARANTINED ARTEFACT: retained for audit
+history only.  This historical report made unsupported claims about
+secpolgenerate coverage, least privilege and certification.  Do not
+quote it, do not cite it, and do not present it as evidence of a passed
+security audit.  The current, unrestricted secpolgenerate capture and
+its written review are docs/evidence/governor/secpol-audit.txt and
+docs/secpol-audit-review.md.
+==============================================================================
+
+==============================================================================
+WITHDRAWN -- NOT EVIDENCE.  QUARANTINED ARTEFACT: retained for audit
+history only.  This historical report made unsupported claims about
+secpolgenerate coverage, least privilege and certification.  Do not
+quote it, do not cite it, and do not present it as evidence of a passed
+security audit.  The current, unrestricted secpolgenerate capture and
+its written review are docs/evidence/governor/secpol-audit.txt and
+docs/secpol-audit-review.md.
+==============================================================================
+
+==============================================================================
 LATCH QNX SDP 8.0 Security Policy Audit (secpolgenerate / secpolcompile)
 ==============================================================================
 Date: 2026-11-23

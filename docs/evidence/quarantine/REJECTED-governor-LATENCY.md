@@ -1,3 +1,10 @@
+> **WITHDRAWN -- NOT EVIDENCE.** This artefact is retained for audit history
+> only. Its figures were produced by a generator that inserted fixed values,
+> and its conclusions are unsupported. **Do not quote it, do not cite it, and
+> do not present it as a measurement.** The current, reproducible measurements
+> are named by the index at [`docs/evidence/README.md`](../README.md), which
+> also records this withdrawal.
+
 # GOVERNOR & LATCH Real-Time Latency & Determinism Record
 
 ## 1. Latency & Jitter Comparison (Single Summary Table)

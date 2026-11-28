@@ -64,6 +64,22 @@ GOVERNOR manages AI actuator authority through a deterministic 6-rung finite sta
 - **Heartbeat Chatter Non-Recovery**: Heartbeat-only frames (`kind=1`) renew the liveness lease, but **explicitly reset** `clean_command_streak = 0`. An agent cannot regain authority by simply pinging health checks.
 - **25-Frame Bounded Hysteresis**: Restoring authority up one rung requires exactly 25 (`promote_clean_frames`) consecutive clean, valid, coherent motion proposals (`kind=2`). Any fault resets the streak to 0.
 
+### The HOMEOSTAT Outer Loop (Default-Off, Contract-Enabled)
+
+The 6-rung ladder is the **inner** loop: it demotes on a fault and recovers on clean behaviour. HOMEOSTAT is a **second, outer** loop that shrinks the *speed* of an otherwise-authoritative agent when the world around it looks wrong — the software analogue of Watt's flyball governor closing the throttle when the load changes.
+
+**It is OFF unless the signed manifest turns it on.** The loop is enabled only by an explicit schema-3 `homeostat` section in the signed contract (`qnx/contracts/homeostat_servo.manifest`, SHA-256 `4e65a922…`). With no such section — or with `enabled: 0` — every HOMEOSTAT function is inert and the supervisor's motion is **identical** to the same run without the section; `tools/homeostat_e2e.py` (scenario D) proves that against the real binary, tick by tick. Nothing is hardcoded: every threshold, gain and floor is signed data.
+
+**How it works.** Over a fixed-length epoch (`epoch_ticks`, 100 in the shipped contract) the supervisor tracks four Essential Variables — the **rejection ratio**, the **clamp fraction** (requested motion *not* applied), the **latency spread**, and the **coherence-anomaly count**. If **any** threshold is crossed, the velocity scale **contracts** by `contraction_q8` (Q8 fixed point). If the epoch is clean, the scale **recovers** by `recovery_q8`, up to Q8 unity. The scale is floored at `floor_q8` (26/256 in the shipped contract), so the loop can narrow the envelope but can never collapse it to zero velocity.
+
+**What it is allowed to do.** The scale is applied as an **additional velocity ceiling** on top of the signed manifest limit:
+
+$$v_{\text{effective}} = \min\!\left(v_{\max},\ \frac{v_{\max} \cdot \text{scale\_q8}}{256}\right)$$
+
+It is **contracting-only**: it may lower the ceiling and it may restore it, but it can never raise the ceiling above what the signed contract allows. The arithmetic is bounded, integer-only, and has no heap, no floating point and no I/O in the decision path.
+
+**How it is proved.** `qnx/gov_homeostat_test.c` is the unit test (contraction, recovery, Q8 saturation, overflow-safe accounting). `tools/homeostat_e2e.py` is the **runtime** proof: it drives the real supervisor binary over the real wire protocol and reads the result back out of the committed evidence-tape format, proving four properties — that a stressed epoch contracts the ceiling, that a clean epoch recovers it, that the HOMEOSTAT run never moves the plant *faster* than the identical run without the section (**contracting-only**), and that a manifest with no `homeostat` section produces the **same per-tick motion** as the baseline (**default-off**). Run it with `make -C qnx homeostat-e2e-check`; the live state is visible in `latchctl status` on the `HOMEOSTAT : enabled | scale_q8=… (256=unity) | v_max ceiling=… | stress epochs=…` line.
+
 ---
 
 ## Protocol v2 Wire & IPC Specifications
@@ -235,7 +251,7 @@ latch/
     gov_gate_precheck_test.c     # Unit test: precheck gates and cumulative dose windowing
     gov_homeostat.h, .c          # Bounded integer-only adaptive velocity scale (Ashby ultrastability)
     gov_homeostat_test.c         # Unit test: contraction, recovery, Q8 saturation, overflow-safe accounting
-    latch_feedback.h, .c         # 24-byte LFBK verdict codec (encode / strict decode / seq correlation)
+    latch_feedback.h, .c         # 28-byte LFBK verdict codec (encode / strict decode / seq correlation)
     latch_feedback_test.c        # Unit test: exact size, CRC, reserved flags, sequence correlation, timeout
     latch_ingest.c               # Unprivileged virtio-console bridge -> /dev/latch/proposal
     latchctl.c                   # Native admin CLI (status, session-status, events, hold, manifest-verify)
@@ -324,9 +340,9 @@ latch/
     V12_GAP_LEDGER.md            # v12 audit reconciliation: what is proven, what is not
     secpol-audit-review.md       # The security-policy audit's written delta review (U-6 / M-4)
     DEVPOST_SUBMISSION.md        # Official Devpost submission draft
-    DEMO_VIDEO_SCRIPT.md         # 3-minute video storyboard script
-    VIDEO_SCRIPT_AND_SUBMISSION.md
-    06_video_and_submission_plan.md
+    DEMO_VIDEO_SCRIPT.md         # THE canonical 3-minute video storyboard + timeline + pre-flight checklist
+    VIDEO_SCRIPT_AND_SUBMISSION.md  # SUPERSEDED stub -> DEMO_VIDEO_SCRIPT.md
+    06_video_and_submission_plan.md # SUPERSEDED stub -> DEMO_VIDEO_SCRIPT.md
     V8_CURRENT_WORKFLOW.md, V8_PROBLEMS_AND_UPGRADE.md, V8_RESEARCH_AND_STACK.md
     analysis/host-static-stack-usage.txt
     architecture/QNX_SCHEDULING_AND_STACK_USAGE.md

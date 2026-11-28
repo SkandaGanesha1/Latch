@@ -1,3 +1,12 @@
+> **WITHDRAWN -- NOT EVIDENCE.** This directory is retained for audit history
+> only. Its figures were produced by a generator that inserted fixed values,
+> and its conclusions are unsupported. **Do not quote them, do not cite them,
+> and do not present them as a measurement.** The current, reproducible
+> measurement is the generated synthetic baseline under
+> [`docs/evidence/baseline/`](../baseline/), and the index at
+> [`docs/evidence/README.md`](../README.md) names it and records this
+> withdrawal.
+
 # Linux GPOS Baseline Telemetry & Determinism Comparison
 
 This directory contains empirical baseline benchmark measurements conducted on Linux 6.x CFS (Completely Fair Scheduler), providing the baseline against which QNX SDP 8.0's real-time performance and determinism are compared.

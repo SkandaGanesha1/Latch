@@ -1603,6 +1603,59 @@ touching any `iofunc_notify*` call.
   exactly, because changing it changes when the first notification
   fires.
 
+### 4g. Facts about the DOCUMENTATION-CLAIMS gate
+
+These were measured by hand on 2026-11-28, while remediating the v14
+P0 documentation drift. Read them before editing a judge-facing
+document.
+
+- **A DOCUMENT IS A CLAIM ABOUT THE CODE, AND THE CHEAPEST WAY TO KEEP
+  THE CLAIM TRUE IS TO DERIVE IT.** The `verify_documentation_claims()`
+  gate in `tools/consistency_check.py` derives every property it
+  checks: the LFBK frame size comes out of `qnx/latch_feedback.h`'s
+  `LATCH_FEEDBACK_SIZE`; HOMEOSTAT's default-off property comes out of
+  `qnx/latchd.c`'s `latch_homeostat_vmax()`; the canonical video plan
+  comes out of the documents themselves; the `latchctl` verbs come out
+  of `qnx/latchctl.c`'s `strcmp(cmd, ...)` dispatch table. **A gate
+  that hard-codes the file list has to be edited every time a file is
+  added, and the day it is not edited is the day it stops covering
+  anything.** The frame size is the clearest case: the README used to
+  call the LFBK frame 24 bytes, which is the CRC's COVERAGE (bytes
+  [0..23]), not the frame (28 bytes) — and a reader told the frame is
+  24 bytes rejects a valid 28-byte frame.
+
+- **A QUARANTINED ARTEFACT MUST SAY SO IN ITS OWN FIRST LINES.** The
+  withdrawal notice used to live in a README *beside* the artefact, so
+  the artefact itself — opened on its own, copied into a slide, pasted
+  into a review — read like a live measurement. The marker is the
+  literal string `WITHDRAWN -- NOT EVIDENCE`, and
+  `tools/quarantine_secpol_audit.py` writes it into the archived copy
+  **idempotently**: re-running the tool on an archive that already
+  carries the banner changes nothing, and re-running it on one that
+  lost the banner restores it.
+
+- **A GATE ON A DOCUMENT HAS TO HAVE A MUTATION, AND A DOCUMENT-WIDE
+  MUTATION HAS TO SURVIVE A REWORDING.** The D-3 mutation that removes
+  HOMEOSTAT from the Devpost submission has to replace EVERY
+  occurrence — the heading, the running text and every file name — or
+  the document still mentions the module and the gate stays green. But
+  pinning the occurrence COUNT turns every harmless rewording into a
+  stale mutation, and a stale mutation is a hole in the proof. So the
+  mutation tool accepts the count `"all"`: the anchor still has to
+  EXIST (otherwise the mutation is stale and the battery fails), but
+  its count is not frozen. **A count is a proxy for "this anchor is
+  still the one I meant"; where the anchor is a word the document may
+  use any number of times, "the anchor is still there" is the real
+  property.**
+
+- **THE NARRATION WORD COUNT IS A MEASURED NUMBER, NOT A ROUNDED
+  ONE.** The storyboard's ten segments total 155 s and carry **359**
+  narration words (the gate counts the `*"..."*` spans in the `| **`
+  rows). The script used to say "~365", which the gate's ±15 tolerance
+  accepted — and a tolerance is a tolerance, not a derivation. The
+  document now states the measured number, and the gate checks the
+  first `~N narration words` against the count it measures.
+
 ---
 
 ## 5. What this project must never claim

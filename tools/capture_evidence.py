@@ -368,7 +368,7 @@ def derive_on_target_metrics(ts, dump_text, keepout_lo, keepout_hi):
         "%s" % ts, a, keepout_lo, keepout_hi, "on-target tape dump",
         scope_note=(
             "This window is the LAST %d rows of the session tape, captured by\n"
-            "the `latchctl tape-dump` call in the session script. The session\n"
+            "the `latchctl dump` call in the session script. The session\n"
             "itself ran for many more ticks before the dump was taken, which\n"
             "is why the whole-session `Proposals Received` counter is larger\n"
             "than anything visible here." % a["rows"]),
