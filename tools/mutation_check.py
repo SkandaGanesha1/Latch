@@ -914,6 +914,208 @@ MUTATIONS = [
        "latch_rm_attr_host.h latch_rm_attr_test.c | dirs",
        "$(BUILD_DIR)/host-sim/latch_rm_attr_test: latch_rm_attr_host.h "
        "latch_rm_attr_test.c | dirs")]),
+
+    # ===================== THE NOTIFICATION-LIST LOCK ==================
+    #
+    # C-2b.  The QNX iofunc library's NOTIFICATION LIST is a singly-linked
+    # list of armed events, and three library entry points change it:
+    # `iofunc_notify()` ALLOCATES an event and LINKS it into the list,
+    # `iofunc_notify_trigger()` walks the list, delivers a pulse and
+    # UNLINKS the events it fires, and `iofunc_notify_remove()` walks the
+    # SAME list and FREES the events.
+    #
+    # MEASURED by disassembling the installed SDP 8.0 library
+    # (`target/qnx/aarch64le/lib/libc.so.6`):
+    # `iofunc_notify_trigger_strict()` loads the list head with
+    # `ldr x19, [x23, #8]` (the `list` member at offset 8), follows it
+    # with `ldr x19, [x19]` (the event's `next` at offset 0), calls
+    # `MsgDeliverEvent()` and unlinks the event; `iofunc_notify_remove_strict()`
+    # follows the same chain and calls `free()`.  And NONE of the five
+    # notify entry points takes a mutex -- there is NO call to
+    # `pthread_mutex_lock`, `pthread_mutex_unlock` or `SyncMutexLock_r` in
+    # any of them -- so the library provides NO lock of its own here and
+    # the resource manager has to.
+    #
+    # `latch_fb_sink` runs TWO dispatch threads with `DISPATCH_FLAG_NOLOCK`,
+    # and the WRITE handler that triggers a notification and the READ/close
+    # handlers that arm and remove one run on DIFFERENT threads.  So the
+    # trigger and the remove can walk the SAME list at the same time,
+    # which is a USE-AFTER-FREE (the trigger walks into an event the remove
+    # just freed) and list corruption -- not a lost count.
+    #
+    # The fix: every access to a notification list goes through a wrapper
+    # in `qnx/latch_rm_notify.h` that takes the LIST'S OWN lock around the
+    # call and FAILS CLOSED.
+    #
+    # The consistency gate derives the resource managers that touch a
+    # notification list from the source, so a new one is covered without
+    # being listed.
+    ("C-2b: a resource manager calls the iofunc notify library directly "
+     "(the library LINKS a new event into the shared list, and its trigger "
+     "walks and UNLINKS the same list while its remove walks and FREES it "
+     "-- with no mutex of its own, so two threads can walk the same list "
+     "at the same time)",
+     "qnx/latch_fb_sink.c",
+     [("    rc = latch_rm_notify_arm(ctp, msg, &node->notify, trig);",
+       "    rc = iofunc_notify(ctp, msg, node->notify.nop, trig, NULL, NULL);")]),
+
+    ("C-2b: a resource manager uses the raw IOFUNC_NOTIFY_INPUT_CHECK() "
+     "macro (that macro READS the shared armed count outside the list's "
+     "lock, so a notification can be armed between the check and the "
+     "trigger that follows it)",
+     "qnx/latch_fb_sink.c",
+     [("    rc = latch_rm_notify_input_fire(&g_fb.read_node.notify, (int)bytes,\n"
+       "                                    &fired);",
+       "    if (IOFUNC_NOTIFY_INPUT_CHECK(g_fb.read_node.notify.nop,\n"
+       "                                   (int)bytes, 0)) {\n"
+       "        (void)0;\n"
+       "    }\n"
+       "    rc = latch_rm_notify_input_fire(&g_fb.read_node.notify, (int)bytes,\n"
+       "                                    &fired);")]),
+
+    ("C-2b: the arm wrapper takes the notification lock AFTER the notify "
+     "call (the library LINKS the new event into the shared list INSIDE "
+     "that call, so the lock has to be held while it runs)",
+     "qnx/latch_rm_notify.h",
+     [("    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int status = iofunc_notify(ctp, msg, n->nop, trig, NULL, NULL);\n"
+       "    int urc = latch_rm_notify_unlock(n);",
+       "    int status = iofunc_notify(ctp, msg, n->nop, trig, NULL, NULL);\n"
+       "    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int urc = latch_rm_notify_unlock(n);")]),
+
+    ("C-2b: the arm wrapper IGNORES the lock's failure (the notify call "
+     "would then LINK an event into the shared list with no lock held -- "
+     "the operation has to be REFUSED, not performed unlocked)",
+     "qnx/latch_rm_notify.h",
+     [("    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    int status = iofunc_notify(ctp, msg, n->nop, trig, NULL, NULL);",
+       "    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        rc = EOK;\n"
+       "    }\n"
+       "    int status = iofunc_notify(ctp, msg, n->nop, trig, NULL, NULL);")]),
+
+    ("C-2b: the remove wrapper never releases the notification lock (the "
+     "library FREES the armed events inside that call, so the lock has to "
+     "be held while it runs -- and it has to be released afterwards, or "
+     "the node deadlocks on the next request)",
+     "qnx/latch_rm_notify.h",
+     [("    iofunc_notify_remove(ctp, n->nop);\n"
+       "    int urc = latch_rm_notify_unlock(n);",
+       "    iofunc_notify_remove(ctp, n->nop);\n"
+       "    int urc = EOK;")]),
+
+    ("C-2b: the notification lock primitive swallows the lock's error and "
+     "reports success (a lock that failed and was reported as success "
+     "would let the notify call run unlocked)",
+     "qnx/latch_rm_notify.h",
+     [("    int rc = latch_rm_notify_lock_impl(&n->lock);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    return EOK;",
+       "    int rc = latch_rm_notify_lock_impl(&n->lock);\n"
+       "    (void)rc;\n"
+       "    return EOK;")]),
+
+    ("C-2b: a resource manager stops including the shared notify header "
+     "(it would have no way to reach the notify library under the list's "
+     "lock)",
+     "qnx/latch_fb_sink.c",
+     [("#include \"latch_rm_notify.h\"\n", "")]),
+
+    ("C-2b: a resource manager is built against the HOST STUB instead of "
+     "QNX's <sys/iofunc.h> (a resource manager that ships with the stub is "
+     "one that never touched the real library)",
+     "qnx/latch_fb_sink.c",
+     [("#include \"latch_rm_notify.h\"",
+       "#define LATCH_RM_NOTIFY_HOSTED 1\n#include \"latch_rm_notify.h\"")]),
+
+    ("C-2b: the host test is dropped from the regression suite (the "
+     "notification-lock discipline would have no proof at all)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-rm-notify-check\n", "")]),
+
+    ("C-2b: the shipped header is no longer a prerequisite of the host "
+     "test's build rule (`make` would not rebuild the test when the header "
+     "changes, so the test would prove a STALE header)",
+     "qnx/Makefile",
+     [("$(BUILD_DIR)/host-sim/latch_rm_notify_test: latch_rm_notify.h "
+       "latch_rm_notify_host.h latch_rm_attr_host.h latch_rm_notify_test.c "
+       "| dirs",
+       "$(BUILD_DIR)/host-sim/latch_rm_notify_test: latch_rm_notify_host.h "
+       "latch_rm_attr_host.h latch_rm_notify_test.c | dirs")]),
+
+    ("C-2b: the armed-count CHECK is moved OUTSIDE the locked region (the "
+     "check reads the armed count and the trigger walks the armed list, so "
+     "a notification armed between them would make the two disagree -- "
+     "they have to be ONE critical section)",
+     "qnx/latch_rm_notify.h",
+     [("    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    if (IOFUNC_NOTIFY_INPUT_CHECK(n->nop, cnt, 0)) {\n"
+       "        iofunc_notify_trigger(n->nop, cnt, IOFUNC_NOTIFY_INPUT);",
+       "    int armed = IOFUNC_NOTIFY_INPUT_CHECK(n->nop, cnt, 0);\n"
+       "    int rc = latch_rm_notify_lock(n);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    if (armed) {\n"
+       "        iofunc_notify_trigger(n->nop, cnt, IOFUNC_NOTIFY_INPUT);")]),
+
+    ("C-2b: the notification header reaches into the ATTRIBUTE lock (the "
+     "two lock families protect different state, and a resource manager "
+     "that holds both at once can deadlock against one that takes them in "
+     "the other order)",
+     "qnx/latch_rm_notify.h",
+     [("    int rc = latch_rm_notify_lock_impl(&n->lock);\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    return EOK;",
+       "    int rc = latch_rm_notify_lock_impl(&n->lock);\n"
+       "#ifndef LATCH_RM_NOTIFY_HOSTED\n"
+       "    (void)latch_rm_attr_lock;\n"
+       "#endif\n"
+       "    if (rc != EOK) {\n"
+       "        return rc;\n"
+       "    }\n"
+       "    return EOK;")]),
+
+    ("C-2b: a resource manager names the notification lock DIRECTLY (the "
+     "lock is the wrapper's business, and a resource manager that takes it "
+     "by hand can hold it across another lock, which is how two locks "
+     "deadlock)",
+     "qnx/latch_fb_sink.c",
+     [("    rc = latch_rm_notify_arm(ctp, msg, &node->notify, trig);",
+       "    (void)node->notify.lock;\n"
+       "    rc = latch_rm_notify_arm(ctp, msg, &node->notify, trig);")]),
+
+    ("C-2b: a SECOND resource manager starts touching a notification list "
+     "(the list of resource managers is DERIVED from the source, so a new "
+     "one is covered without anyone having to remember to add it -- a "
+     "hardcoded list would miss it)",
+     "qnx/latchd.c",
+     [("#include \"latch_rm_attr.h\"\n",
+       "#include \"latch_rm_attr.h\"\n"
+       "\n"
+       "/* A resource manager that starts reaching the notify library. */\n"
+       "static void latch_notify_probe(iofunc_notify_t *nop)\n"
+       "{\n"
+       "    (void)iofunc_notify(NULL, NULL, nop, 0, NULL, NULL);\n"
+       "}\n")]),
 ]
 
 

@@ -1538,6 +1538,71 @@ before diagnosing a red job.
   gets. **Do not filter a checkout by directory name: `build` is
   gitignored in one place and tracked in another.**
 
+### 4f. Facts about the iofunc NOTIFICATION LIST
+
+These were measured by disassembling the installed SDP 8.0 library
+(`target/qnx/aarch64le/lib/libc.so.6`) on 2026-11-28. Read them before
+touching any `iofunc_notify*` call.
+
+- **THE NOTIFICATION LIST IS SHARED MUTABLE STATE, AND THE LIBRARY
+  TAKES NO MUTEX OF ITS OWN.** `iofunc_notify_t` is
+  `{ int cnt; struct _iofunc_notify_event *list; }` — a 16-byte element,
+  and a resource manager owns an ARRAY of three of them (INPUT, OUTPUT,
+  OUT-OF-BAND). The `list` is a singly-linked list of armed events, and
+  three library entry points change it:
+
+  - `iofunc_notify()` ALLOCATES an event and LINKS it into
+    `nop[index].list`, and writes `nop[index].cnt`;
+  - `iofunc_notify_trigger()` / `iofunc_notify_trigger_strict()` walk the
+    list, deliver a pulse with `MsgDeliverEvent()`, and UNLINK the
+    events they fire;
+  - `iofunc_notify_remove()` / `iofunc_notify_remove_strict()` walk the
+    SAME list and `free()` the events.
+
+  **MEASURED: none of the five notify entry points calls
+  `pthread_mutex_lock`, `pthread_mutex_unlock` or `SyncMutexLock_r`.**
+  The library provides NO lock here, so the resource manager has to.
+
+- **THE RACE IS A USE-AFTER-FREE, NOT A LOST COUNT.**
+  `iofunc_notify_trigger_strict()` loads the list head with
+  `ldr x19, [x23, #8]` (the `list` member at offset 8), follows it with
+  `ldr x19, [x19]` (the event's `next` at offset 0), calls
+  `MsgDeliverEvent()` and unlinks the event; `iofunc_notify_remove_strict()`
+  follows the same chain and calls `free()`. So a trigger that runs
+  while a remove is running walks into an event the remove just freed,
+  and the two unlinks both write the predecessor's `next` — a node can
+  be lost, duplicated, or made to point at itself.
+
+- **NO NOTIFY ENTRY POINT REACHES `iofunc_attr_lock`,** so there is no
+  lock-ordering cycle between the attribute lock and the notification
+  lock inside the library. **That is not a licence to nest them in the
+  resource manager**, though: two locks taken in two different orders
+  are a deadlock, and the order is per-resource-manager. LATCH keeps
+  them apart by construction (the notify header never mentions the
+  attribute lock, and the attribute header never mentions the notify
+  lock), and `tools/consistency_check.py` proves it structurally.
+
+- **THE RACE IS LIVE IN `latch_fb_sink.c` AND ONLY THERE.** The sink
+  creates its dispatch channel with `DISPATCH_FLAG_NOLOCK` and runs TWO
+  dispatch threads on it, so two messages really can be in flight at the
+  same time. The WRITE handler's trigger and the READ/close handlers'
+  arm and remove run on DIFFERENT threads, and they all touch the same
+  node's list. `latchd.c` and `latch_guestd.c` do not use notifications
+  at all today.
+
+- **THE ARMED-COUNT CHECK AND THE TRIGGER HAVE TO BE ONE CRITICAL
+  SECTION.** `IOFUNC_NOTIFY_INPUT_CHECK(nop, cnt, tran)` reads
+  `nop[IOFUNC_NOTIFY_INPUT].cnt` and `iofunc_notify_trigger()` walks
+  `nop[IOFUNC_NOTIFY_INPUT].list`. If they were two critical sections,
+  a notification could be armed between them and the count the trigger
+  used would not be the count the check compared against.
+
+- **`IOFUNC_NOTIFY_INIT(nop)` SETS ALL THREE COUNTS TO `INT_MAX` AND
+  ALL THREE LISTS TO NULL,** and that initial armed count is part of the
+  node's observable state — `latch_rm_notify_init()` preserves it
+  exactly, because changing it changes when the first notification
+  fires.
+
 ---
 
 ## 5. What this project must never claim

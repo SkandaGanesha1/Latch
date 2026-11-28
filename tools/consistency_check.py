@@ -776,6 +776,481 @@ def verify_rm_attr_locking():
 
 
 # ---------------------------------------------------------------------------
+# THE RESOURCE MANAGER'S NOTIFICATION-LIST LOCK (C-2b)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS MEASURED, NOT THEORETICAL.
+#
+# The QNX iofunc library's notification list is a SINGLY-LINKED list of
+# armed events, and three library entry points change it:
+#
+#   - `iofunc_notify()` ALLOCATES an event and LINKS it into the list;
+#   - `iofunc_notify_trigger()` walks the list, delivers a pulse and
+#     UNLINKS the events it fires;
+#   - `iofunc_notify_remove()` walks the list and FREES the events.
+#
+# MEASURED by disassembling the installed SDP 8.0 library
+# (`target/qnx/aarch64le/lib/libc.so.6`):
+# `iofunc_notify_trigger_strict()` loads the list head with
+# `ldr x19, [x23, #8]` (the `list` member at offset 8), follows it with
+# `ldr x19, [x19]` (the event's `next` at offset 0), calls
+# `MsgDeliverEvent()` and unlinks the event; `iofunc_notify_remove_strict()`
+# follows the same chain and calls `free()`.  And NONE of the five
+# notify entry points takes a mutex -- there is NO call to
+# `pthread_mutex_lock`, `pthread_mutex_unlock` or `SyncMutexLock_r` in
+# any of them -- so the library provides NO lock of its own here and the
+# resource manager has to.
+#
+# `latch_fb_sink` runs TWO dispatch threads with `DISPATCH_FLAG_NOLOCK`,
+# and the WRITE handler that triggers a notification and the READ/close
+# handlers that arm and remove one run on DIFFERENT threads.  So the
+# trigger and the remove can walk the SAME list at the same time, which
+# is a USE-AFTER-FREE (the trigger walks into an event the remove just
+# freed) and list corruption -- not a lost count.
+#
+# THE RULE
+# --------
+# Every access to a notification list is made while that list's lock is
+# held, and the operation FAILS CLOSED if the lock cannot be taken.
+#
+# THE GATE
+# --------
+# The resource managers that touch a notification list are DERIVED from
+# the source, so a new one is covered without being listed.  For each
+# one the gate requires:
+#
+#   - it includes the shared header;
+#   - it contains NO raw call to a notify entry point and NO raw
+#     `IOFUNC_NOTIFY_*` list macro;
+#   - it reaches the notify library only through the locked wrappers.
+#
+# And for each wrapper the gate requires that it takes the lock BEFORE
+# the notify call, releases it AFTER, and returns WITHOUT calling the
+# notify function when the lock cannot be taken.
+#
+# The two lock families (the attribute lock and the notification lock)
+# must never be held at the same time, or a resource manager that takes
+# them in two different orders deadlocks.  The gate proves that
+# structurally: no wrapper calls another wrapper, and neither header
+# mentions the other's lock.
+#
+# The BEHAVIOURAL half compiles the shipped header against a stub of the
+# notify interface and RUNS it, so the gate binds to the lock
+# discipline's BEHAVIOUR and not to the shape of its source.  It is
+# skipped (with a note) when no C compiler is available; the structural
+# half never skips.
+# ---------------------------------------------------------------------------
+
+# The notify entry points, and the wrapper each one must be reached
+# through.  `iofunc_notify_trigger()` is reached through the wrapper
+# that ALSO performs the armed-count check, because the check and the
+# trigger have to be one critical section.
+RM_NOTIFY_IOFUNC_WRAPPERS = (
+    ("iofunc_notify",                "latch_rm_notify_arm"),
+    ("iofunc_notify_trigger",        "latch_rm_notify_input_fire"),
+    ("iofunc_notify_trigger_strict", "latch_rm_notify_trigger_strict"),
+    ("iofunc_notify_remove",         "latch_rm_notify_remove"),
+)
+
+# Every notify entry point the library exposes.  A resource manager may
+# not call ANY of them directly.
+RM_NOTIFY_BANNED_CALLS = (
+    "iofunc_notify",
+    "iofunc_notify_trigger",
+    "iofunc_notify_trigger_strict",
+    "iofunc_notify_remove",
+    "iofunc_notify_remove_strict",
+)
+
+# The macros that READ or MUTATE a notification list.  The index
+# constants (`IOFUNC_NOTIFY_INPUT` and friends) are not in this list:
+# they name a condition class, they do not touch the list.
+RM_NOTIFY_BANNED_MACROS = (
+    "IOFUNC_NOTIFY_INPUT_CHECK",
+    "IOFUNC_NOTIFY_OUTPUT_CHECK",
+    "IOFUNC_NOTIFY_OBAND_CHECK",
+    "IOFUNC_NOTIFY_INIT",
+    "IOFUNC_NOTIFY_DISARM",
+)
+
+
+def verify_notify_list_locking():
+    """Every notification list is reached under its own lock.
+
+    See the block comment above for the measured defect this closes.
+    """
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hdr_path = os.path.join(qnx_dir, "latch_rm_notify.h")
+    stub_path = os.path.join(qnx_dir, "latch_rm_notify_host.h")
+    test_path = os.path.join(qnx_dir, "latch_rm_notify_test.c")
+    attr_hdr_path = os.path.join(qnx_dir, "latch_rm_attr.h")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hdr_path, stub_path, test_path, attr_hdr_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hdr_path, encoding="utf-8", errors="replace") as f:
+        hdr = f.read()
+    with io.open(attr_hdr_path, encoding="utf-8", errors="replace") as f:
+        attr_hdr = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hdr_code = strip_c_comments(hdr)
+    attr_hdr_code = strip_c_comments(attr_hdr)
+
+    # --- THE RESOURCE MANAGERS ARE DERIVED, NOT LISTED ----------------
+    #
+    # A source file that touches a notification list -- that names a
+    # notify entry point, one of the list macros, or one of the locked
+    # wrappers -- has to obey the rule.  Deriving the list means a NEW
+    # resource manager that uses notifications is covered without anyone
+    # having to remember to add it here.  The WRAPPER names count as a
+    # touch, because a resource manager that reaches the library only
+    # through the wrappers still touches the shared list.
+    rm_files = []
+    try:
+        names = sorted(os.listdir(qnx_dir))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".c"):
+            continue
+        # The HOST TESTS are not resource managers: they are the ones
+        # that define LATCH_RM_NOTIFY_HOSTED on purpose, and they are
+        # checked separately, below.
+        if name.endswith("_test.c"):
+            continue
+        path = os.path.join(qnx_dir, name)
+        try:
+            with io.open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except (IOError, OSError):
+            continue
+        code = strip_c_comments(text)
+        if ("iofunc_notify" in code or "IOFUNC_NOTIFY_" in code
+                or "latch_rm_notify_" in code):
+            rm_files.append((name, text, code))
+
+    if not rm_files:
+        fail("no QNX resource manager that touches a notification list was "
+             "found in qnx/: the iofunc notification list is SHARED mutable "
+             "state that the library walks, unlinks and FREES without taking "
+             "a mutex of its own, so every access to it has to be made under "
+             "the list's own lock, and the gate that proves it derives the "
+             "list from the source")
+
+    for name, text, code in rm_files:
+        if not re.search(r'#\s*include\s*"latch_rm_notify\.h"', code):
+            fail("qnx/%s touches an iofunc notification list, so it must "
+                 "include \"latch_rm_notify.h\": the library's trigger walks "
+                 "the armed-event list and unlinks the events it fires, and "
+                 "the library's remove walks the SAME list and frees the "
+                 "events, and NONE of them takes a mutex -- so two threads "
+                 "on the same node can walk the same list at the same time"
+                 % name)
+
+        if "LATCH_RM_NOTIFY_HOSTED" in code:
+            fail("qnx/%s must not define LATCH_RM_NOTIFY_HOSTED: that macro "
+                 "swaps QNX's <sys/iofunc.h> for the host test's stub, and a "
+                 "resource manager that ships with the stub is a resource "
+                 "manager that never touched the real library" % name)
+
+        # --- NO RAW NOTIFY CALL ---------------------------------------
+        for iofunc_name in RM_NOTIFY_BANNED_CALLS:
+            if re.search(r"(?<![\w])" + re.escape(iofunc_name) + r"[ \t]*\(",
+                         code):
+                fail("qnx/%s calls %s() directly: that entry point walks "
+                     "the notification list, and the library takes no mutex "
+                     "of its own, so the call must be made through the "
+                     "locked wrapper in latch_rm_notify.h"
+                     % (name, iofunc_name))
+
+        # --- NO RAW LIST MACRO ----------------------------------------
+        for macro in RM_NOTIFY_BANNED_MACROS:
+            if re.search(r"(?<![\w])" + re.escape(macro) + r"[ \t]*\(", code):
+                fail("qnx/%s uses the raw %s() macro: that macro READS or "
+                     "WRITES the shared notification list without the list's "
+                     "lock, so it must be reached through the locked "
+                     "wrapper in latch_rm_notify.h" % (name, macro))
+
+        # --- THE LOCK ITSELF IS NOT THE RESOURCE MANAGER'S TO TAKE ----
+        if re.search(r"notify\s*(?:\.|->)\s*lock", code):
+            fail("qnx/%s names the notification lock directly: the lock is "
+                 "the wrapper's business, and a resource manager that takes "
+                 "it by hand can hold it across another lock (which is how "
+                 "two locks deadlock)" % name)
+
+        # The resource manager must therefore use the wrappers.
+        if not any(re.search(r"(?<![\w])" + re.escape(wrapper) + r"[ \t]*\(",
+                             code)
+                   for _iofunc_name, wrapper in RM_NOTIFY_IOFUNC_WRAPPERS):
+            fail("qnx/%s touches an iofunc notification list but does not "
+                 "use any of the locked notify wrappers in "
+                 "latch_rm_notify.h: every access to the list has to run "
+                 "under that list's lock" % name)
+
+        # The lists have to be prepared, or the armed-count check reads a
+        # count of 0 and the notification never fires.
+        init_calls = len(re.findall(r"(?<![\w])latch_rm_notify_init[ \t]*\(",
+                                    code))
+        field_decls = len(re.findall(
+            r"latch_rm_notify_t[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*;", code))
+        if init_calls < max(1, field_decls):
+            fail("qnx/%s declares %d notification block(s) but initialises "
+                 "only %d: latch_rm_notify_init() prepares both the mutex "
+                 "and the three lists, and an unprepared list has an armed "
+                 "count of 0, so the notification never fires"
+                 % (name, field_decls, init_calls))
+
+    # --- THE WRAPPERS MUST LOCK, CALL, UNLOCK, AND FAIL CLOSED -------
+    #
+    # The ORDER matters and so does the failure behaviour:
+    #
+    #   1. the lock is taken BEFORE the notify call;
+    #   2. if the lock cannot be taken, the wrapper RETURNS without
+    #      calling the notify function (fail closed);
+    #   3. the notify call happens;
+    #   4. the lock is released AFTER the call -- on the error path too.
+    for iofunc_name, wrapper in RM_NOTIFY_IOFUNC_WRAPPERS:
+        body = _c_inline_func_body(hdr_code, wrapper)
+        if not body:
+            fail("qnx/latch_rm_notify.h must define %s(): it is the ONLY way "
+                 "a LATCH resource manager may reach %s(), so that the "
+                 "shared notification list is locked while the iofunc "
+                 "library walks it" % (wrapper, iofunc_name))
+            continue
+
+        i_lock = body.find("latch_rm_notify_lock(")
+        i_call = body.find(iofunc_name + "(")
+        i_unlock = body.find("latch_rm_notify_unlock(")
+        if i_lock < 0 or i_call < 0 or i_unlock < 0:
+            fail("qnx/latch_rm_notify.h: %s() must take the notification "
+                 "lock, call %s() and release the lock"
+                 % (wrapper, iofunc_name))
+            continue
+        if not (i_lock < i_call < i_unlock):
+            fail("qnx/latch_rm_notify.h: %s() must take the notification lock "
+                 "BEFORE it calls %s() and release it AFTER -- the iofunc "
+                 "library walks, unlinks and frees the shared list inside "
+                 "that call" % (wrapper, iofunc_name))
+            continue
+
+        between = body[i_lock:i_call]
+        if "return" not in between:
+            fail("qnx/latch_rm_notify.h: %s() must REFUSE the operation when "
+                 "the notification lock cannot be taken: a notification "
+                 "delivered without the lock can be delivered from freed "
+                 "memory, and a refused notification is a client that waits "
+                 "for the next trigger (fail closed)" % wrapper)
+
+    # --- THE ARMED-COUNT CHECK AND THE TRIGGER ARE ONE SECTION -------
+    #
+    # The check reads the element's `cnt` and the trigger walks the
+    # element's `list`.  If the check were outside the critical section,
+    # a notification could be armed between the two and the count the
+    # trigger used would not be the count the check compared against.
+    fire_body = _c_inline_func_body(hdr_code, "latch_rm_notify_input_fire")
+    if not fire_body:
+        fail("qnx/latch_rm_notify.h must define latch_rm_notify_input_fire()")
+    else:
+        i_lock = fire_body.find("latch_rm_notify_lock(")
+        i_check = fire_body.find("IOFUNC_NOTIFY_INPUT_CHECK(")
+        i_call = fire_body.find("iofunc_notify_trigger(")
+        i_unlock = fire_body.find("latch_rm_notify_unlock(")
+        if i_check < 0:
+            fail("qnx/latch_rm_notify.h: latch_rm_notify_input_fire() must "
+                 "evaluate IOFUNC_NOTIFY_INPUT_CHECK() -- that is how the "
+                 "sink decides whether a reader has to be told")
+        elif not (i_lock < i_check < i_call < i_unlock):
+            fail("qnx/latch_rm_notify.h: latch_rm_notify_input_fire() must "
+                 "evaluate IOFUNC_NOTIFY_INPUT_CHECK() INSIDE the locked "
+                 "region, between the lock and the trigger: the check reads "
+                 "the armed count and the trigger walks the armed list, so "
+                 "a notification armed between them would make the two "
+                 "disagree")
+
+    # --- NO WRAPPER CALLS ANOTHER WRAPPER ----------------------------
+    #
+    # A wrapper that re-entered its own lock would deadlock on a
+    # non-recursive mutex, and a wrapper that called another family's
+    # wrapper would hold two locks at once.
+    for _iofunc_name, wrapper in RM_NOTIFY_IOFUNC_WRAPPERS:
+        body = _c_inline_func_body(hdr_code, wrapper)
+        if not body:
+            continue
+        # The body starts at the function's own SIGNATURE, so the
+        # wrapper's own name is in it.  It is the definition, not a
+        # call, so it does not count.
+        for called in set(re.findall(r"(?<![\w])(latch_rm_notify_[A-Za-z0-9_]+)"
+                                     r"[ \t]*\(", body)):
+            if called in ("latch_rm_notify_lock", "latch_rm_notify_unlock"):
+                continue
+            if called == wrapper:
+                continue
+            fail("qnx/latch_rm_notify.h: %s() calls %s(): a wrapper must "
+                 "not call another wrapper -- it would re-enter the lock it "
+                 "already holds (a self-deadlock on a non-recursive mutex) "
+                 "or hold two different locks at once"
+                 % (wrapper, called))
+
+    # --- THE TWO LOCK FAMILIES ARE INDEPENDENT ------------------------
+    #
+    # The attribute lock and the notification lock protect different
+    # state, and a resource manager must never hold both at once: two
+    # locks taken in two different orders are a deadlock.
+    if "latch_rm_attr_" in hdr_code:
+        fail("qnx/latch_rm_notify.h must not mention the attribute lock: the "
+             "notification lock and the attribute lock protect different "
+             "state, and a resource manager that holds both at once can "
+             "deadlock against one that takes them in the other order")
+    if "latch_rm_notify_" in attr_hdr_code:
+        fail("qnx/latch_rm_attr.h must not mention the notification lock, "
+             "for the same reason: the two lock families have to be "
+             "independent, or a resource manager can hold both at once")
+
+    # --- THE LOCK PRIMITIVE ITSELF -----------------------------------
+    lock_body = _c_inline_func_body(hdr_code, "latch_rm_notify_lock")
+    if not lock_body:
+        fail("qnx/latch_rm_notify.h must define latch_rm_notify_lock()")
+    else:
+        if "latch_rm_notify_lock_impl(" not in lock_body:
+            fail("qnx/latch_rm_notify.h: latch_rm_notify_lock() must call "
+                 "latch_rm_notify_lock_impl() -- that is the primitive the "
+                 "notification lock is taken with")
+        # The lock's ERROR has to be propagated, not swallowed: a lock
+        # that failed and was reported as success would let the notify
+        # call run unlocked, and the wrapper's fail-closed path is what
+        # stops it.
+        if not re.search(r"return\s+rc\s*;", lock_body):
+            fail("qnx/latch_rm_notify.h: latch_rm_notify_lock() must RETURN "
+                 "the lock's error instead of swallowing it: a lock that "
+                 "failed and was reported as success would let the notify "
+                 "call run unlocked")
+    unlock_body = _c_inline_func_body(hdr_code, "latch_rm_notify_unlock")
+    if not unlock_body:
+        fail("qnx/latch_rm_notify.h must define latch_rm_notify_unlock()")
+    elif "latch_rm_notify_unlock_impl(" not in unlock_body:
+        fail("qnx/latch_rm_notify.h: latch_rm_notify_unlock() must call "
+             "latch_rm_notify_unlock_impl()")
+
+    # The TARGET build has to use the real POSIX mutex, not a stub.
+    if "pthread_mutex_lock(" not in hdr_code:
+        fail("qnx/latch_rm_notify.h must take the notification lock with "
+             "pthread_mutex_lock() on the target: the host test's seam "
+             "replaces it only in the hosted build, and a header that "
+             "never locks anything protects nothing")
+    if "pthread_mutex_unlock(" not in hdr_code:
+        fail("qnx/latch_rm_notify.h must release the notification lock with "
+             "pthread_mutex_unlock() on the target")
+
+    # --- THE HOST TEST AND THE REGRESSION SUITE ----------------------
+    if "LATCH_RM_NOTIFY_HOSTED" not in test_src:
+        fail("qnx/latch_rm_notify_test.c must define LATCH_RM_NOTIFY_HOSTED: "
+             "the host test compiles the SHIPPED header against the stub, "
+             "so the wrappers that ship are the ones that are proved")
+    if "latch_rm_notify.h" not in test_src:
+        fail("qnx/latch_rm_notify_test.c must include the shipped header: a "
+             "test that reimplements the wrappers proves nothing about the "
+             "code that ships")
+    for _iofunc_name, wrapper in RM_NOTIFY_IOFUNC_WRAPPERS:
+        if wrapper not in test_src:
+            fail("qnx/latch_rm_notify_test.c must exercise %s(): a wrapper "
+                 "that is never run is a wrapper that is never proved"
+                 % wrapper)
+
+    if "latch-rm-notify-check" not in makefile_text:
+        fail("qnx/Makefile must provide the latch-rm-notify-check target: "
+             "the notification-lock discipline is only proved if the host "
+             "test is BUILDABLE and RUN")
+    if not re.search(r"(?m)^[^:\n:]*latch_rm_notify_test[^:\n:]*:[^\n]*"
+                     r"latch_rm_notify\.h", makefile_text):
+        fail("qnx/Makefile's rule for the latch_rm_notify_test binary must "
+             "depend on latch_rm_notify.h: without the dependency, `make` "
+             "would not rebuild the test when the header changes, and the "
+             "test would prove a STALE header")
+    if not re.search(r"(?m)^latch-rm-notify-check:[^\n]*latch_rm_notify_test",
+                     makefile_text):
+        fail("qnx/Makefile's latch-rm-notify-check target must depend on the "
+             "latch_rm_notify_test binary: a target that builds nothing "
+             "proves nothing")
+
+    def _recipe(text, target):
+        """The RECIPE of one Makefile target -- its tab-indented lines."""
+        lines = text.splitlines()
+        out = []
+        in_target = False
+        for ln in lines:
+            m = re.match(r"^([A-Za-z0-9_.\-/]+):", ln)
+            if m:
+                in_target = (m.group(1) == target)
+                continue
+            if not in_target:
+                continue
+            if ln.startswith("\t"):
+                out.append(ln)
+            elif ln.strip() == "":
+                continue
+            else:
+                break
+        return "\n".join(out)
+
+    if "latch-rm-notify-check" not in _recipe(makefile_text, "check-governor"):
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-rm-notify-check, or the notification-lock discipline's "
+             "host test is not part of the regression suite")
+
+    # --- THE BEHAVIOURAL HALF: COMPILE AND RUN THE SHIPPED HEADER ---
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("C-2b notification-list locking: every resource manager "
+                   "that touches an iofunc notification list (%s) reaches it "
+                   "only through the locked wrappers, and every wrapper "
+                   "locks, calls, unlocks and fails closed (the BEHAVIOURAL "
+                   "probe was SKIPPED -- no C compiler on PATH -- so only "
+                   "the structural half of the gate ran)"
+                   % ", ".join(name for name, _t, _c in rm_files))
+        return
+
+    tmp = tempfile.mkdtemp(prefix="latch_rmnotify_")
+    try:
+        test_bin = os.path.join(tmp, "latch_rm_notify_test")
+        comp = subprocess.run(
+            [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+             "-D_POSIX_C_SOURCE=200809L", "-I", qnx_dir,
+             test_path, "-o", test_bin, "-lpthread"],
+            capture_output=True, text=True, timeout=180)
+        if comp.returncode != 0:
+            fail("the shipped qnx/latch_rm_notify.h does not compile against "
+                 "its host stub: %s. The lock discipline has to be usable by "
+                 "a HOST test, or the property it encodes cannot be proved "
+                 "off-target." % (comp.stderr.strip() or comp.stdout.strip()))
+        run = subprocess.run([test_bin], capture_output=True, text=True,
+                             timeout=300)
+        if run.returncode != 0:
+            detail = (run.stdout.strip() or run.stderr.strip() or
+                      "exit status %d" % run.returncode)
+            fail("the shipped qnx/latch_rm_notify.h does NOT BEHAVE correctly: "
+                 "%s. Every access to a notification list must run while that "
+                 "list's lock is held, and a lock that cannot be taken must "
+                 "REFUSE the operation." % detail)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    pass_check("C-2b notification-list locking: every resource manager that "
+               "touches an iofunc notification list (%s) reaches it only "
+               "through the locked wrappers -- the library's trigger walks "
+               "and unlinks the armed list and its remove walks and frees it "
+               "with no mutex of its own, so the notify call runs with the "
+               "list locked, a lock that cannot be taken refuses the "
+               "operation, and the two lock families are never held together"
+               % ", ".join(name for name, _t, _c in rm_files))
+
+
+# ---------------------------------------------------------------------------
 # THE FIRST-READER DECISION (C-1)
 # ---------------------------------------------------------------------------
 #
@@ -3966,6 +4441,22 @@ def main():
              "qvm start")
     check_sdp_payloads(fb_build, "qnx/latch_qemu_fbprobe.build")
 
+    # --- THE RESOURCE MANAGER'S NOTIFICATION-LIST LOCK (C-2b) ----------
+    #
+    # The iofunc notification list is SHARED mutable state: the library's
+    # trigger walks it and unlinks the events it fires, and the library's
+    # remove walks the SAME list and frees the events -- and none of them
+    # takes a mutex.  See `verify_notify_list_locking()`.
+    #
+    # IT RUNS HERE, BEFORE the transport contract below, and that ORDER is
+    # deliberate.  A resource manager that reaches the notify library
+    # directly violates BOTH gates -- the locking one and the transport
+    # one -- and `fail()` reports the FIRST violation and stops.  The
+    # locking violation is the DEEPER one (the transport still works; the
+    # list is simply not protected), so the gate that names it has to get
+    # there first, or the diagnosis a reader gets is the shallower one.
+    verify_notify_list_locking()
+
     # THE MAILBOX RESOURCE MANAGER MUST IMPLEMENT THE HYPERVISOR'S CONTRACT.
     #
     # The vdev opens the host endpoint with
@@ -3999,14 +4490,17 @@ def main():
              "the read reply's data must be written at offset 0, because the C "
              "Library's readcond() receives the reply straight into the caller's "
              "buffer"),
-            (r"iofunc_notify_trigger",
+            (r"latch_rm_notify_input_fire",
              "a zero-byte read is not an EOF: the vdev arms an input notification and "
              "retries when the pulse arrives, so the resource manager must deliver "
-             "it"),
-            (r"iofunc_notify\s*\(\s*ctp\s*,\s*msg\s*,\s*node->notify\s*,\s*trig\s*,"
-             r"\s*NULL\s*,\s*NULL\s*\)",
+             "it (through the locked wrapper, because the library's trigger walks "
+             "the shared list with no mutex of its own)"),
+            (r"latch_rm_notify_arm\s*\(\s*ctp\s*,\s*msg\s*,\s*&\s*node->notify\s*,"
+             r"\s*trig\s*\)",
              "the vdev polls with ionotify(POLLARM, _NOTIFY_COND_INPUT), so the "
-             "resource manager must answer the _IO_NOTIFY message")):
+             "resource manager must answer the _IO_NOTIFY message (through the "
+             "locked wrapper, because the library links the armed event into the "
+             "shared list with no mutex of its own)")):
         if not re.search(pattern, fb_sink_code):
             fail(f"qnx/latch_fb_sink.c must match /{pattern}/: {why}")
     # The nodes must be ONE-SIDED, and the resource manager itself must

@@ -151,6 +151,19 @@
  * read-modify-write. */
 #include "latch_rm_attr.h"
 
+/* THE RESOURCE MANAGER'S NOTIFICATION-LIST LOCK.  The iofunc library's
+ * notification lists are SHARED mutable state: `iofunc_notify()` links a
+ * new event into the list, `iofunc_notify_trigger()` walks it and
+ * unlinks the events it fires, and `iofunc_notify_remove()` walks it
+ * and FREES the events -- and NONE of them takes a mutex (measured on
+ * the installed SDP 8.0 library).  This channel runs TWO dispatch
+ * threads with `DISPATCH_FLAG_NOLOCK`, and the WRITE handler that
+ * triggers a notification and the READ/close handlers that arm and
+ * remove one run on DIFFERENT threads, so the trigger and the remove
+ * really can walk the same list at the same time -- which is a
+ * use-after-free, not a lost count. */
+#include "latch_rm_notify.h"
+
 /* The fixed frame size of the LFBK wire format (qnx/latch_feedback.h).
  * The mailbox is FRAME-ORIENTED: a write is either exactly one frame or
  * it is refused with EINVAL.  A transport that could deliver half a frame
@@ -256,9 +269,9 @@ typedef enum {
 } fb_node_kind_t;
 
 typedef struct fb_node_s {
-    iofunc_attr_t   attr;
-    iofunc_notify_t notify[3];  /* the notification lists (iofunc_notify*()) */
-    fb_node_kind_t  kind;
+    iofunc_attr_t    attr;
+    latch_rm_notify_t notify;   /* the notification lists AND their lock */
+    fb_node_kind_t   kind;
 } fb_node_t;
 
 static struct {
@@ -311,9 +324,17 @@ static const char *g_block_path = FB_BLOCK_PATH_DEFAULT;
  * Queue one frame in the MAILBOX MIRROR.  Returns 0 on success, EAGAIN
  * when the mailbox is full.
  *
- * The notification is triggered OUTSIDE the lock: iofunc_notify_trigger()
- * delivers a pulse, and a pulse delivery must not be holding the mailbox
- * lock.
+ * The notification is triggered OUTSIDE the mailbox lock:
+ * iofunc_notify_trigger() delivers a pulse, and a pulse delivery must
+ * not be holding the mailbox lock.
+ *
+ * It IS taken under the NOTIFICATION-LIST lock, which is a different
+ * lock: the library's trigger WALKS the armed-event list and unlinks
+ * the events it fires, and the library's remove walks the SAME list and
+ * frees the events, and neither takes a mutex of its own.  The WRITE
+ * handler that triggers and the READ/close handlers that arm and remove
+ * run on DIFFERENT dispatch threads, so the trigger and the remove can
+ * be in flight at the same time.
  *
  * This is the MIRROR, not the transport.  Nothing reads the mailbox any
  * more (the guest reads the verdict file through the hypervisor's
@@ -326,6 +347,8 @@ static const char *g_block_path = FB_BLOCK_PATH_DEFAULT;
 static int fb_enqueue(const unsigned char *frame)
 {
     unsigned bytes = 0u;
+    int fired = 0;
+    int rc;
 
     pthread_mutex_lock(&g_fb.lock);
     if (g_fb.count + FB_FRAME_SIZE > FB_RING_BYTES) {
@@ -341,13 +364,24 @@ static int fb_enqueue(const unsigned char *frame)
 
     /* Tell the reader that data is available.  The count is the number of
      * bytes waiting, which is what the client's notification trigger value
-     * is compared against. */
-    if (IOFUNC_NOTIFY_INPUT_CHECK(g_fb.read_node.notify, (int)bytes, 0)) {
+     * is compared against.  The armed-count CHECK and the trigger that
+     * follows it are ONE critical section, so a notification cannot be
+     * armed between them. */
+    rc = latch_rm_notify_input_fire(&g_fb.read_node.notify, (int)bytes,
+                                    &fired);
+    if (fired) {
         pthread_mutex_lock(&g_fb.lock);
         g_fb.triggers++;
         pthread_mutex_unlock(&g_fb.lock);
-        iofunc_notify_trigger(g_fb.read_node.notify, (int)bytes,
-                              IOFUNC_NOTIFY_INPUT);
+    }
+    if (rc != EOK) {
+        /* The trigger was REFUSED -- the list's lock could not be taken,
+         * so the armed event was NOT walked and NOT delivered.  The
+         * reader waits for the next trigger, which is the safe
+         * direction, but a refusal that is not PRINTED is a silent one,
+         * and a silent one is a lie. */
+        printf("latch_fb_sink: notify trigger refused rc=%d\n", rc);
+        fflush(stdout);
     }
     return 0;
 }
@@ -653,6 +687,10 @@ static int fb_io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb
  * The io_notify() handler: the client arms a notification for "input is
  * available".  iofunc_notify() does the bookkeeping and answers
  * immediately if the condition is already met.
+ *
+ * The wrapper takes the node's notification-list lock around the call:
+ * iofunc_notify() LINKS a new event into the shared list, and the
+ * WRITE handler's trigger walks the same list on another thread.
  */
 static int fb_io_notify(resmgr_context_t *ctp, io_notify_t *msg, RESMGR_OCB_T *ocb)
 {
@@ -669,7 +707,7 @@ static int fb_io_notify(resmgr_context_t *ctp, io_notify_t *msg, RESMGR_OCB_T *o
          * the EAGAIN on the write itself, not by a notification. */
         trig |= _NOTIFY_COND_OUTPUT;
     }
-    rc = iofunc_notify(ctp, msg, node->notify, trig, NULL, NULL);
+    rc = latch_rm_notify_arm(ctp, msg, &node->notify, trig);
     pthread_mutex_lock(&g_fb.lock);
     g_fb.notify_calls++;
     g_fb.last_notify_rc = rc;
@@ -682,15 +720,26 @@ static int fb_io_notify(resmgr_context_t *ctp, io_notify_t *msg, RESMGR_OCB_T *o
     return rc;
 }
 
-/* A client closed its descriptor: drop its notification. */
+/* A client closed its descriptor: drop its notification.
+ *
+ * Every one of these four calls WALKS the armed-event list -- the
+ * triggers unlink the events they fire and the remove frees the rest --
+ * and the library takes no mutex of its own, so each one goes through
+ * the locked wrapper.  The attribute lock is a DIFFERENT lock, and it
+ * is taken only by the close wrapper below, AFTER the notification lock
+ * has been released: the two are never held at the same time.
+ */
 static int fb_io_close_dup(resmgr_context_t *ctp, io_close_t *msg, RESMGR_OCB_T *ocb)
 {
     fb_node_t *node = (fb_node_t *)ocb->attr;
 
-    (void)iofunc_notify_trigger_strict(ctp, node->notify, INT_MAX, IOFUNC_NOTIFY_INPUT);
-    (void)iofunc_notify_trigger_strict(ctp, node->notify, INT_MAX, IOFUNC_NOTIFY_OUTPUT);
-    (void)iofunc_notify_trigger_strict(ctp, node->notify, INT_MAX, IOFUNC_NOTIFY_OBAND);
-    (void)iofunc_notify_remove(ctp, node->notify);
+    (void)latch_rm_notify_trigger_strict(ctp, &node->notify, INT_MAX,
+                                         IOFUNC_NOTIFY_INPUT);
+    (void)latch_rm_notify_trigger_strict(ctp, &node->notify, INT_MAX,
+                                         IOFUNC_NOTIFY_OUTPUT);
+    (void)latch_rm_notify_trigger_strict(ctp, &node->notify, INT_MAX,
+                                         IOFUNC_NOTIFY_OBAND);
+    (void)latch_rm_notify_remove(ctp, &node->notify);
 
     /* The close DETACHES the OCB, which decrements the node's shared
      * file-use count.  The wrapper takes the node's attribute lock
@@ -931,15 +980,27 @@ int main(int argc, char **argv)
 
     iofunc_attr_init(&g_fb.read_node.attr, S_IFCHR | 0666, NULL, NULL);
     g_fb.read_node.kind = FB_NODE_READ;
-    IOFUNC_NOTIFY_INIT(g_fb.read_node.notify);
+    if (latch_rm_notify_init(&g_fb.read_node.notify) != EOK) {
+        fprintf(stderr, "latch_fb_sink: cannot initialise the READ node's "
+                "notification list\n");
+        return EXIT_FAILURE;
+    }
 
     iofunc_attr_init(&g_fb.pub_node.attr, S_IFCHR | 0666, NULL, NULL);
     g_fb.pub_node.kind = FB_NODE_PUB;
-    IOFUNC_NOTIFY_INIT(g_fb.pub_node.notify);
+    if (latch_rm_notify_init(&g_fb.pub_node.notify) != EOK) {
+        fprintf(stderr, "latch_fb_sink: cannot initialise the WRITE node's "
+                "notification list\n");
+        return EXIT_FAILURE;
+    }
 
     iofunc_attr_init(&g_fb.out_node.attr, S_IFCHR | 0666, NULL, NULL);
     g_fb.out_node.kind = FB_NODE_OUT;
-    IOFUNC_NOTIFY_INIT(g_fb.out_node.notify);
+    if (latch_rm_notify_init(&g_fb.out_node.notify) != EOK) {
+        fprintf(stderr, "latch_fb_sink: cannot initialise the DISCARD node's "
+                "notification list\n");
+        return EXIT_FAILURE;
+    }
 
     memset(&rattr, 0, sizeof(rattr));
     rattr.nparts_max   = 1;
