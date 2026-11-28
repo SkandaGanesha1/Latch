@@ -1,7 +1,7 @@
 ==============================================================================
 LATCH -- LFBK FEEDBACK TRANSPORT AND THE VERDICT CONTROL LOOP
 ==============================================================================
-Date: 20261127-041655
+Date: 20261128-155147
 Host: Linux fedora 7.3.4-300.fc45.x86_64
 Platform: QNX OS/SDP 8.0 (procnto-smp-instr) on ARMv8-A QEMU `virt` (TCG)
 Transport: a POLLED VERDICT FILE on `vdev virtio-blk`
@@ -26,11 +26,12 @@ W4 -- THE TRANSPORT (tools/verify_fb_qemu.py)
 
 The guest's own report, from the serial console:
 
-  [FBPROBE] port=/dev/vda bytes=69632 frames=17 seq=49->51 epoch=0xa5a5a5a5 verdict=0x0000005a rung=0x0000007b faults=0x00000031 changes=2 opens=1 dir=0 derr=20 ferr=0 rerr=0 bad=0 p0=17/2 p1=0/0 p2=0/0 e0=0 e1=2 e2=2
+  [FBPROBE] port=/dev/vda byLATCHFB15_0
+  [FBPROBE] port=/dev/vda bytes=65536 frames=16 seq=59->61 epoch=0xa5a5a5a5 verdict=0x0000005a rung=0x0000007b faults=0x0000003b changes=2 opens=1 dir=0 derr=20 ferr=0 rerr=0 bad=0 p0=16/2 p1=0/0 p2=0/0 e0=0 e1=2 e2=2
 
 --- the verifier's own output ---
-[FB_QEMU] transport observed: [FBPROBE] port=/dev/vda bytes=69632 frames=17 seq=49->51 epoch=0xa5a5a5a5 verdict=0x0000005a rung=0x0000007b faults=0x00000031 changes=2 opens=1 dir=0 derr=20 ferr=0 rerr=0 bad=0 p0=17/2 p1=0/0 p2=0/0 e0=0 e1=2 e2=2
-[FB_QEMU] black channel intact: A4 observed: received=9 rung=ADVISE lease_age=4
+[FB_QEMU] transport observed: [FBPROBE] port=/dev/vda bytes=65536 frames=16 seq=59->61 epoch=0xa5a5a5a5 verdict=0x0000005a rung=0x0000007b faults=0x0000003b changes=2 opens=1 dir=0 derr=20 ferr=0 rerr=0 bad=0 p0=16/2 p1=0/0 p2=0/0 e0=0 e1=2 e2=2
+[FB_QEMU] black channel intact: A4 observed: received=9 rung=ADVISE lease_age=20
 [FB_QEMU PASS] the host's verdict reached the freestanding guest through the read-only verdict file (the guest's own polling saw the sequence number change, with every frame re-synchronised on the magic and CRC-validated), and the black channel was undisturbed: the same boot delivered all 235 v2 proposals with the A4 demotion held at ADVISE and the final lease expiry reaching LATCH
 
 ==============================================================================
@@ -39,14 +40,15 @@ W5 -- THE CONTROL LOOP (tools/verify_fbverdict_qemu.py)
 
 The guest's own report, from the serial console:
 
+  [FBVERDICT] verdict watcher: 4 warm-up heaLATCHFBV15_0
   [FBVERDICT] verdict watcher: 4 warm-up heartbeats
   [FBVERDICT] 8 clean proposals, each waited for its verdict
   [FBVERDICT] one proposal in an unknown unit: refused
   [FBVERDICT] the guest stops; the lease expires; the ladder reaches LATCH
-  [FBVERDICT] port=/dev/vda opens=1 reads=355 frames=12 changes=9 sent=13 cmds=9 acc=8 rej=1 foreign=0 stale=0 dup=0 torn=0 empty=343 to=0 polls=355 maxrt=1 epoch=0xdb6dbd8e stop=reject last=13 end=1
+  [FBVERDICT] port=/dev/vda opens=1 reads=213 frames=12 changes=9 sent=13 cmds=9 acc=8 rej=1 foreign=0 stale=0 dup=0 torn=0 empty=201 to=0 polls=213 maxrt=1 epoch=0xa81fcef6 stop=reject last=13 end=1
 
 --- the verifier's own output ---
-[FBVERDICT_QEMU] guest report: [FBVERDICT] port=/dev/vda opens=1 reads=355 frames=12 changes=9 sent=13 cmds=9 acc=8 rej=1 foreign=0 stale=0 dup=0 torn=0 empty=343 to=0 polls=355 maxrt=1 epoch=0xdb6dbd8e stop=reject last=13 end=1
+[FBVERDICT_QEMU] guest report: [FBVERDICT] port=/dev/vda opens=1 reads=213 frames=12 changes=9 sent=13 cmds=9 acc=8 rej=1 foreign=0 stale=0 dup=0 torn=0 empty=201 to=0 polls=213 maxrt=1 epoch=0xa81fcef6 stop=reject last=13 end=1
 [FBVERDICT_QEMU PASS] the trusted supervisor's own verdict reached the freestanding guest, the guest understood it (the verdict vocabulary is closed, the session epoch was learned and pinned), and the guest STOPPED when it was told no: the guest reports rej=1 stop=reject with acc=8 accepted proposals, the supervisor received exactly the 13 frames the guest sent, and the lease then expired and the ladder reached LATCH
 
 ==============================================================================

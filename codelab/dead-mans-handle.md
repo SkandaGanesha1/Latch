@@ -4,6 +4,8 @@
 **Target OS:** QNX Software Development Platform (SDP) 8.0 + QNX Hypervisor 8.0.5  
 **Target Platform:** QEMU AArch64 `virt` (`4x Cortex-A76`, EL2 VHE, GICv2) or Linux Host Simulation (`host-sim`)
 
+For the QNX path, obtain a non-commercial license through [QNX Everywhere](https://qnx.software/en/developers/get-started/qnx-everywhere), install QNX Software Center, SDP 8.0 and the Hypervisor package, and source the installed SDP environment. The host-simulation exercises do not need the QNX SDK. QEMU uses mock I²C; no physical motor moves. See the repository README for prerequisites and target build details.
+
 ---
 
 ## 1. Goal (00:00 – 05:00)

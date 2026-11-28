@@ -18,7 +18,7 @@ LATCH (Last Authority for Trusted Control Handoff) is an open-source, mixed-crit
 │  SAFETY DOMAIN (Cores 0-1, Trusted)                  AI GUEST DOMAIN (Cores 2-3)       │
 │  ┌──────────────────────────────────────────────┐    ┌──────────────────────────────┐  │
 │  │ latchd (SCHED_FIFO 63, Core 0 pinned)        │    │ qvm (QNX Hypervisor 8.0)     │  │
-│  │  ├─ Timer Pulse Pool: ChannelCreatePulsePool │    │  ┌────────────────────────┐  │  │
+│  │  ├─ Timer Channel: ChannelCreate / ChannelCreatePulsePool│    │  ┌────────────────────────┐  │  │
 │  │  │   monotonic 1 kHz, _NTO_CHF_FIXED_PRIORITY│    │  │ Linux 6.12 (AArch64)   │  │  │
 │  │  ├─ SPSC Seqlock: C11 acquire/release        │    │  │  /init PID 1           │  │  │
 │  │  │   256 slots, memory_order_acq_rel         │    │  │  235-frame attack suite│  │  │
@@ -42,9 +42,8 @@ An untrusted guest (running inside an isolated Linux 6.12 guest VM or userspace 
 
 The audit verifies exact ABI alignment across headers, C sources, and tools:
 
-#### Devctl Command Numbers (`qnx/latch_protocol.h:536–551, 622–623`)
-Re-derived from the header on 2026-11-25; the previous revision of this table
-stopped at `0x45` and named two of the payloads incorrectly.
+#### Devctl Command Numbers (`qnx/latch_protocol.h:803–830`)
+Re-derived from the header on 2026-11-28 (previously stopped at `0x47`).
 
 - `0x40`: `DCMD_LATCH_FORCE_HOLD` (`__DIOT(_DCMD_MISC, 0x40, latch_force_hold_cmd_t)`) — Operator emergency hold/release command, 8 bytes (`lock_hold`, `reason_code`). Requires the `latch/actuator` ability.
 - `0x41`: `DCMD_LATCH_GET_STATUS` (`__DIOF(_DCMD_MISC, 0x41, latch_status_reply_t)`) — Legacy status reply (byte-for-byte unchanged since v1).
@@ -54,10 +53,14 @@ stopped at `0x45` and named two of the payloads incorrectly.
 - `0x45`: `DCMD_LATCH_PROBE_ABILITY` (`__DION(_DCMD_MISC, 0x45)`) — Read-only probe of the caller's `latch/actuator` ability. It carries **no** payload and returns no data; it answers only "may this client mutate the actuator?".
 - `0x46`: `DCMD_LATCH_GET_HOLD_STATUS` (`__DIOF(_DCMD_MISC, 0x46, latch_hold_status_t)`) — Operator-release acknowledgement (L-5): whether a release was deferred or armed. Output-only.
 - `0x47`: `DCMD_LATCH_GET_SESSION_STATUS` (`__DIOF(_DCMD_MISC, 0x47, latch_session_status_t)`) — Writer-session handoff status (L-2): whether the exclusive proposal writer OCB is held, and the writer-session generation. Output-only; grants no authority.
+- `0x48`: `DCMD_LATCH_GUEST_STOP` (`__DIOF(_DCMD_MISC, 0x48, latch_guest_status_t)`) — Guest-lifecycle stop command on `/dev/latch/guestctl` (U-1).
+- `0x49`: `DCMD_LATCH_GUEST_START` (`__DIOF(_DCMD_MISC, 0x49, latch_guest_status_t)`) — Guest-lifecycle start command on `/dev/latch/guestctl` (U-1).
+- `0x4A`: `DCMD_LATCH_GET_GUEST_STATUS` (`__DIOF(_DCMD_MISC, 0x4A, latch_guest_status_t)`) — Guest-lifecycle status query on `/dev/latch/guestctl` (U-1).
+- `0x4B`: `DCMD_LATCH_GET_LATENCY_STATS` (`__DIOF(_DCMD_MISC, 0x4B, latch_latency_stats_t)`) — Decision-latency histogram & exact min/max stats (U-4). Output-only.
 
-`0x45` is declared at the end of the header rather than in the devctl block.
+`0x45` is declared later in the header rather than in the devctl block.
 That is a source-order quirk, not a second numbering scheme: the numbers are
-still unique and contiguous over `0x40..0x47`.
+still unique and contiguous over `0x40..0x4B`.
 
 #### Wire v2 Frame Layout (32 Bytes, `qnx/governor_wire.c:61–71`)
 Re-derived from the parser on 2026-11-25. The previous revision of this table
@@ -162,7 +165,7 @@ Two masks partition the taxonomy for the supervisor's own use:
 | **A. Systems Engineering** | Requirements traceability, interface contracts, Simplex architecture | **PASS** | `latch_protocol.h:109-124` `_Static_assert`s; `qnx/contracts/*.manifest` signed JSON schemas. |
 | **B. Computer Architecture** | AArch64 EL2 VHE, SMP affinity, memory barriers, MMIO | **PASS** | Core 0/1/2-3 affinity via `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)` (`latchd.c:1783`, `latch_ingest.c:99`); C11 atomics with acquire/release. |
 | **C. OS Architecture** | Microkernel resource manager, ability boundaries, fault isolation | **PASS** | `resmgr_attach()` × 3; `procmgr_ability_create("latch/actuator", flags=0)`; unprivileged ingest. |
-| **D. Scheduling** | Real-time determinism, FIFO scheduling, priority inversion defense | **PASS** | `SCHED_FIFO` 63; `ChannelCreatePulsePool` with `_NTO_CHF_FIXED_PRIORITY`; `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)` core pinning. (Note: QNX OS 8.0 does not support APS — the legacy `aps` keyword works only on QOS 2.2.x. LATCH uses none of it. QNX *sporadic* scheduling is a distinct policy and is **not** implemented here.) |
+| **D. Scheduling** | Real-time determinism, FIFO scheduling, priority inversion defense | **PASS** | `SCHED_FIFO` 63; `ChannelCreate()` + `timer_create(CLOCK_MONOTONIC)` + `SIGEV_PULSE` (`ChannelCreatePulsePool` with `_NTO_CHF_FIXED_PRIORITY` and `ChannelCreate` fallback at `qnx/latchd.c:3104-3107`); `ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT)` core pinning. (Note: QNX OS 8.0 does not support APS — the legacy `aps` keyword works only on QOS 2.2.x. LATCH uses none of it. QNX *sporadic* scheduling is a distinct policy and is **not** implemented here.) |
 | **E. Memory Safety** | Zero heap allocation in tick path, static pre-allocated rings | **PASS** | Zero `malloc()` in the 1 kHz loop; all rings and buffers are statically allocated in `.bss` (measured `.bss` = **438,576 bytes ≈ 428 KiB** in the AArch64 QNX build — `size qnx/build/nto-aarch64-le/latchd`). `mlockall(MCL_CURRENT \| MCL_FUTURE)` is called at startup (`latchd.c:2187`) but is a **no-op on SDP 8.0** — all memory is already locked for the process lifetime — so it is **not** credited as a determinism technique. |
 | **F. Concurrency** | Lockless SPSC ring, Seqlock atomics, non-blocking telemetry | **PASS** | `snapshot_gen` atomic counter fencing; devctl 0x44 dumps cannot block or delay 1 ms actuator commit. |
 | **G. Interrupts & Timers** | Monotonic timer pulses, high-resolution cycles, sub-µs jitter | **PASS** | `timer_create(CLOCK_MONOTONIC)` delivering `SIGEV_PULSE`; `ClockCycles()` sub-microsecond stamping. |

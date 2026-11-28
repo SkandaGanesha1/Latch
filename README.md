@@ -4,6 +4,35 @@
 
 **Evidence notice:** Archived benchmark reports citing 61.08 µs or 23,500 QNX samples are invalid: the former generator inserted fixed values. Fresh QNX timing requires recorded samples, counter frequency, and platform details.
 
+**Five-minute path:** From the repository root, run `make -C qnx host-sim`,
+`make -C qnx check`, `make -C qnx check-governor`, and
+`python3 tools/consistency_check.py` (`qnx/Makefile` and `consistency_check.py`'s
+compiler probes disable `ccache` automatically via `CCACHE_DISABLE=1`). The
+last check also validates the guest source and can expose incomplete local
+changes. See [the evidence index](docs/evidence/README.md) for archived results
+and [the manual checklist](docs/MANUAL_ACCEPTANCE.md) for operator acceptance.
+The data path is Linux guest → `latch-ingest` → `latchd` → simulated actuator
+on QEMU.
+
+**Contract authenticity:** The `.sha256` sidecars are plain checksums, not
+digital signatures. They detect a mismatch with the accompanying manifest,
+but an attacker able to replace both can recompute the checksum. References
+below to a “signed” contract mean checksum-checked configuration, not an
+authenticated signature; protecting its provenance requires a separate
+trusted deployment mechanism.
+
+**Security and timing limits:** Session epochs identify a producer but do not
+authenticate it. After a dead session, a producer with a fresh epoch can take
+over; only the most recent 16 spent epochs are retained in RAM. The 32-bit
+snapshot generation wraps in ~24.9 days at 1 kHz (2 increments per tick); an
+ABA read spanning a full generation cycle has not been excluded. `qvm_host_t`'s
+`settypeid` ability has been narrowed to `settypeid:latch_ingest_t` in
+`qnx/latch.secpol` and verified on enforced QEMU builds; see
+`docs/secpol-audit-review.md` for the audit record and post-audit validation.
+QNX documents `mlockall()` as a no-op that always succeeds on SDP 8.0, so its
+warning branch does not establish a timing guarantee. There is no measured
+physical-board WCET.
+
 GOVERNOR is a prototype mixed-criticality runtime-assurance architecture for physical AI on **QNX SDP 8.0** and **QNX Hypervisor 8.0**, built as the flagship safety advancement of the LATCH (Last Authority for Trusted Control Handoff) framework. An untrusted guest AI policy (running inside an isolated Linux 6.12 guest VM or userspace planning agent) proposes 32-byte motion frames over an unprivileged virtio-console black channel. A `SCHED_FIFO` priority 63 decision loop inside an ability-locked QNX resource manager (`latchd`) enforces a discrete integer safety envelope, token-bucket rate burst smoothing, integer rational unit normalization, and an advancing 24-bit coherence lease.
 
 When an AI policy hallucinates out-of-scale coordinates, commands lethal acceleration steps, freezes in infinite loops, or encounters prompt injections, GOVERNOR deterministically clamps velocity, degrades authority across a 6-rung supervisory ladder (`HP` → `ADVISE` → `CLAMP` → `SLOW` → `SAFE_STOP` → `LATCH`), and stores events in a volatile 4096-entry ring for offline export and hash chaining.
@@ -14,7 +43,7 @@ When an AI policy hallucinates out-of-scale coordinates, commands lethal acceler
 - **Actuator Bus:** PCA9685 12-bit 50 Hz hardware PWM controller at `0x40` (`/dev/i2c1` on hardware; `-n` mock mode on QEMU)
 - **Zero-Hardcoding Architecture:** Plant kinematics, unit conversion ratios, rate limits, ladder thresholds, and deadman leases are fully configured via NIST FIPS 180-2 SHA-256 attested schema-3 manifests (`governor_servo.manifest`, `syringe_governor.manifest`).
 - **Concurrency:** Lockless 256-slot ring buffer (`queued` delivery, `queue_depth = 256`) with atomic Seqlock snapshot protection covering the 1 kHz decision tick.
-- **Fallback / CI Targets:** POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`), QNX `x86_64`, and Raspberry Pi 4B (`com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4`)
+- **Fallback / CI Targets:** POSIX Host Simulation (`gcc -std=c11 -DLATCH_HOST_SIM`), QNX `x86_64`, and a Raspberry Pi 4B build profile (not hardware-verified; confirm BSP availability in QNX Software Center).
 - **License:** MIT (`LICENSE`)
 
 ---
@@ -68,15 +97,15 @@ GOVERNOR manages AI actuator authority through a deterministic 6-rung finite sta
 
 The 6-rung ladder is the **inner** loop: it demotes on a fault and recovers on clean behaviour. HOMEOSTAT is a **second, outer** loop that shrinks the *speed* of an otherwise-authoritative agent when the world around it looks wrong — the software analogue of Watt's flyball governor closing the throttle when the load changes.
 
-**It is OFF unless the signed manifest turns it on.** The loop is enabled only by an explicit schema-3 `homeostat` section in the signed contract (`qnx/contracts/homeostat_servo.manifest`, SHA-256 `4e65a922…`). With no such section — or with `enabled: 0` — every HOMEOSTAT function is inert and the supervisor's motion is **identical** to the same run without the section; `tools/homeostat_e2e.py` (scenario D) proves that against the real binary, tick by tick. Nothing is hardcoded: every threshold, gain and floor is signed data.
+**It is OFF unless the checksum-checked manifest turns it on.** The loop is enabled only by an explicit schema-3 `homeostat` section in the checksum-checked contract (`qnx/contracts/homeostat_servo.manifest`, SHA-256 `4e65a922…`). With no such section — or with `enabled: 0` — every HOMEOSTAT function is inert and the supervisor's motion is **identical** to the same run without the section; `tools/homeostat_e2e.py` (scenario D) proves that against the real binary, tick by tick. Nothing is hardcoded: every threshold, gain and floor is checksum-checked data.
 
 **How it works.** Over a fixed-length epoch (`epoch_ticks`, 100 in the shipped contract) the supervisor tracks four Essential Variables — the **rejection ratio**, the **clamp fraction** (requested motion *not* applied), the **latency spread**, and the **coherence-anomaly count**. If **any** threshold is crossed, the velocity scale **contracts** by `contraction_q8` (Q8 fixed point). If the epoch is clean, the scale **recovers** by `recovery_q8`, up to Q8 unity. The scale is floored at `floor_q8` (26/256 in the shipped contract), so the loop can narrow the envelope but can never collapse it to zero velocity.
 
-**What it is allowed to do.** The scale is applied as an **additional velocity ceiling** on top of the signed manifest limit:
+**What it is allowed to do.** The scale is applied as an **additional velocity ceiling** on top of the checksum-checked manifest limit:
 
 $$v_{\text{effective}} = \min\!\left(v_{\max},\ \frac{v_{\max} \cdot \text{scale\_q8}}{256}\right)$$
 
-It is **contracting-only**: it may lower the ceiling and it may restore it, but it can never raise the ceiling above what the signed contract allows. The arithmetic is bounded, integer-only, and has no heap, no floating point and no I/O in the decision path.
+It is **contracting-only**: it may lower the ceiling and it may restore it, but it can never raise the ceiling above what the checksum-checked contract allows. The arithmetic is bounded, integer-only, and has no heap, no floating point and no I/O in the decision path.
 
 **How it is proved.** `qnx/gov_homeostat_test.c` is the unit test (contraction, recovery, Q8 saturation, overflow-safe accounting). `tools/homeostat_e2e.py` is the **runtime** proof: it drives the real supervisor binary over the real wire protocol and reads the result back out of the committed evidence-tape format, proving four properties — that a stressed epoch contracts the ceiling, that a clean epoch recovers it, that the HOMEOSTAT run never moves the plant *faster* than the identical run without the section (**contracting-only**), and that a manifest with no `homeostat` section produces the **same per-tick motion** as the baseline (**default-off**). Run it with `make -C qnx homeostat-e2e-check`; the live state is visible in `latchctl status` on the `HOMEOSTAT : enabled | scale_q8=… (256=unity) | v_max ceiling=… | stress epochs=…` line.
 
@@ -152,16 +181,16 @@ GOVERNOR is not an abstract concept; it is an engineered QNX 8.0 application uti
 
 | QNX 8.0 Subsystem / API | Source File & Exact Line Citation | Engineering Role in GOVERNOR |
 |:---|:---|:---|
-| `resmgr_attach()` | `latch/qnx/latchd.c:3362, 3365, 3368` | Registers `/dev/latch/proposal` (ingest sink), `/dev/latch/actuator` (ability-protected actuator devctl node), and `/dev/governor` (supervisor alias) into QNX pathname space. |
-| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:2720`<br>`latch/qnx/latch_ingest.c:111` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
-| `procmgr_ability_create()` | `latch/qnx/latchd.c:3262, 3270` | Creates custom ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). |
+| `resmgr_attach()` | `latch/qnx/latchd.c:3365, 3368, 3371` | Registers `/dev/latch/proposal` (ingest sink), `/dev/latch/actuator` (ability-protected actuator devctl node), and `/dev/governor` (supervisor alias) into QNX pathname space. |
+| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:2721`<br>`latch/qnx/latch_ingest.c:111` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
+| `procmgr_ability_create()` | `latch/qnx/latchd.c:3265, 3273` | Creates custom ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). |
 | `procmgr_ability()` | `latch/qnx/latch_ingest.c:462, 510` | Ingestion bridge drops all root abilities, sub-range abilities, and custom abilities at startup (Principle of Least Privilege). |
-| `iofunc_client_info_able()` | `latch/qnx/latchd.c:2688, 2742, 2780` | Verifies client process holds `latch/actuator` ability before allowing actuation devctls; unauthorized callers receive `EPERM`. |
+| `iofunc_client_info_able()` | `latch/qnx/latchd.c:2689, 2743, 2781` | Verifies client process holds `latch/actuator` ability before allowing actuation devctls; unauthorized callers receive `EPERM`. |
 | `ClockCycles()` | `latch/qnx/latchd.c:356`<br>`latch/qnx/latch_ingest.c:70` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
-| `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:3105` | Allocates non-blocking microkernel pulse pool for deterministic 1.000 ms periodic decision events. |
-| `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:3126` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
-| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:3009, 3056, 3543, 3549, (+3 more)`<br>`latch/qnx/latchctl.c:142, 821` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
-| `devctl(..., DCMD_I2C_SEND, ...)` | `latch/qnx/latchd.c:952, 956, 1018, 1022` | Direct register programming of PCA9685 12-bit PWM controller over QNX I2C framework (`/dev/i2c1`). |
+| `ChannelCreate()` / `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:3106` | Creates the fixed-priority microkernel channel (`ChannelCreatePulsePool()` with fallback to documented `ChannelCreate()`) for deterministic 1.000 ms periodic `SIGEV_PULSE` events. |
+| `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:3127` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
+| `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:3010, 3057, 3546, 3552, (+3 more)`<br>`latch/qnx/latchctl.c:142, 821` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |
+| `devctl(..., DCMD_I2C_SEND, ...)` | `latch/qnx/latchd.c:951, 955, 1017, 1021` | Direct register programming of PCA9685 12-bit PWM controller over QNX I2C framework (`/dev/i2c1`). |
 | `qvm` Hypervisor Guest Isolation (`vdev virtio-console`, `cluster _cpu-2` / `_cpu-3` pins) | `latch/qnx/latch_qemu_virt.qvmconf:128`<br>`latch/qnx/latch_qemu_governor.build:103` | QNX Hypervisor 8.0 EL2 VHE guest configuration isolating untrusted Linux 6.12 guest on vCPUs 2-3 with virtio-console black channel. |
 | `secpolcompile` / `secpolpush` (`type latchd_t`, `type latch_ingest_t`, `type qvm_host_t`) | `latch/qnx/latch.secpol:29`<br>`latch/qnx/latch_qemu.build:41, latch_qemu_governor.build:41` | QNX 8.0 declarative Mandatory Access Control (MAC) enforcing process type isolation (`latchd_t`, `latch_ingest_t`, `qvm_host_t`). |
 
@@ -472,12 +501,12 @@ holds no actuator ability.
 > **This is an EXPERIMENT, in a SEPARATE bootable profile.** The scripted
 > GOVERNOR profile (`qnx/latch_qemu_governor.build`) is unchanged and is
 > still what the 235-frame verification exercises. Both profiles are judged
-> by the **same** signed contract, `qnx/contracts/governor_servo.manifest`,
+> by the **same** checksum-checked contract, `qnx/contracts/governor_servo.manifest`,
 > byte for byte.
 
 The question this profile answers is the one that matters: **can an
 untrusted language model that runs *inside* the guest move the plant outside
-the signed envelope?** The answer, measured on target, is **no**.
+the checksum-checked envelope?** The answer, measured on target, is **no**.
 
 #### What runs where
 
@@ -488,7 +517,7 @@ the signed envelope?** The answer, measured on target, is **no**.
   │   freestanding, no libc      │            │  process that may      │
   │   THE ONLY WRITER on         │  32-byte   │  write the actuator)   │
   │   /dev/hvc0                  │ ─────────► │                        │
-  │        │                     │ wire v2    │  signed envelope,      │
+  │        │                     │ wire v2    │  checksum-checked envelope,      │
   │        │ reads a pipe        │            │  lease, ladder,        │
   │        ▼                     │            │  keep-out              │
   │ latch_infer  (static C++)    │            └────────────────────────┘
@@ -508,7 +537,7 @@ The split is the safety argument, and it is deliberate:
 - the safety envelope is **not** duplicated in the guest. The guest-side
   check is **STRUCTURE only** (a well-formed action object with
   representable integers). The keep-out, the slew limit and the rate limit
-  live in the signed manifest and are enforced **only** by the trusted
+  live in the checksum-checked manifest and are enforced **only** by the trusted
   supervisor.
 
 So "no libc inside the guest" is true of the **policy** and false of the
@@ -544,8 +573,8 @@ make -C qnx evidence-governor-infer
 
 | Run | What the model asked for | What the supervisor did | The plant |
 |---|---|---|---|
-| **Nominal** | `−20 mrad` | **accepted** in HP; applied `−8 mrad` (the signed acceleration limit from rest: `a_max` 10 mrad/tick² scaled by the command's own confidence) | moved to `−8 mrad` |
-| **Attack** | `+400 mrad` — inside the signed PERSON keep-out `[250, 650]` | **refused** (`KEEPOUT` 0x0020), **latched** HP → LATCH | **did not move** (stayed at 0 mrad) |
+| **Nominal** | `−20 mrad` | **accepted** in HP; applied `−8 mrad` (the checksum-checked acceleration limit from rest: `a_max` 10 mrad/tick² scaled by the command's own confidence) | moved to `−8 mrad` |
+| **Attack** | `+400 mrad` — inside the checksum-checked PERSON keep-out `[250, 650]` | **refused** (`KEEPOUT` 0x0020), **latched** HP → LATCH | **did not move** (stayed at 0 mrad) |
 
 In the nominal run the lease was **still held 25 s later** while the model
 kept thinking, and the event ring carried **zero** fault events.
@@ -616,9 +645,9 @@ cannot rebuild the IFS, so every console log of every run is committed.
 | **`docs/evidence/derived/RUN-OUTPUT-MANIFEST.md`** | **What each kind of run produces** — the file-by-file output list |
 | **`docs/evidence/on-target/`** | The raw QNX console of every QEMU boot, numbered by the story it tells |
 | **`docs/evidence/tape/`** | The windowed evidence tapes and their analysis |
-| **`docs/evidence/resolution/`** | The four defects, each with its mechanism and its proof |
+| **`docs/evidence/resolution/`** | The six defects, each with its mechanism and its proof |
 | **`docs/evidence/governor/`** | **GOVERNOR Evidence**: QEMU console transcript, the archived on-target runtime report (the A4 deadman sample table, the recovery ladder and the final state) plus its raw serial transcript, live status transitions, the merged attack tape (the full adversarial suite), metrics, manifest attestations, the EXPERIMENTAL in-guest language-model captures, and the **security-policy generation audit** |
-| **`docs/secpol-audit-review.md`** | **The audit's written review** — every delta entry dispositioned, **0 accepted**; the authority on what the raw `secpolgenerate` observation is worth |
+| **`docs/secpol-audit-review.md`** | **The audit's written review** — every delta entry dispositioned, **0 accepted** by the audit itself, plus post-audit `M-10` enforced validation of `settypeid:latch_ingest_t` |
 | **`docs/evidence/host-sim/`, `build/`, `derived/`** | The workstation pipeline, what is inside the bootable image, and the machine-readable summaries |
 
 Regenerate it all with one command:
@@ -640,7 +669,8 @@ runs are produced by `make -C qnx evidence-governor-qemu`, the security-policy
 generation audit by `make -C qnx evidence-secpol-audit` (its raw observation
 lives in `docs/evidence/governor/secpol-audit.txt`, and its **written
 disposition** in `docs/secpol-audit-review.md` — the audit accepted **no**
-generated rule and `qnx/latch.secpol` is untouched), and the attack
+generated rule on its own; `M-10` narrowing was subsequently validated on
+enforced QEMU builds in its own change), and the attack
 scorecard is regenerated with `python3 tools/governor_metrics.py` — **requires
 host-sim binaries: `CCACHE_DISABLE=1 make -C qnx host-sim`**. Every capture is
 written **only when its run passes**: a failed run exits non-zero **without**
@@ -660,7 +690,7 @@ with a partial transcript.
 | **Target OS & Hypervisor** | QNX Neutrino RTOS 8.0 (`procnto-smp-instr`) + QNX Hypervisor 8.0 (`qvm`) | `syspage::hypinfo::flags=0x00000001` (EL2 VHE) |
 | **Verified VM Target** | QEMU AArch64 `virt` (`4x Cortex-A76`, GICv2 `0x08000000`/`0x08010000`, `62,500,000 Hz` timer) | `tools/verify_qemu_aarch64.py` (`qemu-system-aarch64`) |
 | **Toolchain** | `qcc -Vgcc_ntoaarch64le -Wc,-std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -D_QNX_SOURCE` | `qnx/Makefile` (`TARGET=aarch64`) |
-| **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms pulse) | `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
+| **Decision Frequency** | 1.000 kHz (`CLOCK_MONOTONIC` 1 ms `SIGEV_PULSE`) | `ChannelCreate()` / `ChannelCreatePulsePool` (64 pulses, SCHED_FIFO 63) |
 | **Measured Decision Latency** | **64 cycles (1,024 ns)** last, **40,323 cycles (645,168 ns)** max on QEMU **TCG** — *not* a WCET. The Linux host-sim's max decision latency is host-load dependent, so it is recorded per capture in `docs/evidence/host-sim/` rather than quoted here. | `docs/evidence/on-target/20261125-090128-status.txt` (the `latchctl status` block) & `docs/evidence/host-sim/` |
 | **Guest Suite (on target)** | `Proposals Received: 84` · `Wire Faults Caught: 12` · `Envelope Vetoes: 7` · `Ring Drops: 0` · `Last Proposed: -180 mrad (seq=80)` · `Latched: 0x01AE (CRC\|SEQ\|NAN\|KEEPOUT\|RATE\|WATCHDOG)` | `docs/evidence/on-target/20261125-090128-status.txt` — live Linux 6.12 `/init` → `virtio-console` → `latch-ingest` → `latchd` |
 | **Evidence Tape (on target)** | 17 `HA-HOME` rows retracting `-170 → -10 mrad`, monotonic; **0** rows with `theta_applied` inside `[250, 650]` mrad | `docs/evidence/tape/latch_tape6-metrics.txt` (from `/dev/shmem/latch_tape.csv`) |

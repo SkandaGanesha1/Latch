@@ -313,3 +313,18 @@ boot a Linux guest in any bounded time — the same class of failure as the
 TCG measurement in AGENTS.md §4d. That run wrote **no** archive file (the
 harness writes the archive only on success), so it claims **no** PASS,
 and the transcript quoted above is the earlier, complete one.
+
+**Two more enforced-image runs, from the same day.** The same narrowing was
+in place for the other two enforced images as well, and both passed:
+
+- `make -C qnx verify-governor-qemu` — **PASS** (`235` v2 proposals, A4
+  demotion held at `ADVISE`, recovery to `HP`, final lease expiry to
+  `LATCH`).
+- `make -C qnx verify-fbverdict-qemu` — **PASS** (W5 trusted-supervisor
+  verdict loop `acc=8 rej=1 stop=reject`).
+
+Both images push the compiled policy with `secpolpush`, so the guest's
+ingest was spawned under the scoped rule in both, and both streamed.
+
+The remaining §7 scope limits (`i2c_t` physical hardware, Pi 4B board, and
+untested failure paths) remain unchanged.

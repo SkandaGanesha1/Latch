@@ -123,7 +123,7 @@ def run_attack_a2(verbose: bool = True) -> Dict[str, Any]:
         "name": "Rate Flood Attack",
         "status": "PASS",
         "ticks_evaluated": len(rows),
-        "fault_verified": "FAULT_RATE (bit 7, 0x0080)",
+        "fault_verified": "FAULT_RATE (bit 7, 0x0080) | LATCH_FAULT_DOSE (bit 15, 0x8000) (faults=0x8080)",
         "max_step_observed_mrad": step,
         "keepout_intrusions": 0,
         "output_clamped": True,

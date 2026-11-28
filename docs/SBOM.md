@@ -1,8 +1,8 @@
 # Software Bill of Materials (SBOM) — LATCH & GOVERNOR
 
-**Standard Alignment:** SPDX 2.3 / CycloneDX 1.5 Minimal Specification  
-**System Integrity Level:** High-Assurance Runtime Interlock  
-**External 3rd-Party Runtime Dependencies:** **0 (Zero)**  
+**Format:** Human-readable inventory; not a complete SPDX or CycloneDX document.
+**Scope:** Prototype supervisor, Linux guest and optional experimental inference profile.
+**Completeness:** Model provenance, exact model hash and transitive inference dependencies must be recorded for each built image.
 
 ---
 
@@ -30,6 +30,8 @@
 |:---|:---:|:---|:---|:---:|:---|
 | **Linux Kernel** | 6.12 (ARM64) | The Linux Foundation | GPL-2.0-only | Untrusted SOUP | Unmapped hardware |
 | **Guest Init (`/init`)** | 1.0.0 | LATCH Project | MIT | Freestanding | Direct Linux syscalls (`-nostdlib -static`) |
+| **llama.cpp** | `guest/Makefile` specifies revision `44d50873b` as a build default; verify the actual checkout | ggml-org contributors | MIT (verify against the selected checkout) | Experimental guest inference only | Static C++/GGML dependencies; not part of the supervisor |
+| **GGUF model** | Local `SmolLM2-135M-Instruct-Q8_0.gguf`, SHA-256 prefix `5a1395716f791374`; matching it to an archived run is not established | Model publisher | Verify for the selected model | Experimental guest inference only | Loaded from the guest asset disk |
 
 ### C. Host & Tooling Dependencies (`tools/`, `host/`)
 
@@ -58,7 +60,9 @@
 
 ## 3. Cryptographic Sidecar Verification
 
-All contracts in the repository are verified prior to execution against signed SHA-256 sidecars conforming to NIST FIPS 180-2:
+The loader compares each selected contract to a plain SHA-256 sidecar. These
+sidecars are not digital signatures and cannot authenticate a manifest when
+an attacker can replace both files. The following are the expected digests:
 - `qnx/latch.manifest.sha256`: `1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823`
 - `qnx/contracts/syringe_pump_bolus.manifest.sha256`: `a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e`
 - `qnx/contracts/governor_servo.manifest.sha256`: `a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b`

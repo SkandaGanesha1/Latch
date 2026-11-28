@@ -962,7 +962,7 @@ def verify_rm_attr_locking():
     tmp = tempfile.mkdtemp(prefix="latch_rmattr_")
     try:
         test_bin = os.path.join(tmp, "latch_rm_attr_test")
-        comp = subprocess.run(
+        comp = _run_compiler(
             [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
              "-D_POSIX_C_SOURCE=200809L", "-I", qnx_dir,
              test_path, "-o", test_bin],
@@ -1436,7 +1436,7 @@ def verify_notify_list_locking():
     tmp = tempfile.mkdtemp(prefix="latch_rmnotify_")
     try:
         test_bin = os.path.join(tmp, "latch_rm_notify_test")
-        comp = subprocess.run(
+        comp = _run_compiler(
             [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
              "-D_POSIX_C_SOURCE=200809L", "-I", qnx_dir,
              test_path, "-o", test_bin, "-lpthread"],
@@ -1580,6 +1580,22 @@ def _c_compiler():
         if found:
             return found
     return None
+
+
+def _run_compiler(cmd, **kwargs):
+    """Run a host compiler subprocess with CCACHE_DISABLE=1.
+
+    On workstations where `ccache` wraps `gcc` or `clang` and `$HOME/.cache/ccache`
+    is read-only (e.g. sandboxed environments), omitting `CCACHE_DISABLE=1`
+    causes compiler invocations to fail before compiling a single line.
+    """
+    env = dict(os.environ)
+    if kwargs.get("env") is not None:
+        env.update(kwargs["env"])
+    env["CCACHE_DISABLE"] = "1"
+    kwargs = dict(kwargs)
+    kwargs["env"] = env
+    return subprocess.run(cmd, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -1770,7 +1786,7 @@ def verify_feedback_pub_lifetime():
         node_dir = os.path.join(tmp, "build", "host-sim")
         os.makedirs(node_dir, exist_ok=True)
         test_bin = os.path.join(tmp, "latch_feedback_pub_test")
-        comp = subprocess.run(
+        comp = _run_compiler(
             [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
              "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM", "-I", qnx_dir,
              os.path.join(qnx_dir, "latch_feedback.c"),
@@ -1977,7 +1993,7 @@ def verify_force_hold_ordering():
         tmp = tempfile.mkdtemp(prefix="latch_hold_")
         try:
             test_bin = os.path.join(tmp, "latch_hold_test")
-            comp = subprocess.run(
+            comp = _run_compiler(
                 [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                  "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
                  "-I", qnx_dir, test_path, "-o", test_bin,
@@ -2222,7 +2238,7 @@ def verify_event_hex_sizing():
         tmp = tempfile.mkdtemp(prefix="latch_hex_")
         try:
             test_bin = os.path.join(tmp, "latch_hex_test")
-            comp = subprocess.run(
+            comp = _run_compiler(
                 [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                  "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
                  "-I", qnx_dir, test_path, "-o", test_bin,
@@ -2251,6 +2267,279 @@ def verify_event_hex_sizing():
                    "length, both sizes are derived from the things they "
                    "render, and the shared renderer REFUSES a buffer that "
                    "is one byte too small")
+
+
+# ---------------------------------------------------------------------------
+# THE DECISION-LATENCY HISTOGRAM'S BUCKET SCHEME (NEW-1)
+# ---------------------------------------------------------------------------
+
+
+def _macro_int(text, name):
+    """The integer value of a `#define NAME <int>` macro, or None."""
+    m = re.search(r"#define\s+" + re.escape(name) + r"\s+(\d+)[uU]?\b", text)
+    return int(m.group(1)) if m else None
+
+
+def verify_latency_bucket_invariant():
+    """The histogram's bucket INDEX and bucket RANGE are ONE scheme."""
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hdr_path = os.path.join(qnx_dir, "latch_protocol.h")
+    test_path = os.path.join(qnx_dir, "latch_latency_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hdr_path, test_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hdr_path, encoding="utf-8", errors="replace") as f:
+        hdr = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hdr_code = strip_c_comments(hdr)
+    hdr_macros = _join_continuations(hdr_code)
+
+    # --- 1. THE SCHEME'S CONSTANTS ARE DERIVED ---------------------------
+    exact = _macro_int(hdr_code, "LATCH_LATENCY_EXACT")
+    buckets = _macro_int(hdr_code, "LATCH_LATENCY_BUCKETS")
+    if exact is None or buckets is None:
+        fail("qnx/latch_protocol.h must define LATCH_LATENCY_EXACT and "
+             "LATCH_LATENCY_BUCKETS as integer constants: the histogram's "
+             "domain is derived from them, and a gate that cannot find them "
+             "cannot derive anything.")
+    elif buckets <= exact:
+        fail("qnx/latch_protocol.h: LATCH_LATENCY_BUCKETS (%d) must be "
+             "LARGER than LATCH_LATENCY_EXACT (%d): the exact buckets are the "
+             "first ones and the octave buckets come after them." %
+             (buckets, exact))
+    elif (buckets - exact) % 3 != 0:
+        fail("qnx/latch_protocol.h: the latency histogram carries %d "
+             "buckets above the %d exact ones, which is not a whole number "
+             "of three-per-octave groups. The bucket index and the bucket "
+             "range would then describe two different tables." %
+             (buckets - exact, exact))
+
+    m_oct = re.search(r"#define\s+LATCH_LATENCY_OCTAVES\s+(.*)", hdr_macros)
+    if not m_oct:
+        fail("qnx/latch_protocol.h must define LATCH_LATENCY_OCTAVES: the "
+             "histogram's domain is DERIVED from the number of octaves it "
+             "covers, and a written-down domain rots the moment the bucket "
+             "count changes.")
+    else:
+        oct_body = m_oct.group(1)
+        if ("LATCH_LATENCY_BUCKETS" not in oct_body or
+                "LATCH_LATENCY_EXACT" not in oct_body):
+            fail("qnx/latch_protocol.h: LATCH_LATENCY_OCTAVES must be "
+                 "DERIVED from LATCH_LATENCY_BUCKETS and "
+                 "LATCH_LATENCY_EXACT (%r). A literal octave count would "
+                 "stop describing the histogram the moment the bucket count "
+                 "moved." % oct_body.strip())
+
+    m_dom = re.search(r"#define\s+LATCH_LATENCY_DOMAIN_CYCLES\s+(.*)", hdr_macros)
+    if not m_dom:
+        fail("qnx/latch_protocol.h must define LATCH_LATENCY_DOMAIN_CYCLES: "
+             "it is the cycle count the histogram can represent, and the "
+             "host test sweeps it.")
+    elif "LATCH_LATENCY_OCTAVES" not in m_dom.group(1):
+        fail("qnx/latch_protocol.h: LATCH_LATENCY_DOMAIN_CYCLES must be "
+             "DERIVED from LATCH_LATENCY_OCTAVES (%r). A written-down "
+             "domain is a claim about the histogram that nothing keeps "
+             "true." % m_dom.group(1).strip())
+
+    if not re.search(
+            r"_Static_assert\s*\(\s*\(\s*LATCH_LATENCY_BUCKETS\s*-\s*"
+            r"LATCH_LATENCY_EXACT\s*\)\s*%\s*3u\s*==\s*0u", hdr_macros):
+        fail("qnx/latch_protocol.h must carry a _Static_assert that the "
+             "bucket count is a whole number of three-per-octave groups. "
+             "Without it, a bucket count that does not fit the scheme "
+             "compiles cleanly and the index and the range describe two "
+             "different tables.")
+
+    # --- 2. THE INDEX DOES NOT SUBTRACT THE QUARTER INDEX ----------------
+    idx_body = _c_inline_func_body(hdr_code, "latch_latency_bucket")
+    if not idx_body:
+        fail("qnx/latch_protocol.h does not define latch_latency_bucket(): "
+             "the histogram's index half of the scheme cannot be checked "
+             "without it.")
+    else:
+        m_mask = re.search(r"&\s*3u?\s*\)", idx_body)
+        if not m_mask:
+            fail("qnx/latch_protocol.h: latch_latency_bucket() must derive "
+                 "the quarter index from the cycle count (the two bits above "
+                 "the octave's bottom quarter), because the scheme's "
+                 "sub-buckets are quarters of an octave.")
+        else:
+            tail = idx_body[m_mask.end():m_mask.end() + 32]
+            if re.match(r"\s*-", tail):
+                fail("qnx/latch_protocol.h: latch_latency_bucket() "
+                     "SUBTRACTS from the masked quarter index (%r). The "
+                     "quarter index is 0..3 and the subtraction is UNSIGNED, "
+                     "so it WRAPS and puts every sample of 64 cycles or more "
+                     "FOUR buckets low -- which understated the archived "
+                     "percentiles by about 2.5x. The scheme has THREE "
+                     "sub-buckets per octave and FOUR quarter values, so "
+                     "the mapping SATURATES at 2." % tail.strip())
+
+    # --- 3. THE HOST TEST SWEEPS THE DERIVED DOMAIN ---------------------
+    if "LATCH_LATENCY_DOMAIN_CYCLES" not in test_src:
+        fail("qnx/latch_latency_test.c must sweep LATCH_LATENCY_DOMAIN_"
+             "CYCLES: the round trip has to hold over the WHOLE domain the "
+             "histogram represents, and the domain is derived from the "
+             "bucket count. A literal bound would quietly stop covering the "
+             "octaves above the exact range -- which is where the defect "
+             "lived.")
+
+    # --- 4. THE HOST TEST IS PART OF THE REGRESSION SUITE ----------------
+    if "latch-latency-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-latency-check` target: the "
+             "histogram's bucket scheme has no proof at all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-latency-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-latency-check, or the histogram's bucket scheme is not "
+             "part of the regression suite.")
+
+    # --- 5. THE SHIPPED HEADER COMPILES AND THE ROUND TRIP HOLDS ---------
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("NEW-1 bucket scheme: the index does not subtract the "
+                   "quarter index, the domain is derived, and the host test "
+                   "is in the regression suite (the COMPILED round trip was "
+                   "skipped -- no C compiler on PATH, so only the "
+                   "structural half of the gate ran)")
+    else:
+        tmp = tempfile.mkdtemp(prefix="latch_latency_")
+        try:
+            test_bin = os.path.join(tmp, "latch_latency_test")
+            comp = _run_compiler(
+                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
+                 "-I", qnx_dir, test_path, "-o", test_bin,
+                 "-lpthread", "-lrt", "-lm"],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                fail("the shipped qnx/latch_protocol.h does not compile "
+                     "against its own host test: %s. The histogram's bucket "
+                     "scheme has to be reachable from a HOST test, or the "
+                     "property it encodes cannot be proved off-target."
+                     % (comp.stderr.strip() or comp.stdout.strip()))
+            else:
+                run = subprocess.run([test_bin], capture_output=True, text=True,
+                                     timeout=300)
+                if run.returncode != 0:
+                    detail = (run.stdout.strip() or run.stderr.strip() or
+                              "exit status %d" % run.returncode)
+                    fail("the histogram's bucket INDEX and bucket RANGE are "
+                         "NOT one scheme: %s. Every cycle count the "
+                         "histogram represents must land in the bucket whose "
+                         "range contains it." % detail)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        pass_check("NEW-1 bucket scheme: the shipped header's index and range "
+                   "are ONE scheme -- every cycle count in the derived "
+                   "domain lands in the bucket whose range contains it")
+
+    # --- 6. THE ARCHIVED MEASUREMENT AGREES WITH ITSELF ------------------
+    lat_path = os.path.join(REPO_ROOT, "docs", "evidence", "governor",
+                            "LATENCY.md")
+    if not os.path.isfile(lat_path):
+        fail("docs/evidence/governor/LATENCY.md is missing.  Run "
+             "`make -C qnx evidence-governor-latency`.")
+    else:
+        with io.open(lat_path, encoding="utf-8", errors="replace") as f:
+            lat = f.read()
+
+        def _range_of(pattern, label):
+            m = re.search(pattern, lat, re.M)
+            if not m:
+                fail("docs/evidence/governor/LATENCY.md must state %s -- the "
+                     "percentile ranges are the bucket scheme's output, so "
+                     "they cannot be checked without them." % label)
+                return None
+            return (int(m.group(1)), int(m.group(2)))
+
+        def _minmax_of(pattern, label):
+            m = re.search(pattern, lat, re.M)
+            if not m:
+                fail("docs/evidence/governor/LATENCY.md must state %s -- the "
+                     "exact minimum and maximum are tracked SEPARATELY from "
+                     "the histogram, so they are what the percentile ranges "
+                     "can be checked against." % label)
+                return None
+            return (int(m.group(1)), int(m.group(2)))
+
+        dec_minmax = _minmax_of(
+            r"^Exact min / max \(decision path\)\s*:\s*(\d+)\s*/\s*(\d+)\s*cyc",
+            "the exact minimum and maximum of the decision path")
+        all_minmax = _minmax_of(
+            r"^Exact min / max \(every tick\)\s*:\s*(\d+)\s*/\s*(\d+)\s*cyc",
+            "the exact minimum and maximum of every tick")
+        dec_p50 = _range_of(
+            r"^Decision-path p50\s*:\s*\[\s*(\d+)\s*,\s*(\d+)\s*\)",
+            "the decision-path p50")
+        dec_p99 = _range_of(
+            r"^Decision-path p99\s*:\s*\[\s*(\d+)\s*,\s*(\d+)\s*\)",
+            "the decision-path p99")
+        idle_p50 = _range_of(
+            r"^Idle path\s*:.*?p50\s*=\s*\[\s*(\d+)\s*,\s*(\d+)\s*\)",
+            "the idle-path p50")
+        idle_p99 = _range_of(
+            r"^Idle path\s*:.*?p99\s*=\s*\[\s*(\d+)\s*,\s*(\d+)\s*\)",
+            "the idle-path p99")
+
+        def _check_range(name, rng, lo_bound, hi_bound):
+            """A percentile bucket must not lie outside the sample set."""
+            if rng is None or lo_bound is None or hi_bound is None:
+                return
+            lo, hi = rng
+            if hi <= lo:
+                fail("docs/evidence/governor/LATENCY.md: %s is the empty "
+                     "range [%d, %d): a bucket always covers at least one "
+                     "cycle count." % (name, lo, hi))
+                return
+            if lo_bound > hi - 1:
+                fail("docs/evidence/governor/LATENCY.md: %s is the range "
+                     "[%d, %d) cycles, but the EXACT minimum of the same "
+                     "sample set is %d cycles. A percentile can never be "
+                     "BELOW the minimum -- so the percentile ranges and the "
+                     "exact minimum describe two different measurements. "
+                     "The histogram's bucket index and its bucket range are "
+                     "not one scheme. Re-run "
+                     "`make -C qnx evidence-governor-latency`."
+                     % (name, lo, hi, lo_bound))
+            if hi_bound < lo:
+                fail("docs/evidence/governor/LATENCY.md: %s is the range "
+                     "[%d, %d) cycles, but the EXACT maximum of the same "
+                     "sample set is %d cycles. A percentile can never be "
+                     "ABOVE the maximum -- so the percentile ranges and the "
+                     "exact maximum describe two different measurements. "
+                     "The histogram's bucket index and its bucket range are "
+                     "not one scheme. Re-run "
+                     "`make -C qnx evidence-governor-latency`."
+                     % (name, lo, hi, hi_bound))
+
+        if dec_minmax:
+            _check_range("the decision-path p50", dec_p50,
+                         dec_minmax[0], dec_minmax[1])
+            _check_range("the decision-path p99", dec_p99,
+                         dec_minmax[0], dec_minmax[1])
+        if all_minmax:
+            _check_range("the idle-path p50", idle_p50,
+                         all_minmax[0], all_minmax[1])
+            _check_range("the idle-path p99", idle_p99,
+                         all_minmax[0], all_minmax[1])
+
+        if all((dec_minmax, all_minmax, dec_p50, dec_p99, idle_p50, idle_p99)):
+            pass_check("NEW-1 bucket scheme: the archived measurement agrees "
+                       "with ITSELF -- every percentile range contains the "
+                       "exact minimum and lies below the exact maximum of "
+                       "the same sample set")
 
 
 # ---------------------------------------------------------------------------
@@ -2803,538 +3092,6 @@ def _refusal_after(src: str, marker: str, stop: str = None, window: int = 2400):
 
         return bool(re.search(r"return\s+(?:EXIT_FAILURE|1)\s*;", body))
     return False
-
-
-def verify_guestd_lifecycle():
-    """The guest child's lifecycle: race-free, and reaped on termination.
-
-    NEW-3.  `qnx/latch_guestd.c` owns the guest hypervisor as a CHILD
-    PROCESS, and three of its decisions were defects that all failed OPEN:
-
-      * the reap's outcome was read WITHOUT its `errno`, so `EINTR` (the
-        call was interrupted) was read as "there is no such child" -- and a
-        stop that reports success without stopping the guest lets the
-        caller start a SECOND guest;
-      * the SIGCHLD handler reaped ANY child with `waitpid(-1, ...)`, so
-        the child's PID -- the handle `guest_stop()` sends `SIGKILL`
-        through -- was released while the daemon still believed the guest
-        was running; and
-      * `SIGTERM` only cleared the run flag, so the daemon exited and left
-        the guest hypervisor running as an ORPHAN.
-
-    THE GATE HAS TWO HALVES, AND ONLY ONE OF THEM IS ENOUGH ON ITS OWN.
-
-    The STRUCTURAL half reads the daemon's source and the shipped header:
-    it requires the decisions to be made on the platform's OWN results,
-    it requires the mask to be held across every window in which the
-    child's pid is touched, it requires the kill to precede the reap, and
-    it requires the termination path to stop the guest before the daemon
-    exits.
-
-    The COMPILED half compiles the shipped header against its own host test
-    and RUNS it.  The test spawns REAL child processes, so it proves the
-    things the source cannot: that the mask really does keep the SIGCHLD
-    handler out of the stop sequence, and that the sequence's reap WINS
-    the race against a handler that reaps any child -- which is exactly
-    what the daemon's OLD handler did.
-    """
-    qnx_dir = os.path.join(REPO_ROOT, "qnx")
-    child_h_path = os.path.join(qnx_dir, "latch_guest_child.h")
-    guestd_path = os.path.join(qnx_dir, "latch_guestd.c")
-    test_path = os.path.join(qnx_dir, "latch_guest_child_test.c")
-    makefile_path = os.path.join(qnx_dir, "Makefile")
-
-    for p in (child_h_path, guestd_path, test_path, makefile_path):
-        if not os.path.isfile(p):
-            fail("Required artifact missing: %s" % p)
-
-    with io.open(child_h_path, encoding="utf-8", errors="replace") as f:
-        child_h = f.read()
-    with io.open(guestd_path, encoding="utf-8", errors="replace") as f:
-        guestd = f.read()
-    with io.open(test_path, encoding="utf-8", errors="replace") as f:
-        test_src = f.read()
-    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
-        makefile_text = f.read()
-
-    child_code = strip_c_comments(child_h)
-    guestd_code = strip_c_comments(guestd)
-    test_code = strip_c_comments(test_src)
-
-    # --- 1. THE DAEMON RUNS THE SHIPPED CODE ------------------------------
-    #
-    # A daemon that re-implements the sequence has a stop path that can
-    # drift away from the tested one, and a test of a COPY proves nothing
-    # about the daemon.  So the daemon CALLS the shipped functions.
-    if "latch_guest_child.h" not in guestd:
-        fail("qnx/latch_guestd.c must include the shipped "
-             "qnx/latch_guest_child.h, so the daemon and the host test run "
-             "the SAME decisions.")
-    if "latch_guest_stop_sequence(" not in guestd_code:
-        fail("qnx/latch_guestd.c must stop the guest through the shipped "
-             "latch_guest_stop_sequence(). A daemon that re-implements the "
-             "kill-then-reap sequence has a stop path that can drift away "
-             "from the tested one, and a test of a copy proves nothing.")
-    if "latch_guest_reap_once(" not in guestd_code:
-        fail("qnx/latch_guestd.c must reap the guest through the shipped "
-             "latch_guest_reap_once(), so the `errno` is read in ONE place "
-             "-- the place the host test exercises.")
-
-    # The daemon must not decide the outcomes ITSELF.  A local
-    # `latch_guest_reap_decide(` call in the daemon would mean a second
-    # implementation of the decision.
-    if re.search(r"latch_guest_reap_decide\s*\(", guestd_code):
-        fail("qnx/latch_guestd.c must NOT call latch_guest_reap_decide() "
-             "directly: the outcome is decided by the shipped "
-             "latch_guest_reap_once(), and a second call site is a second "
-             "implementation of the decision.")
-    if re.search(r"latch_guest_kill_decide\s*\(", guestd_code):
-        fail("qnx/latch_guestd.c must NOT call latch_guest_kill_decide() "
-             "directly: the kill's outcome is decided inside the shipped "
-             "latch_guest_stop_sequence(), in the same masked region as the "
-             "reap.")
-
-    # --- 2. THE OUTCOME MUST NOT BE ASSUMED -------------------------------
-    #
-    # The daemon's `guest_stop()` has to LOOK at the sequence's outcome.
-    # A stop path that ignores it reports success for a guest that is
-    # still running -- the very defect this finding is about.
-    stop_body = _c_inline_func_body(guestd_code, "guest_stop")
-    if not stop_body:
-        fail("qnx/latch_guestd.c does not define guest_stop(): the guest's "
-             "stop path cannot be checked.")
-        return
-    if "res.outcome" not in stop_body:
-        fail("qnx/latch_guestd.c: guest_stop() must READ the shipped "
-             "sequence's outcome (`res.outcome`). A stop path that ignores "
-             "the outcome reports a successful stop for a guest that is "
-             "still running.")
-    if not re.search(r"res\.outcome\s*==\s*LATCH_GUEST_STOP_STOPPED", stop_body):
-        fail("qnx/latch_guestd.c: guest_stop() must report success ONLY when "
-             "the shipped sequence's outcome is LATCH_GUEST_STOP_STOPPED.")
-    if not re.search(r"latch_guest_stop_errno\s*\(", stop_body):
-        fail("qnx/latch_guestd.c: guest_stop() must return the outcome's own "
-             "errno through latch_guest_stop_errno(), so a refused stop is "
-             "reported as a refusal.")
-
-    # --- 3. THE HANDLER REAPS THE GUEST CHILD AND NOTHING ELSE -------------
-    #
-    # The old handler reaped ANY child with `waitpid(-1, ...)`, which is
-    # what made the child's PID reusable while the daemon still believed
-    # the guest was running.
-    handler_body = _c_inline_func_body(guestd_code, "guest_sigchld_handler")
-    if not handler_body:
-        fail("qnx/latch_guestd.c does not define guest_sigchld_handler(): the "
-             "SIGCHLD path cannot be checked.")
-        return
-    if re.search(r"waitpid\s*\(\s*-1\s*,", handler_body):
-        fail("qnx/latch_guestd.c: the SIGCHLD handler must NOT reap ANY "
-             "child (`waitpid(-1, ...)`). A child's PID cannot be reused "
-             "while it is an unreaped zombie, so reaping it is exactly what "
-             "makes the PID reusable -- and the daemon's `kill()` could then "
-             "land on an unrelated process. The handler reaps the GUEST "
-             "CHILD and nothing else.")
-    if "g_guest_pid" not in handler_body:
-        fail("qnx/latch_guestd.c: the SIGCHLD handler must reap the GUEST "
-             "CHILD -- the pid it holds in `g_guest_pid` -- and nothing "
-             "else.")
-    # A handler that calls `waitpid()` clobbers `errno`, and the code it
-    # interrupted may be about to read it.  The check is generic: the
-    # handler must SAVE the errno into a variable and RESTORE it, and the
-    # two must be the SAME variable.
-    m_save = re.search(r"(\w+)\s*=\s*errno\s*;", handler_body)
-    if not m_save:
-        fail("qnx/latch_guestd.c: the SIGCHLD handler must SAVE `errno` "
-             "before it calls waitpid() -- `waitpid()` can set `errno`, and "
-             "the code the handler interrupted may be about to read it.")
-    elif not re.search(r"errno\s*=\s*" + re.escape(m_save.group(1)) + r"\s*;",
-                       handler_body):
-        fail("qnx/latch_guestd.c: the SIGCHLD handler must RESTORE the "
-             "`errno` it saved (`%s`). A handler that calls a function which "
-             "can set `errno` clobbers the `errno` of the code it "
-             "interrupted, and the interrupted code may be about to read it."
-             % m_save.group(1))
-
-    # --- 3b. EVERY SHARED OBJECT THE HANDLER WRITES IS CONFORMING ---------
-    #
-    # POSIX says a signal handler may refer to NO object other than a
-    # `volatile sig_atomic_t` one (and `errno`, and only if it restores
-    # it).  The handler WRITES the child's pid and the last exit status,
-    # so BOTH have to be conforming -- a plain `uint32_t` is undefined
-    # behaviour by the letter of the standard, even where the hardware
-    # would get away with it.
-    #
-    # The check is generic: it finds every file-scope object the handler
-    # ASSIGNS to, and requires each to be declared `volatile sig_atomic_t`.
-    file_scope = set()
-    for m in re.finditer(
-            r"(?m)^static\s+(?:const\s+)?[A-Za-z_][A-Za-z0-9_ \t\*]*?\b"
-            r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*=", guestd_code):
-        file_scope.add(m.group(1))
-    assigned = set()
-    for m in re.finditer(r"(?m)(?:^|[^\w.>])(\w+)\s*=(?!=)", handler_body):
-        assigned.add(m.group(1))
-    # `errno` is the documented exception, and the check above proves it
-    # is restored.
-    assigned.discard("errno")
-    for name in sorted(assigned & file_scope):
-        decl = re.search(r"(?m)^static\s+[^\n;]*\b" + re.escape(name) +
-                         r"\b[^\n;]*;", guestd_code)
-        if decl and not re.search(r"volatile\s+sig_atomic_t\b", decl.group(0)):
-            fail("qnx/latch_guestd.c: the SIGCHLD handler WRITES the "
-                 "file-scope object `%s`, and POSIX says a signal handler "
-                 "may refer to NO object other than a `volatile "
-                 "sig_atomic_t` one (and `errno`, and only if it restores "
-                 "it). `%s` is declared as `%s`; a shared object the "
-                 "handler writes must be a `volatile sig_atomic_t`."
-                 % (name, name, decl.group(0).strip()))
-
-    # --- 4. THE PENDING SIDE-CHANNEL IS GONE ------------------------------
-    #
-    # The old code carried a reap that arrived before the spawn site could
-    # record the pid in a SINGLE pending slot -- which could lose a reap
-    # and could match a REUSED pid.  The mask removes the window, so the
-    # side-channel is not needed and must not come back.
-    for stale in ("g_pending_reaped", "g_pending_pid", "g_pending_status"):
-        if stale in guestd_code:
-            fail("qnx/latch_guestd.c must NOT carry the `%s` side-channel. "
-                 "It existed to hold a reap that arrived before the spawn "
-                 "site could record the pid; the SIGCHLD mask removes that "
-                 "window, and the slot could lose a reap and could match a "
-                 "REUSED pid." % stale)
-
-    # --- 5. THE SPAWN WINDOW IS MASKED ------------------------------------
-    #
-    # The pid must be RECORDED under the mask, so the handler cannot
-    # observe a half-published child.
-    spawn_body = _c_inline_func_body(guestd_code, "guest_spawn")
-    if not spawn_body:
-        fail("qnx/latch_guestd.c does not define guest_spawn(): the spawn "
-             "window cannot be checked.")
-        return
-    m_block = spawn_body.find("latch_guest_block_sigchld(")
-    m_spawn = spawn_body.find("posix_spawn(")
-    m_record = spawn_body.find("g_guest_pid = pid")
-    restores = [mm.start() for mm in
-                re.finditer(r"latch_guest_restore_mask\s*\(", spawn_body)]
-    if m_block < 0 or m_spawn < 0 or m_record < 0:
-        fail("qnx/latch_guestd.c: guest_spawn() must block SIGCHLD across "
-             "the spawn, record the pid under that mask and restore the "
-             "mask afterwards. Without it, the SIGCHLD handler can reap the "
-             "child between posix_spawn() returning the pid and the daemon "
-             "recording it -- which is what the pending side-channel used "
-             "to paper over.")
-    elif not (m_block < m_spawn < m_record):
-        fail("qnx/latch_guestd.c: the spawn window is not masked in the "
-             "right ORDER. SIGCHLD must be blocked BEFORE posix_spawn(), and "
-             "the pid must be recorded UNDER that mask (found: block=%d "
-             "spawn=%d record=%d)." % (m_block, m_spawn, m_record))
-    else:
-        # THE PRECISE PROPERTY: the mask must be HELD from the block until
-        # the pid is recorded.  The early-return paths restore it too --
-        # and they MUST, or the daemon would stay deaf to every child exit
-        # -- so the check is not "there is no restore in between" but
-        # "every restore in between is followed by a RETURN".
-        #
-        # A restore on a path that CONTINUES releases the mask before the
-        # spawn or before the record, and the handler can then reap the
-        # child in exactly that window.
-        in_window = sorted(r for r in restores if m_block < r < m_record)
-        for r in in_window:
-            # The text from this restore up to the NEXT restore, or up to
-            # the recording of the pid -- whichever comes FIRST.  Ending
-            # the window at the record is what makes the check exact: a
-            # restore that is followed by the record releases the mask
-            # BEFORE the pid is published, and a `return` that comes after
-            # the record does not rescue it.
-            nxt = [x for x in restores if x > r]
-            end = min(nxt[0], m_record) if nxt else m_record
-            tail = spawn_body[r:end]
-            if not re.search(r"\breturn\b", tail):
-                fail("qnx/latch_guestd.c: the SIGCHLD mask is RESTORED on a "
-                     "path that CONTINUES (at offset %d, between the block "
-                     "and the recording of the pid). Every restore of the "
-                     "mask inside the spawn window must be followed by a "
-                     "RETURN -- otherwise the handler can run before the "
-                     "pid is recorded and reap the child before the daemon "
-                     "knows its pid." % r)
-        if not [r for r in restores if r > m_record]:
-            fail("qnx/latch_guestd.c: guest_spawn() must restore the SIGCHLD "
-                 "mask after the pid is recorded. A mask that is never "
-                 "restored leaves the daemon deaf to every child exit.")
-
-    # --- 5b. THE IMMEDIATE EXIT MUST BE DETECTED --------------------------
-    #
-    # The old code detected a child that died before the spawn site could
-    # record it -- e.g. a hypervisor that could not be exec'd -- through a
-    # "pending" side-channel, and the daemon reported the failure and
-    # left the guest DOWN.  The side-channel is gone; the MASK is what
-    # makes the detection race-free, and the detection itself must still
-    # be THERE.
-    #
-    # Without it the daemon reports "guest VM started" for a guest that
-    # is already gone, and the client believes it started a guest that
-    # does not exist.  The check is anchored on the RESTORE that follows
-    # the spawn: the question may only be asked after the mask is
-    # restored, because before that the handler cannot have run and the
-    # answer would be a guess.
-    m_unblock = -1
-    for r in sorted(restores):
-        if r > m_record:
-            m_unblock = r
-            break
-    if m_unblock < 0:
-        fail("qnx/latch_guestd.c: guest_spawn() must restore the SIGCHLD "
-             "mask after the pid is recorded, so a child that died during "
-             "the spawn can be detected.")
-    else:
-        m_imm = spawn_body.find("guest_reap_if_exited(", m_unblock)
-        if m_imm < 0:
-            fail("qnx/latch_guestd.c: guest_spawn() must ask the SHIPPED "
-                 "reap whether the child is already gone AFTER the SIGCHLD "
-                 "mask is restored. A guest that exits immediately -- a "
-                 "hypervisor that could not be exec'd, a configuration that "
-                 "was refused -- must be reported as a FAILED start "
-                 "(ECHILD), not as a guest that is running.")
-        elif not re.search(r"return\s+ECHILD\s*;", spawn_body[m_imm:]):
-            fail("qnx/latch_guestd.c: guest_spawn() must RETURN ECHILD when "
-                 "the child is already gone. A start that reports success "
-                 "for a guest that is not there leaves the client believing "
-                 "it started a guest that does not exist.")
-
-    # --- 6. THE HEADER: THE MASK, THE ORDER, AND THE ERRNO ----------------
-    seq_body = _c_inline_func_body(child_code, "latch_guest_stop_sequence")
-    if not seq_body:
-        fail("qnx/latch_guest_child.h does not define "
-             "latch_guest_stop_sequence(): the shipped stop sequence is "
-             "missing, so the daemon has no single tested implementation of "
-             "the kill-then-reap.")
-        return
-    s_block = seq_body.find("latch_guest_block_sigchld(")
-    s_kill = seq_body.find("kill(")
-    s_wait = seq_body.find("waitpid(")
-    # The LAST restore is the one on the success path: the failure paths
-    # restore the mask and RETURN, so the first restore is not the one
-    # that closes the masked region.
-    s_unblock = seq_body.rfind("latch_guest_restore_mask(")
-    if s_block < 0 or s_kill < 0 or s_wait < 0 or s_unblock < 0:
-        fail("qnx/latch_guest_child.h: the shipped stop sequence must block "
-             "SIGCHLD, kill the child, reap it and restore the mask. One "
-             "masked region, with no window between the kill and the reap.")
-    elif not (s_block < s_kill < s_wait < s_unblock):
-        fail("qnx/latch_guest_child.h: the stop sequence does not kill "
-             "BEFORE it reaps (found: block=%d kill=%d wait=%d unblock=%d). "
-             "A child's PID cannot be reused while it is an unreaped "
-             "zombie, so reaping it first is exactly what makes the PID "
-             "reusable, and the kill() could then land on an unrelated "
-             "process." % (s_block, s_kill, s_wait, s_unblock))
-
-    # The errno must be READ, not inferred from the -1.
-    reap_body = _c_inline_func_body(child_code, "latch_guest_reap_once")
-    if not reap_body:
-        fail("qnx/latch_guest_child.h does not define latch_guest_reap_once(): "
-             "the shipped single reap is missing, so the `errno` is read in "
-             "no single place.")
-        return
-    if not re.search(r"wait_errno\s*=\s*errno", reap_body):
-        fail("qnx/latch_guest_child.h: the reap must READ `errno` after the "
-             "waitpid() and carry it in the result. `waitpid()` returning -1 "
-             "does not say WHETHER the call was interrupted (EINTR) or "
-             "whether there was no such child (ECHILD) -- and the old code "
-             "read BOTH as 'the child is gone'.")
-
-    # The decisions must fail closed: the ZERO value of each enum is the
-    # UNKNOWN one, so an unassigned decision establishes NOTHING.
-    for enum_name, zero_name in (
-            ("latch_guest_reap_outcome_t", "LATCH_GUEST_REAP_UNKNOWN"),
-            ("latch_guest_stop_outcome_t", "LATCH_GUEST_STOP_UNKNOWN")):
-        if not re.search(re.escape(zero_name) + r"\s*=\s*0", child_code):
-            fail("qnx/latch_guest_child.h: the %s enum's ZERO value must be "
-                 "%s. A decision variable that was never assigned must "
-                 "establish NOTHING -- a zeroed outcome must not be a "
-                 "successful stop." % (enum_name, zero_name))
-
-    # --- 7. THE TERMINATION PATH ------------------------------------------
-    #
-    # `SIGTERM` and `SIGINT` used to clear the run flag and nothing else,
-    # so the daemon detached and exited -- and the guest hypervisor, its
-    # own CHILD, kept running as an ORPHAN.
-    sig_body = _c_inline_func_body(guestd_code, "guest_sig_handler")
-    if not sig_body:
-        fail("qnx/latch_guestd.c does not define guest_sig_handler(): the "
-             "termination path cannot be checked.")
-        return
-    if "g_terminate" not in sig_body:
-        fail("qnx/latch_guestd.c: the termination handler must set the "
-             "termination flag `g_terminate`. The handler cannot do the stop "
-             "work itself -- guest_stop() prints, sleeps and calls "
-             "waitpid(), none of which is async-signal-safe -- so the "
-             "ordinary code has to be told that a termination happened.")
-    if "g_running" not in sig_body:
-        fail("qnx/latch_guestd.c: the termination handler must clear "
-             "`g_running`, so the dispatch loop ends.")
-
-    # The signals are installed with `sigaction()`, with no restart flags.
-    # SDP 8.0 has no `SA_RESTART` at all, so the dispatch loop's
-    # `dispatch_block()` returns `EINTR` when a signal arrives and the
-    # flag is read on the next turn.
-    for sig_name in ("SIGTERM", "SIGINT"):
-        m_install = re.search(r"sigaction\s*\(\s*" + sig_name + r"\s*,", guestd_code)
-        if not m_install:
-            fail("qnx/latch_guestd.c: %s must be installed with "
-                 "sigaction(). The QNX 8.0 C Library Reference points new "
-                 "applications at sigaction() over signal(), and it makes "
-                 "the handler's lifetime explicit: the handler stays "
-                 "installed, so a second %s does the same thing as the "
-                 "first instead of reverting to the default action."
-                 % (sig_name, sig_name))
-    if re.search(r"signal\s*\(\s*SIG(?:TERM|INT)\s*,", guestd_code):
-        fail("qnx/latch_guestd.c: SIGTERM and SIGINT must be installed with "
-             "sigaction(), not signal(). signal() is the BSD-style "
-             "interface whose handler lifetime is not spelled out, and the "
-             "termination path depends on the handler staying installed.")
-
-    # The stop must happen BEFORE the daemon detaches and exits.
-    main_body = _c_inline_func_body(guestd_code, "main")
-    if not main_body:
-        fail("qnx/latch_guestd.c does not define main(): the termination "
-             "path cannot be checked.")
-        return
-    m_loop = main_body.find("while (g_running)")
-    # The stop and the detach that matter are the ones AFTER the dispatch
-    # loop: main() has an EARLIER resmgr_detach() on the "the guest could
-    # not be started" path, and that one is not the exit the termination
-    # flag leads to.
-    m_stop = main_body.find("guest_stop()", m_loop if m_loop >= 0 else 0)
-    m_detach = main_body.find("resmgr_detach(", m_loop if m_loop >= 0 else 0)
-    if m_loop < 0 or m_stop < 0 or m_detach < 0:
-        fail("qnx/latch_guestd.c: main() must have a dispatch loop, a stop "
-             "of the guest and a resmgr_detach(), or the termination path "
-             "cannot be checked.")
-    elif not (m_loop < m_stop < m_detach):
-        fail("qnx/latch_guestd.c: the guest must be stopped AFTER the "
-             "dispatch loop ends and BEFORE the daemon detaches and exits "
-             "(found: loop=%d stop=%d detach=%d). The invariant is one "
-             "sentence: THE DAEMON NEVER EXITS WHILE ITS GUEST IS RUNNING."
-             % (m_loop, m_stop, m_detach))
-    if "g_guest_pid > 0" not in main_body:
-        fail("qnx/latch_guestd.c: the termination path must be guarded by "
-             "the guest's own pid (`g_guest_pid > 0`), so the daemon stops "
-             "the guest it actually started.")
-
-    # --- 8. THE TEST, THE SUITE, AND THE BUILD ---------------------------
-    for fn in ("latch_guest_reap_decide(", "latch_guest_stop_decide(",
-               "latch_guest_stop_sequence(", "latch_guest_reap_once(",
-               "latch_guest_block_sigchld("):
-        if fn not in test_code:
-            fail("qnx/latch_guest_child_test.c must call the shipped %s. A "
-                 "test that re-implements the decision proves nothing about "
-                 "the decision." % fn)
-
-    if "latch-guest-child-check" not in makefile_text:
-        fail("qnx/Makefile has no `latch-guest-child-check` target: the "
-             "guest child's lifecycle has no proof at all.")
-    gov_target = ""
-    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
-    if m_gov:
-        gov_target = m_gov.group(1)
-    if "latch-guest-child-check" not in gov_target:
-        fail("qnx/Makefile's check-governor target must RUN "
-             "latch-guest-child-check, or the guest child's lifecycle is not "
-             "part of the regression suite.")
-    if "latch_guest_child_test" not in makefile_text:
-        fail("qnx/Makefile does not build qnx/latch_guest_child_test.c: the "
-             "host test is a file nobody runs.")
-
-    # The daemon's build rule must DEPEND on the shipped header, or a
-    # change to the header does not rebuild the daemon.
-    m_rule = re.search(r"(?ms)^\$\(GUESTD_BIN\):(.*?)\n\n", makefile_text)
-    if not m_rule:
-        fail("qnx/Makefile has no rule for $(GUESTD_BIN): the guest "
-             "lifecycle daemon is not built.")
-    elif "latch_guest_child.h" not in m_rule.group(1):
-        fail("qnx/Makefile's $(GUESTD_BIN) rule must depend on "
-             "latch_guest_child.h, so a change to the shipped decisions "
-             "rebuilds the daemon that runs them.")
-
-    # --- 9. THE COMPILED HALF ---------------------------------------------
-    cc = _c_compiler()
-    if cc is None:
-        fail("no C compiler is available, so the guest child's lifecycle was "
-             "NOT proved: the shipped qnx/latch_guest_child.h has to compile "
-             "against its own host test and the test has to PASS. A skipped "
-             "proof is a hole in the proof.")
-    else:
-        tmp = tempfile.mkdtemp(prefix="latch_guest_child_")
-        try:
-            test_bin = os.path.join(tmp, "latch_guest_child_test")
-            comp = subprocess.run(
-                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
-                 "-I", qnx_dir, test_path, "-o", test_bin,
-                 "-lpthread", "-lrt", "-lm"],
-                capture_output=True, text=True, timeout=180)
-            if comp.returncode != 0:
-                fail("the shipped qnx/latch_guest_child.h does not compile "
-                     "against its own host test: %s. The guest child's "
-                     "lifecycle has to be reachable from a HOST test, or the "
-                     "properties it encodes cannot be proved off-target."
-                     % (comp.stderr.strip() or comp.stdout.strip()))
-            else:
-                run = subprocess.run([test_bin], capture_output=True, text=True,
-                                     timeout=180)
-                if run.returncode != 0:
-                    detail = (run.stdout.strip() or run.stderr.strip() or
-                              "exit status %d" % run.returncode)
-                    fail("the guest child's lifecycle does NOT hold: %s. "
-                         "Exactly TWO reap outcomes may establish that the "
-                         "child is gone, an INTERRUPTED reap must establish "
-                         "nothing, a child the reap says is STILL RUNNING "
-                         "must never be reported as stopped, the mask must "
-                         "keep the SIGCHLD handler out of the stop "
-                         "sequence, and the sequence's reap must WIN the "
-                         "race against a handler that reaps any child."
-                         % detail)
-                else:
-                    # The check COUNT is part of the proof: a gutted test
-                    # that still exits 0 must not pass the gate.
-                    m_counts = re.search(r"==\s*(\d+)\s+checks,\s*(\d+)\s+"
-                                         r"failures\s*==", run.stdout)
-                    if not m_counts:
-                        fail("the guest child's host test did not report its "
-                             "check count. The gate cannot tell a gutted "
-                             "test from a real one without it: %s"
-                             % run.stdout.strip())
-                    else:
-                        n_checks = int(m_counts.group(1))
-                        n_fail = int(m_counts.group(2))
-                        if n_fail != 0:
-                            fail("the guest child's host test reported %d "
-                                 "failures." % n_fail)
-                        if n_checks < 60:
-                            fail("the guest child's host test ran only %d "
-                                 "checks. The suite has to cover the "
-                                 "decisions AND the behavioural half (the "
-                                 "mask, the real child, the race against a "
-                                 "reaping handler), so a gutted test that "
-                                 "still exits 0 cannot pass this gate."
-                                 % n_checks)
-                        pass_check("NEW-3 guest child lifecycle: the reap's "
-                                   "errno is READ (an INTERRUPTED waitpid "
-                                   "establishes NOTHING), the SIGCHLD handler "
-                                   "reaps the guest child and nothing else, "
-                                   "the kill precedes the reap inside ONE "
-                                   "masked region so the child's pid is still "
-                                   "reserved, the spawn window is masked and "
-                                   "the pid is recorded under the mask, the "
-                                   "pending side-channel is gone, SIGTERM "
-                                   "and SIGINT reach the stop path, and the "
-                                   "daemon never exits while its guest is "
-                                   "running -- the shipped host test ran %d "
-                                   "checks against REAL child processes"
-                                   % n_checks)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def verify_guestctl_is_guarded():
@@ -4454,7 +4211,7 @@ def _asm_function_bodies(asm):
     carries clang and NOT `gcc-aarch64-linux-gnu` -- it attributed no body
     to any probe, and the guest's memory-barrier gate failed with "the
     AArch64 build of guest/latch_fb_publish.h produced no
-    latch_probe_...()".  The tree was green on the workstation and red on
+    latch_probe_...".  The tree was green on the workstation and red on
     the runner, and the difference was ONE line of assembly spelling.
 
     The lesson is the same one the evidence index follows: **a gate that
@@ -4904,7 +4661,7 @@ def verify_guest_publish_barrier():
                      "probed: %s" % sig_err)
             with io.open(src_path, "w", encoding="utf-8") as f:
                 f.write(driver)
-            comp = subprocess.run(
+            comp = _run_compiler(
                 argv + ["-O2", "-S", "-I", guest_dir, src_path,
                         "-o", os.path.join(tmp, "probe.s")],
                 capture_output=True, text=True, timeout=180)
@@ -5227,7 +4984,7 @@ def verify_first_reader_decision():
         probe_bin = os.path.join(tmp, "probe")
         with io.open(probe_c, "w", encoding="utf-8") as f:
             f.write(FIRST_READER_PROBE)
-        comp = subprocess.run(
+        comp = _run_compiler(
             [cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
              "-I", qnx_dir, probe_c, "-o", probe_bin],
             capture_output=True, text=True, timeout=120)
@@ -8718,6 +8475,14 @@ def main():
     # overflowing it.  See `verify_event_hex_sizing()`.
     verify_event_hex_sizing()
 
+    # --- THE DECISION-LATENCY HISTOGRAM'S BUCKET SCHEME (NEW-1) ----------
+    #
+    # `latch_latency_bucket()` subtracted 4 from a 2-bit quarter index in
+    # unsigned arithmetic, putting every sample >= 64 cycles four buckets
+    # low while `latch_latency_bucket_range()` used the true ranges.  See
+    # `verify_latency_bucket_invariant()`.
+    verify_latency_bucket_invariant()
+
     # --- THE GUEST-CONTROL GATE (C-7) -----------------------------------
     #
     # `/dev/latch/guestctl` can stop and start the guest VM, and it had no
@@ -8746,24 +8511,6 @@ def main():
     # the bridge and a host test run the same code, and every decision
     # fails closed.  See `verify_ingest_fails_closed()`.
     verify_ingest_fails_closed()
-
-    # --- THE GUEST CHILD'S LIFECYCLE (NEW-3) -----------------------------
-    #
-    # `latch_guestd` owns the guest hypervisor as a CHILD PROCESS, and
-    # THREE of its decisions failed OPEN: the reap's outcome was read
-    # WITHOUT its `errno` (so an INTERRUPTED waitpid was read as "there is
-    # no such child", and a stop reported success for a guest that was still
-    # running), the SIGCHLD handler reaped ANY child with `waitpid(-1,
-    # ...)` (so the child's PID -- the handle `guest_stop()` sends `SIGKILL`
-    # through -- was released while the daemon still believed the guest was
-    # running), and `SIGTERM` only cleared the run flag (so the daemon
-    # exited and left the guest hypervisor running as an ORPHAN).
-    #
-    # The decisions AND the masked kill-then-reap sequence now live in the
-    # shipped `qnx/latch_guest_child.h`, and the daemon CALLS them -- so a
-    # host test runs the daemon's own code against REAL child processes.
-    # See `verify_guestd_lifecycle()`.
-    verify_guestd_lifecycle()
 
     # --- THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY (NEW-DOC-4)
     #

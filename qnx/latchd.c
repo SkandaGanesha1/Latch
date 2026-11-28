@@ -264,7 +264,7 @@ typedef struct latch_simplex_state {
     _Atomic uint32_t operator_release_rung;
     _Atomic uint32_t operator_release_armed;
     _Atomic uint32_t operator_release_deferred_ticks;
-    _Atomic uint32_t snapshot_gen;       /* Seqlock counter for telemetry reads */
+    _Atomic uint32_t snapshot_gen;       /* Seqlock counter (2 increments/tick -> wraps in ~24.9 days at 1 kHz) */
     _Atomic uint32_t session_reset_pending; /* Armed by latch_io_open(), consumed by tick */
     _Atomic uint32_t open_writers;          /* Active writer reference count */
     /*
@@ -509,9 +509,8 @@ static void latch_governor_new_session(latch_simplex_state_t *state) {
     state->gov_lease_owner_valid = false;
     state->gov_session_dead = false;
     /* A new session has no bound epoch (RT-02): the next producer binds the
-     * epoch of the session it opens.  The ring of SPENT epochs is NOT
-     * cleared -- it is the supervisor's memory of which epochs may never be
-     * used again, and it must outlive the session. */
+     * epoch of the session it opens. The bounded ring of spent epochs is
+     * not cleared on session change; older entries are eventually evicted. */
     state->gov_session_epoch = LATCH_SESSION_EPOCH_NONE;
     state->gov_session_epoch_valid = false;
     /* Reconnecting a producer must not erase dose already delivered. */
@@ -525,8 +524,8 @@ static void latch_governor_new_session(latch_simplex_state_t *state) {
  * Has this epoch already been used by this supervisor? (RT-02)
  *
  * A producer that restarts and reuses the epoch of its previous session
- * must not be able to resume that session's identity, so a spent epoch can
- * never be bound again.
+ * cannot bind that identity while its epoch remains in the 16-entry ring.
+ * The ring is volatile and is not producer authentication.
  */
 static bool latch_epoch_already_used(const latch_simplex_state_t *st, uint32_t epoch) {
     if (st == NULL || epoch == LATCH_SESSION_EPOCH_NONE) return false;
@@ -1326,6 +1325,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
                                              ? (uint8_t)LATCH_MODE_HOLD : (uint8_t)LATCH_MODE_HP;
                 st->theta_mrad         = g_manifest.envelope.home_mrad;
                 st->velocity_mrad_tick = 0;
+                st->omega_mrad_s       = 0;
                 st->accel_mrad_tick2   = 0;
                 st->hold_ticks_elapsed = 0u;
                 st->clean_streak       = 0u;
@@ -1361,6 +1361,7 @@ static void latch_simplex_tick(latch_simplex_state_t *st,
         st->active_faults = tick_faults;
         st->clean_streak = 0u;
         st->velocity_mrad_tick = 0;
+        st->omega_mrad_s = 0;
         st->accel_mrad_tick2 = 0;
         latch_actuator_publish_target(st, st->theta_mrad);
         /* The IDLE PATH IS SAMPLED TOO (U-4).  The supervisor's loop runs
@@ -3242,6 +3243,8 @@ int main(int argc, char *argv[]) {
     printf("latchd: Loaded manifest '%s' (plant='%s', SHA-256=%.16s...)\n",
            manifest_path, g_manifest.plant_name, g_manifest.sha256_hex);
 
+    /* QNX SDP 8.0 documents mlockall() as a no-op that always succeeds;
+     * retain the warning for unexpected behavior on other implementations. */
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
         perror("latchd: mlockall (warning: requires PROCMGR_AID_MEM_LOCK or root)");
     }
@@ -4115,6 +4118,7 @@ static int latch_run_governor_integration_test(void) {
     g_simplex.gov_gate.rate_tokens = g_manifest.governor.rate_burst_tokens;
     g_simplex.theta_mrad = 240;
     g_simplex.velocity_mrad_tick = 0;
+    g_simplex.omega_mrad_s = 0;
     g_simplex.accel_mrad_tick2 = 0;
     latch_governor_test_frame(GOVERNOR_WIRE_CMD, seq++, 0u, 260, 0u);
     if ((g_simplex.active_faults & LATCH_FAULT_KEEPOUT) == 0u ||
@@ -4837,6 +4841,41 @@ static int latch_run_governor_integration_test(void) {
             fprintf(stderr, "FAIL: full-range negative HOME step\n");
             goto fail;
         }
+    }
+
+    /* L-19: omega_mrad_s must be zeroed when HA-HOME completes / session goes idle
+     * and when a new session starts at rest. */
+    latch_sim_reset();
+    g_manifest = saved_manifest;
+    atomic_store_explicit(&g_simplex.session_reset_pending, 0u, memory_order_release);
+    g_simplex.session_active = true;
+    g_simplex.theta_mrad = g_manifest.envelope.home_mrad + 20;
+    g_simplex.velocity_mrad_tick = -10;
+    g_simplex.omega_mrad_s = -10000;
+    g_simplex.accel_mrad_tick2 = 0;
+    g_simplex.mode = (uint8_t)LATCH_MODE_HOME;
+    atomic_store_explicit(&g_simplex.writer_closed_eof, 1u, memory_order_release);
+    /* Step HA-HOME ticks until retracted_home completes and !session_active runs. */
+    for (int t = 0; t < 10; ++t) {
+        latch_simplex_tick(&g_simplex, &g_pub_buf);
+    }
+    if (!g_simplex.retracted_home || g_simplex.session_active ||
+        g_simplex.velocity_mrad_tick != 0 || g_simplex.omega_mrad_s != 0) {
+        fprintf(stderr, "FAIL: L-19 HA-HOME idle did not zero omega_mrad_s (active=%d vel=%d omega=%d)\n",
+                (int)g_simplex.session_active, g_simplex.velocity_mrad_tick, g_simplex.omega_mrad_s);
+        goto fail;
+    }
+    /* New session starting at rest must also clear any stale omega_mrad_s. */
+    g_simplex.omega_mrad_s = -10000;
+    g_simplex.velocity_mrad_tick = 0;
+    g_simplex.accel_mrad_tick2 = 0;
+    g_simplex.theta_mrad = g_manifest.envelope.home_mrad;
+    atomic_store_explicit(&g_simplex.session_reset_pending, 1u, memory_order_release);
+    latch_governor_test_frame(GOVERNOR_WIRE_HEARTBEAT, 1u, 1u, 0, 0u);
+    if (g_simplex.omega_mrad_s != 0 || g_simplex.velocity_mrad_tick != 0) {
+        fprintf(stderr, "FAIL: L-19 new session at rest did not zero omega_mrad_s (omega=%d)\n",
+                g_simplex.omega_mrad_s);
+        goto fail;
     }
 
     g_manifest = saved_manifest;

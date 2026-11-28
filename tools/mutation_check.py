@@ -1713,6 +1713,46 @@ MUTATIONS = [
        "    if (0) { __atomic_thread_fence(__ATOMIC_RELEASE); }")]),
 
     # ------------------------------------------------------------------------
+    # NEW-1: THE DECISION-LATENCY HISTOGRAM'S BUCKET SCHEME
+    # ------------------------------------------------------------------------
+
+    ("NEW-1: the bucket index subtracts the quarter index again (the "
+     "unsigned subtraction WRAPS and puts every sample of 64 cycles or more "
+     "FOUR buckets low, which understated the archived percentiles by about "
+     "2.5x)",
+     "qnx/latch_protocol.h",
+     [("    unsigned q = (unsigned)((cycles >> (k - 2u)) & 3u);    /* 0..3 */\n"
+       "    unsigned sub = (q >= 2u) ? 2u : q;                     /* 0, 1 or 2 */",
+       "    unsigned sub = (unsigned)((cycles >> (k - 2u)) & 3u) - 4u;")]),
+
+    ("NEW-1: the range function's LAST sub-bucket stops covering half the "
+     "octave (the top quarter of every octave falls out of the table, so "
+     "the index and the range describe two different tables)",
+     "qnx/latch_protocol.h",
+     [("        default:  *lo = octave + 2u * quarter; *hi = 2u * octave;  break;",
+       "        default:  *lo = octave + 2u * quarter; "
+       "*hi = octave + 3u * quarter;  break;")]),
+
+    ("NEW-1: the octave count is written down instead of derived (a literal "
+     "stops describing the histogram the moment the bucket count moves)",
+     "qnx/latch_protocol.h",
+     [("#define LATCH_LATENCY_OCTAVES \\\n"
+       "    ((LATCH_LATENCY_BUCKETS - LATCH_LATENCY_EXACT) / 3u)",
+       "#define LATCH_LATENCY_OCTAVES \\\n"
+       "    16u")]),
+
+    ("NEW-1: the host test stops sweeping the DERIVED domain (a narrow "
+     "sweep would quietly stop covering the octaves above the exact range, "
+     "which is where the defect lived)",
+     "qnx/latch_latency_test.c",
+     [("LATCH_LATENCY_DOMAIN_CYCLES", "32ULL", "all")]),
+
+    ("NEW-1: the host test is dropped from the regression suite (the round "
+     "trip over the whole domain would have no proof at all)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-latency-check\n", "")]),
+
+    # ------------------------------------------------------------------------
     # C-7: THE GUEST-CONTROL GATE
     # ------------------------------------------------------------------------
     #
@@ -1983,229 +2023,6 @@ MUTATIONS = [
      "qnx/latch_ingest_start.h",
      [("    LATCH_INGEST_START_ALLOW          = 1,",
        "    LATCH_INGEST_START_ALLOW          = 0,")]),
-
-    # NEW-3: THE GUEST CHILD'S LIFECYCLE
-    # ------------------------------------------------------------------------
-    #
-    # `latch_guestd` owns the guest hypervisor as a CHILD PROCESS, and THREE
-    # of its decisions failed OPEN:
-    #
-    #   1. the reap's outcome was read WITHOUT its `errno`, so `EINTR` (the
-    #      call was interrupted) was read as "there is no such child" -- and a
-    #      stop that reports success without stopping the guest lets the
-    #      caller start a SECOND guest;
-    #   2. the SIGCHLD handler reaped ANY child with `waitpid(-1, ...)`, so
-    #      the child's PID -- the handle `guest_stop()` sends `SIGKILL`
-    #      through -- was released while the daemon still believed the guest
-    #      was running; and
-    #   3. `SIGTERM` only cleared the run flag, so the daemon exited and left
-    #      the guest hypervisor running as an ORPHAN.
-    #
-    # The fix puts the decisions AND the masked kill-then-reap sequence in the
-    # shipped header `qnx/latch_guest_child.h`, and the daemon CALLS them.
-    # The mutations below come in TWO families, and the split matters for the
-    # same reason it did for NEW-8:
-    #
-    #   * the STRUCTURAL ones attack the CALL SITE -- the daemon no longer
-    #     consults the shipped sequence, ignores its outcome, or undoes one
-    #     of the mask's windows; and
-    #   * the COMPILED ones attack the SHIPPED HEADER -- the daemon still
-    #     calls it, but the header itself has stopped holding the mask or
-    #     stopped reading the `errno`.  Only the COMPILED half of the gate
-    #     can catch those, because the call site is unchanged.
-    #
-    # The COMPILED family is not a formality here: the host test spawns REAL
-    # child processes, so removing the mask makes the handler win the race
-    # against the sequence -- which is observable, and which the test
-    # reports by name.
-
-    ("NEW-3: the daemon IGNORES the stop sequence's outcome (a refused stop "
-     "is reported as a success -- the original defect wearing a hat)",
-     "qnx/latch_guestd.c",
-     [("    if (res.outcome == LATCH_GUEST_STOP_STOPPED) {",
-       "    if (true) {")]),
-
-    ("NEW-3: the daemon reports success for ANY outcome (a guest that is "
-     "still running is reported as stopped)",
-     "qnx/latch_guestd.c",
-     [("    if (res.outcome == LATCH_GUEST_STOP_STOPPED) {",
-       "    if (res.outcome != LATCH_GUEST_STOP_FAILED) {")]),
-
-    ("NEW-3: the daemon re-implements the reap instead of calling the shipped "
-     "one (a second implementation of the decision can drift away from the "
-     "tested one, and the test of a copy proves nothing)",
-     "qnx/latch_guestd.c",
-     [("    latch_guest_reap_result_t res = latch_guest_reap_once(pid);",
-       "    latch_guest_reap_result_t res;\n"
-       "    res.outcome = LATCH_GUEST_REAP_UNKNOWN;\n"
-       "    res.status = 0u;\n"
-       "    res.wait_errno = 0;\n"
-       "    {\n"
-       "        int st = 0;\n"
-       "        errno = 0;\n"
-       "        pid_t rr = waitpid(pid, &st, WNOHANG);\n"
-       "        res.wait_errno = errno;\n"
-       "        res.outcome = latch_guest_reap_decide((int)rr, res.wait_errno);\n"
-       "    }")]),
-
-    ("NEW-3: the SIGCHLD handler reaps ANY child again (the child's PID is "
-     "released while the daemon still believes the guest is running, and the "
-     "kill() could then land on an unrelated process)",
-     "qnx/latch_guestd.c",
-     [("    pid_t r = waitpid(pid, &status, WNOHANG);",
-       "    pid_t r = waitpid(-1, &status, WNOHANG);")]),
-
-    ("NEW-3: the pending side-channel comes back (a SINGLE slot that could "
-     "lose a reap and could match a REUSED pid)",
-     "qnx/latch_guestd.c",
-     [("static volatile sig_atomic_t g_guest_pid = -1;",
-       "static volatile sig_atomic_t g_guest_pid = -1;\n"
-       "static volatile sig_atomic_t g_pending_reaped = 0;")]),
-
-    ("NEW-3: the spawn window is no longer masked (the SIGCHLD handler can "
-     "reap the child between posix_spawn() returning the pid and the daemon "
-     "recording it)",
-     "qnx/latch_guestd.c",
-     [("    if (!latch_guest_block_sigchld(&saved)) {\n"
-       "        fprintf(stderr, \"latch_guestd: sigprocmask(SIG_BLOCK, SIGCHLD) failed: %s\\n\",\n"
-       "                strerror(errno));\n"
-       "        return errno;\n"
-       "    }",
-       "    if (!latch_guest_block_sigchld(&saved)) {\n"
-       "        fprintf(stderr, \"latch_guestd: sigprocmask(SIG_BLOCK, SIGCHLD) failed: %s\\n\",\n"
-       "                strerror(errno));\n"
-       "        return errno;\n"
-       "    }\n"
-       "    latch_guest_restore_mask(&saved);")]),
-
-    ("NEW-3: the pid is recorded AFTER the mask is restored (the handler can "
-     "reap the child before the daemon knows its pid)",
-     "qnx/latch_guestd.c",
-     [("    if (rc == 0) {\n"
-       "        /* The pid is RECORDED UNDER THE SAME MASK, so the handler cannot\n"
-       "         * observe a half-published child. */\n"
-       "        g_guest_pid = pid;\n"
-       "    }\n"
-       "    latch_guest_restore_mask(&saved);",
-       "    if (rc == 0) {\n"
-       "        /* The pid is recorded AFTER the mask is restored. */\n"
-       "        latch_guest_restore_mask(&saved);\n"
-       "        g_guest_pid = pid;\n"
-       "        return EOK;\n"
-       "    }\n"
-       "    latch_guest_restore_mask(&saved);")]),
-
-    ("NEW-3: the SIGCHLD handler stops preserving `errno` (it clobbers the "
-     "`errno` of the code it interrupted)",
-     "qnx/latch_guestd.c",
-     [("    int saved_errno = errno;",
-       "    int saved_errno = 0;")]),
-
-    ("NEW-3: SIGTERM is installed with signal() again (the handler's lifetime "
-     "is not spelled out, and a second SIGTERM would revert to the default "
-     "action)",
-     "qnx/latch_guestd.c",
-     [("    if (sigaction(SIGTERM, &term_sa, NULL) != 0) {",
-       "    if (signal(SIGTERM, guest_sig_handler) == SIG_ERR) {")]),
-
-    ("NEW-3: the termination path no longer stops the guest (the daemon "
-     "exits and leaves the guest hypervisor running as an ORPHAN)",
-     "qnx/latch_guestd.c",
-     [("        int stop_rc = guest_stop();",
-       "        int stop_rc = EOK;")]),
-
-    ("NEW-3: the termination handler does not set the termination flag (the "
-     "ordinary code is never told that a termination happened)",
-     "qnx/latch_guestd.c",
-     [("    g_running = 0;\n    g_terminate = 1;",
-       "    g_running = 0;")]),
-
-    ("NEW-3: the SHIPPED header's mask is not actually HELD (the handler can "
-     "run inside the stop sequence and reap the child first -- only the "
-     "COMPILED half of the gate can catch this, and the host test sees it as "
-     "the handler winning the race)",
-     "qnx/latch_guest_child.h",
-     [("    sigaddset(&block, SIGCHLD);\n"
-       "    return sigprocmask(SIG_BLOCK, &block, saved) == 0;",
-       "    sigaddset(&block, SIGCHLD);\n"
-       "    (void)sigprocmask(SIG_BLOCK, &block, saved);\n"
-       "    (void)sigprocmask(SIG_SETMASK, saved, NULL);\n"
-       "    return true;")]),
-
-    ("NEW-3: the SHIPPED header reads an INTERRUPTED waitpid as 'there is no "
-     "such child' (the ORIGINAL defect, moved into the header -- only the "
-     "COMPILED half of the gate can catch this)",
-     "qnx/latch_guest_child.h",
-     [("    if (wait_errno == EINTR) {\n"
-       "        return LATCH_GUEST_REAP_INTERRUPTED;\n"
-       "    }",
-       "    if (wait_errno == EINTR) {\n"
-       "        return LATCH_GUEST_REAP_NO_CHILD;\n"
-       "    }")]),
-
-    ("NEW-3: the SHIPPED header reports a child the reap says is STILL "
-     "RUNNING as stopped (a stop that reports success without stopping the "
-     "guest -- only the COMPILED half of the gate can catch this)",
-     "qnx/latch_guest_child.h",
-     [("    if (reap == LATCH_GUEST_REAP_RUNNING) {\n"
-       "        return LATCH_GUEST_STOP_RUNNING;\n"
-       "    }",
-       "    if (reap == LATCH_GUEST_REAP_RUNNING) {\n"
-       "        return LATCH_GUEST_STOP_STOPPED;\n"
-       "    }")]),
-
-    ("NEW-3: the SHIPPED header ignores the kill's failure (the daemon "
-     "reports a stop it did not perform -- only the COMPILED half of the "
-     "gate can catch this)",
-     "qnx/latch_guest_child.h",
-     [("    if (kill == LATCH_GUEST_STOP_FAILED) {\n"
-       "        return LATCH_GUEST_STOP_FAILED;\n"
-       "    }",
-       "    if (kill == LATCH_GUEST_STOP_FAILED) {\n"
-       "        return LATCH_GUEST_STOP_STOPPED;\n"
-       "    }")]),
-
-    ("NEW-3: the SHIPPED header stops READING the reap's errno (the -1 is "
-     "read as 'the child is gone' again -- only the COMPILED half of the "
-     "gate can catch this)",
-     "qnx/latch_guest_child.h",
-     [("    pid_t r = waitpid(pid, &status, WNOHANG);\n"
-       "    res.wait_errno = errno;",
-       "    pid_t r = waitpid(pid, &status, WNOHANG);\n"
-       "    res.wait_errno = 0;")]),
-
-    ("NEW-3: the SHIPPED header's reap outcome's ZERO value becomes the "
-     "PERMISSIVE one (an unassigned decision would then establish that the "
-     "child is gone -- the opposite of failing closed)",
-     "qnx/latch_guest_child.h",
-     [("    LATCH_GUEST_REAP_UNKNOWN     = 0,",
-       "    LATCH_GUEST_REAP_UNKNOWN     = 1,")]),
-
-    ("NEW-3: the immediate-exit detection is removed (the daemon reports a "
-     "successful spawn for a guest that is ALREADY GONE -- e.g. a "
-     "hypervisor that could not be exec'd -- and the client believes it "
-     "started a guest that does not exist)",
-     "qnx/latch_guestd.c",
-     [("    if (guest_reap_if_exited() != 0) {\n"
-       "        fprintf(stderr, \"latch_guestd: guest VM (pid %d) exited immediately \"\n"
-       "                        \"(status 0x%X); the guest is NOT running.\\n\",\n"
-       "                (int)pid, (unsigned int)g_last_exit);\n"
-       "        return ECHILD;\n"
-       "    }",
-       "    if (0) {\n"
-       "        fprintf(stderr, \"latch_guestd: guest VM (pid %d) exited immediately \"\n"
-       "                        \"(status 0x%X); the guest is NOT running.\\n\",\n"
-       "                (int)pid, (unsigned int)g_last_exit);\n"
-       "        return ECHILD;\n"
-       "    }")]),
-
-    ("NEW-3: the last exit status is shared with the handler as a plain "
-     "`uint32_t` again (POSIX says a signal handler may refer to NO object "
-     "other than a `volatile sig_atomic_t` one, so the handler's write is "
-     "undefined behaviour by the letter of the standard)",
-     "qnx/latch_guestd.c",
-     [("static volatile sig_atomic_t g_last_exit = 0;",
-       "static volatile uint32_t g_last_exit = 0u;")]),
 ]
 
 

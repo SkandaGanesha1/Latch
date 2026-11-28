@@ -1,5 +1,8 @@
 name: LATCH Continuous Integration
 
+env:
+  CCACHE_DISABLE: "1"
+
 on:
   push:
     branches: [ "**" ]

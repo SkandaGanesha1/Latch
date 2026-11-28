@@ -1,0 +1,325 @@
+==============================================================================
+LATCH bootable IFS listing
+==============================================================================
+$ mkifs -v latch_qemu.build build/nto-aarch64-le/latch_qemu.ifs
+  (guest kernel Image: /home/skanda/Downloads/linux-6.12/arch/arm64/boot/Image)
+
+This is the proof of WHAT IS IN the bootable image: every file,
+its offset and its size.
+
+exit status: 0
+
+  Offset     Size    Entry   Ramoff     Target=Host
+40080000      fa0        0     ----     *.boot=/home/skanda/qnx800/target/qnx/aarch64le/boot/sys/raw.boot
+40080fa0      100     ----     ----     Startup-header
+400810a0    2bfe8 40081da8     ----     startup.*=/tmp/mkxfs.g4P6Gl
+400ac0e8       5c     ----     ----     Image-header
+400ac144     53d0     ----     ----     Image-directory
+    ----     ----     ----     ----     Root-dirent
+400b1514      890     ----     ----     proc/boot/secpol.bin=build/secpol.bin
+400b1da4       55     ----     ----     proc/boot/latch.manifest.sha256=./latch.manifest.sha256
+    ----     ----     ----     ----     bin/sh -> /proc/boot/ksh
+    ----     ----     ----     ----     dev/console -> /dev/ser1
+    ----     ----     ----     ----     tmp -> /dev/shmem
+    ----     ----     ----     ----         proc/boot/linux-guest.Image
+    ----     ----     ----     ----         proc/boot/linux-guest.initrd
+    ----     ----     ----     ----         proc
+    ----     ----     ----     ----         proc/boot
+    ----     ----     ----     ----         bin
+    ----     ----     ----     ----         dev
+    ----     ----     ----     ----         lib
+    ----     ----     ----     ----         lib/dll
+    ----     ----     ----     ----         lib/dll/qvm
+400b2000    dd000 ffffff8060077c80     ----     proc/boot/procnto-smp-instr=/tmp/mkxfs.eY089B
+4018f000    3d000     5348     ----     proc/boot/ldqnx-64.so.2=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/ldqnx-64.so.2
+    ----     ----     ----     ----     proc/boot/ldqnx-64.so -> ldqnx-64.so.2
+401cc000    ad000        0     ----     proc/boot/libc.so.6=/home/skanda/qnx800/target/qnx/aarch64le/lib/libc.so
+    ----     ----     ----     ----     proc/boot/libc.so -> libc.so.6
+40279000    3f000        0     ----     proc/boot/libm.so.3=/home/skanda/qnx800/target/qnx/aarch64le/lib/libm.so
+    ----     ----     ----     ----     proc/boot/libm.so -> libm.so.3
+402b8000    15000        0     ----     proc/boot/libgcc_s.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libgcc_s.so.1
+    ----     ----     ----     ----     proc/boot/libgcc_s.so -> libgcc_s.so.1
+402cd000     6000        0     ----     proc/boot/libsecpol.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libsecpol.so.1
+    ----     ----     ----     ----     proc/boot/libsecpol.so -> libsecpol.so.1
+402d3000    14000        0     ----     proc/boot/libqh.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libqh.so.1
+    ----     ----     ----     ----     proc/boot/libqh.so -> libqh.so.1
+402e7000     6000        0     ----     proc/boot/libslog2.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2.so.1
+    ----     ----     ----     ----     proc/boot/libslog2.so -> libslog2.so.1
+402ed000     a000        0     ----     proc/boot/libslog2parse.so.1=/home/skanda/qnx800/target/qnx/aarch64le/lib/libslog2parse.so.1
+    ----     ----     ----     ----     proc/boot/libslog2parse.so -> libslog2parse.so.1
+402f7000     a000        0     ----     proc/boot/libfdt.so.1=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/libfdt.so.1
+    ----     ----     ----     ----     proc/boot/libfdt.so -> libfdt.so.1
+40301000     4000        0     ----     lib/dll/qvm/vdev-virtio-console.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-virtio-console.so
+40305000     7000        0     ----     lib/dll/qvm/vdev-shmem.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-shmem.so
+4030c000     3000        0     ----     lib/dll/qvm/vdev-pl011.so=/home/skanda/qnx800/target/qnx/aarch64le/lib/dll/vdev-pl011.so
+4030f000     6000     1ee0     ----     proc/boot/secpolpush=/home/skanda/qnx800/target/qnx/aarch64le/bin/secpolpush
+40315000    14000     47f0     ----     proc/boot/slogger2=/home/skanda/qnx800/target/qnx/aarch64le/bin/slogger2
+40329000     9000     291c     ----     proc/boot/slog2info=/home/skanda/qnx800/target/qnx/aarch64le/bin/slog2info
+40332000     7000     2750     ----     proc/boot/pipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe
+40339000    12000     3210     ----     proc/boot/devc-serpl011=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
+4034b000    60000     cd0c     ----     proc/boot/qvm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm
+403ab000     9000     41b4     ----     proc/boot/on=/home/skanda/qnx800/target/qnx/aarch64le/bin/on
+403b4000     9000     41b4     ----     proc/boot/ability=/home/skanda/qnx800/target/qnx/aarch64le/bin/ability
+403bd000    1a000     560c     ----     proc/boot/pidin=/home/skanda/qnx800/target/qnx/aarch64le/bin/pidin
+403d7000     5000     228c     ----     proc/boot/slay=/home/skanda/qnx800/target/qnx/aarch64le/bin/slay
+403dc000    40000     71a0     ----     proc/boot/ksh=/home/skanda/qnx800/target/qnx/aarch64le/bin/ksh
+4041c000     9000     41b4     ----     proc/boot/waitfor=/home/skanda/qnx800/target/qnx/aarch64le/bin/waitfor
+40425000    13000     32c8     ----     proc/boot/latchd=build/nto-aarch64-le/latchd
+40438000     c000     2b68     ----     proc/boot/latch_verify=build/nto-aarch64-le/latch_verify
+40444000     c000     281c     ----     proc/boot/latch-ingest=build/nto-aarch64-le/latch-ingest
+40450000    10000     2750     ----     proc/boot/latchctl=build/nto-aarch64-le/latchctl
+40460000     b000     2260     ----     proc/boot/latchlog=build/nto-aarch64-le/latchlog
+4046b000     5000     16dc     ----     proc/boot/linux-guest.Image/dloader.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dloader.sym
+40470000     3000     16dc     ----     proc/boot/linux-guest.Image/dloader=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dloader
+40473000     8000     178c     ----     proc/boot/linux-guest.Image/shutdown.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/shutdown.sym
+4047b000     6000     178c     ----     proc/boot/linux-guest.Image/shutdown=/home/skanda/qnx800/target/qnx/aarch64le/sbin/shutdown
+40481000    35000     34b0     ----     proc/boot/linux-guest.Image/devf-ram.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devf-ram.sym
+404b6000    2f000     34b0     ----     proc/boot/linux-guest.Image/devf-ram=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devf-ram
+404e5000     8000     17e0     ----     proc/boot/linux-guest.Image/devb-ram.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ram.sym
+404ed000     5000     17e0     ----     proc/boot/linux-guest.Image/devb-ram=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ram
+404f2000    1d000     3688     ----     proc/boot/linux-guest.Image/devb-nvme.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-nvme.sym
+4050f000    19000     3688     ----     proc/boot/linux-guest.Image/devb-nvme=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-nvme
+40528000    17000     306c     ----     proc/boot/linux-guest.Image/devb-ahci.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ahci.sym
+4053f000    13000     306c     ----     proc/boot/linux-guest.Image/devb-ahci=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ahci
+40552000    12000     3790     ----     proc/boot/linux-guest.Image/devb-umass.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-umass.sym
+40564000     e000     3790     ----     proc/boot/linux-guest.Image/devb-umass=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-umass
+40572000    15000     3ac8     ----     proc/boot/linux-guest.Image/devb-ustor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ustor.sym
+40587000    11000     3ac8     ----     proc/boot/linux-guest.Image/devb-ustor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ustor
+40598000     8000     2184     ----     proc/boot/linux-guest.Image/devb-loopback.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-loopback.sym
+405a0000     5000     2184     ----     proc/boot/linux-guest.Image/devb-loopback=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-loopback
+405a5000     e000     302c     ----     proc/boot/linux-guest.Image/devb-cnd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-cnd.sym
+405b3000     a000     302c     ----     proc/boot/linux-guest.Image/devb-cnd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-cnd
+405bd000     a000     3538     ----     proc/boot/linux-guest.Image/chkdosfs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkdosfs.sym
+405c7000     9000     3538     ----     proc/boot/linux-guest.Image/chkdosfs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkdosfs
+405d0000     8000     32bc     ----     proc/boot/linux-guest.Image/mkdosfs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkdosfs.sym
+405d8000     6000     32bc     ----     proc/boot/linux-guest.Image/mkdosfs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkdosfs
+405de000     9000     28cc     ----     proc/boot/linux-guest.Image/fsevmgr.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsevmgr.sym
+405e7000     7000     28cc     ----     proc/boot/linux-guest.Image/fsevmgr=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsevmgr
+405ee000     f000     1e10     ----     proc/boot/linux-guest.Image/fdisk.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fdisk.sym
+405fd000     d000     1dc8     ----     proc/boot/linux-guest.Image/chkqnx6fs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkqnx6fs.sym
+4060a000     e000     1e10     ----     proc/boot/linux-guest.Image/fdisk=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fdisk
+40618000     b000     1dc8     ----     proc/boot/linux-guest.Image/chkqnx6fs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkqnx6fs
+40623000    16000     39b8     ----     proc/boot/linux-guest.Image/mkqnx6fs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkqnx6fs.sym
+40639000    12000     39b8     ----     proc/boot/linux-guest.Image/mkqnx6fs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkqnx6fs
+4064b000     a000     1b40     ----     proc/boot/linux-guest.Image/wipe.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/wipe.sym
+40655000     7000     1b40     ----     proc/boot/linux-guest.Image/wipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/wipe
+4065c000     a000     37d0     ----     proc/boot/linux-guest.Image/fsencrypt.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsencrypt.sym
+40666000     8000     37d0     ----     proc/boot/linux-guest.Image/fsencrypt=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsencrypt
+4066e000    21000     2c90     ----     proc/boot/linux-guest.Image/ping.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ping.sym
+4068f000    58000     5b68     ----     proc/boot/linux-guest.Image/dhcpcd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dhcpcd.sym
+406e7000    19000     2c90     ----     proc/boot/linux-guest.Image/ping=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ping
+40700000    1f000     2634     ----     proc/boot/linux-guest.Image/setkey.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/setkey.sym
+4071f000    1b000     2634     ----     proc/boot/linux-guest.Image/setkey=/home/skanda/qnx800/target/qnx/aarch64le/sbin/setkey
+4073a000    51000     5b68     ----     proc/boot/linux-guest.Image/dhcpcd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dhcpcd
+4078b000     f000     35d8     ----     proc/boot/linux-guest.Image/etherswitchcfg.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/etherswitchcfg.sym
+4079a000     b000     35d8     ----     proc/boot/linux-guest.Image/etherswitchcfg=/home/skanda/qnx800/target/qnx/aarch64le/sbin/etherswitchcfg
+407a5000    7f000     f504     ----     proc/boot/linux-guest.Image/ifconfig.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ifconfig.sym
+40824000    76000     f504     ----     proc/boot/linux-guest.Image/ifconfig=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ifconfig
+4089a000    61000     6bd0     ----     proc/boot/linux-guest.Image/pfctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pfctl.sym
+408fb000   11a000     caec     ----     proc/boot/linux-guest.Image/unbound.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound.sym
+40a15000     9000     2750     ----     proc/boot/linux-guest.Image/pipe.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe.sym
+40a1e000     7000     2750     ----     proc/boot/linux-guest.Image/pipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe
+40a25000    56000     6bd0     ----     proc/boot/linux-guest.Image/pfctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pfctl
+40a7b000    10000     3ab4     ----     proc/boot/linux-guest.Image/route.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/route.sym
+40a8b000     c000     3ab4     ----     proc/boot/linux-guest.Image/route=/home/skanda/qnx800/target/qnx/aarch64le/sbin/route
+40a97000     a000     1820     ----     proc/boot/linux-guest.Image/sysctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/sysctl.sym
+40aa1000     7000     1820     ----     proc/boot/linux-guest.Image/sysctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/sysctl
+40aa8000     6000     178c     ----     proc/boot/linux-guest.Image/mqueue.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mqueue.sym
+40aae000     4000     178c     ----     proc/boot/linux-guest.Image/mqueue=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mqueue
+40ab2000     7000     2150     ----     proc/boot/linux-guest.Image/server-monitor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/server-monitor.sym
+40ab9000     5000     2150     ----     proc/boot/linux-guest.Image/server-monitor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/server-monitor
+40abe000    13000     36e0     ----     proc/boot/linux-guest.Image/smmuman.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/smmuman.sym
+40ad1000    10000     36e0     ----     proc/boot/linux-guest.Image/smmuman=/home/skanda/qnx800/target/qnx/aarch64le/sbin/smmuman
+40ae1000   10f000     caec     ----     proc/boot/linux-guest.Image/unbound=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound
+40bf0000    19000     49c4     ----     proc/boot/linux-guest.Image/unbound-anchor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-anchor.sym
+40c09000    14000     49c4     ----     proc/boot/linux-guest.Image/unbound-anchor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-anchor
+40c1d000   536000    a64b8     ----     proc/boot/linux-guest.Image/io-sock.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock.sym
+41153000    34000     62f8     ----     proc/boot/linux-guest.Image/pci-server.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-server.sym
+41187000    2d000     62f8     ----     proc/boot/linux-guest.Image/pci-server=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-server
+411b4000   103000     b39c     ----     proc/boot/linux-guest.Image/unbound-checkconf.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-checkconf.sym
+412b7000    aa000     d740     ----     proc/boot/linux-guest.Image/screen.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/screen.sym
+41361000    f9000     b39c     ----     proc/boot/linux-guest.Image/unbound-checkconf=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-checkconf
+4145a000    15000     3734     ----     proc/boot/linux-guest.Image/vcap-mgr.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vcap-mgr.sym
+4146f000    12000     3734     ----     proc/boot/linux-guest.Image/vcap-mgr=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vcap-mgr
+41481000    a0000     d740     ----     proc/boot/linux-guest.Image/screen=/home/skanda/qnx800/target/qnx/aarch64le/sbin/screen
+41521000   10b000     c0c4     ----     proc/boot/linux-guest.Image/unbound-control.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control.sym
+4162c000   101000     c0c4     ----     proc/boot/linux-guest.Image/unbound-control=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control
+4172d000   503000    a64b8     ----     proc/boot/linux-guest.Image/io-sock=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock
+41c30000    11000     43f4     ----     proc/boot/linux-guest.Image/tabrm.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/tabrm.sym
+41c41000     f000     43f4     ----     proc/boot/linux-guest.Image/tabrm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/tabrm
+41c50000     4000      eb0     ----     proc/boot/linux-guest.Image/ulink_ctrl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ulink_ctrl.sym
+41c54000     3000      eb0     ----     proc/boot/linux-guest.Image/ulink_ctrl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ulink_ctrl
+41c57000     5000      fa4     ----     proc/boot/linux-guest.Image/fuser.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fuser.sym
+41c5c000     3000      fa4     ----     proc/boot/linux-guest.Image/fuser=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fuser
+41c5f000     a000     2da4     ----     proc/boot/linux-guest.Image/getty.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/getty.sym
+41c69000     8000     2da4     ----     proc/boot/linux-guest.Image/getty=/home/skanda/qnx800/target/qnx/aarch64le/sbin/getty
+41c71000    14000     29d8     ----     proc/boot/linux-guest.Image/rtc.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/rtc.sym
+41c85000    11000     29d8     ----     proc/boot/linux-guest.Image/rtc=/home/skanda/qnx800/target/qnx/aarch64le/sbin/rtc
+41c96000   5f6000    a7678     ----     proc/boot/linux-guest.Image/io-sock-diag.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock-diag.sym
+4228c000   5c3000    a7678     ----     proc/boot/linux-guest.Image/io-sock-diag=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock-diag
+4284f000    10000     1ec0     ----     proc/boot/linux-guest.Image/devb-virtio.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-virtio.sym
+4285f000    6b000     cd0c     ----     proc/boot/linux-guest.Image/qvm.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm.sym
+428ca000     a000     1ec0     ----     proc/boot/linux-guest.Image/devb-virtio=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-virtio
+428d4000    1d000     3a5c     ----     proc/boot/linux-guest.Image/devc-virtio.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-virtio.sym
+428f1000    15000     3a5c     ----     proc/boot/linux-guest.Image/devc-virtio=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-virtio
+42906000     c000     2248     ----     proc/boot/linux-guest.Image/pci-connector.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-connector.sym
+42912000     4000      df0     ----     proc/boot/linux-guest.Image/vpctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vpctl.sym
+42916000     3000      df0     ----     proc/boot/linux-guest.Image/vpctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vpctl
+42919000     9000     2248     ----     proc/boot/linux-guest.Image/pci-connector=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-connector
+42922000    60000     cd0c     ----     proc/boot/linux-guest.Image/qvm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm
+42982000     e000     26c0     ----     proc/boot/linux-guest.Image/io-hid.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-hid.sym
+42990000     c000     26c0     ----     proc/boot/linux-guest.Image/io-hid=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-hid
+4299c000    18000     3588     ----     proc/boot/linux-guest.Image/devc-pty.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-pty.sym
+429b4000    12000     3588     ----     proc/boot/linux-guest.Image/devc-pty=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-pty
+429c6000    18000     3330     ----     proc/boot/linux-guest.Image/devc-ser8250.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-ser8250.sym
+429de000    31000    1060c     ----     proc/boot/linux-guest.Image/hidview.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/hidview.sym
+42a0f000    2f000    1060c     ----     proc/boot/linux-guest.Image/hidview=/home/skanda/qnx800/target/qnx/aarch64le/sbin/hidview
+42a3e000    12000     3330     ----     proc/boot/linux-guest.Image/devc-ser8250=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-ser8250
+42a50000    1b000     3810     ----     proc/boot/linux-guest.Image/devc-serpci.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpci.sym
+42a6b000    15000     3810     ----     proc/boot/linux-guest.Image/devc-serpci=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpci
+42a80000    18000     3210     ----     proc/boot/linux-guest.Image/devc-serpl011.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011.sym
+42a98000    12000     3210     ----     proc/boot/linux-guest.Image/devc-serpl011=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
+42aaa000     e000     49b0     ----     proc/boot/linux-guest.Image/usb.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb.sym
+42ab8000     c000     49b0     ----     proc/boot/linux-guest.Image/usb=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb
+42ac4000    2d000     4c60     ----     proc/boot/linux-guest.Image/devc-serusb.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb.sym
+42af1000    26000     4c60     ----     proc/boot/linux-guest.Image/devc-serusb=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb
+42b17000    1c000     4068     ----     proc/boot/linux-guest.Image/devc-serusb_dcd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb_dcd.sym
+42b33000    16000     4068     ----     proc/boot/linux-guest.Image/devc-serusb_dcd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb_dcd
+42b49000    6e000     8048     ----     proc/boot/linux-guest.Image/io-usb-otg.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-usb-otg.sym
+42bb7000    60000     8048     ----     proc/boot/linux-guest.Image/io-usb-otg=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-usb-otg
+42c17000     4000      d28     ----     proc/boot/linux-guest.Image/ubus_ctrl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ubus_ctrl.sym
+42c1b000     3000      d28     ----     proc/boot/linux-guest.Image/ubus_ctrl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ubus_ctrl
+42c1e000     d000     1d5c     ----     proc/boot/linux-guest.Image/usb-cert-v2.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb-cert-v2.sym
+42c2b000     b000     1d5c     ----     proc/boot/linux-guest.Image/usb-cert-v2=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb-cert-v2
+42c36000    13000     2c60     ----     proc/boot/linux-guest.Image/devu-umass_client-block.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devu-umass_client-block.sym
+42c49000    10000     2c60     ----     proc/boot/linux-guest.Image/devu-umass_client-block=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devu-umass_client-block
+42c59000     5000     16dc     ----     proc/boot/linux-guest.initrd/dloader.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dloader.sym
+42c5e000     3000     16dc     ----     proc/boot/linux-guest.initrd/dloader=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dloader
+42c61000     8000     178c     ----     proc/boot/linux-guest.initrd/shutdown.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/shutdown.sym
+42c69000     6000     178c     ----     proc/boot/linux-guest.initrd/shutdown=/home/skanda/qnx800/target/qnx/aarch64le/sbin/shutdown
+42c6f000    35000     34b0     ----     proc/boot/linux-guest.initrd/devf-ram.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devf-ram.sym
+42ca4000    2f000     34b0     ----     proc/boot/linux-guest.initrd/devf-ram=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devf-ram
+42cd3000     8000     17e0     ----     proc/boot/linux-guest.initrd/devb-ram.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ram.sym
+42cdb000     5000     17e0     ----     proc/boot/linux-guest.initrd/devb-ram=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ram
+42ce0000    1d000     3688     ----     proc/boot/linux-guest.initrd/devb-nvme.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-nvme.sym
+42cfd000    19000     3688     ----     proc/boot/linux-guest.initrd/devb-nvme=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-nvme
+42d16000    17000     306c     ----     proc/boot/linux-guest.initrd/devb-ahci.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ahci.sym
+42d2d000    13000     306c     ----     proc/boot/linux-guest.initrd/devb-ahci=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ahci
+42d40000    12000     3790     ----     proc/boot/linux-guest.initrd/devb-umass.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-umass.sym
+42d52000     e000     3790     ----     proc/boot/linux-guest.initrd/devb-umass=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-umass
+42d60000    15000     3ac8     ----     proc/boot/linux-guest.initrd/devb-ustor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ustor.sym
+42d75000    11000     3ac8     ----     proc/boot/linux-guest.initrd/devb-ustor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-ustor
+42d86000     8000     2184     ----     proc/boot/linux-guest.initrd/devb-loopback.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-loopback.sym
+42d8e000     5000     2184     ----     proc/boot/linux-guest.initrd/devb-loopback=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-loopback
+42d93000     e000     302c     ----     proc/boot/linux-guest.initrd/devb-cnd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-cnd.sym
+42da1000     a000     302c     ----     proc/boot/linux-guest.initrd/devb-cnd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-cnd
+42dab000     a000     3538     ----     proc/boot/linux-guest.initrd/chkdosfs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkdosfs.sym
+42db5000     9000     3538     ----     proc/boot/linux-guest.initrd/chkdosfs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkdosfs
+42dbe000     8000     32bc     ----     proc/boot/linux-guest.initrd/mkdosfs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkdosfs.sym
+42dc6000     6000     32bc     ----     proc/boot/linux-guest.initrd/mkdosfs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkdosfs
+42dcc000     9000     28cc     ----     proc/boot/linux-guest.initrd/fsevmgr.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsevmgr.sym
+42dd5000     7000     28cc     ----     proc/boot/linux-guest.initrd/fsevmgr=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsevmgr
+42ddc000     f000     1e10     ----     proc/boot/linux-guest.initrd/fdisk.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fdisk.sym
+42deb000     d000     1dc8     ----     proc/boot/linux-guest.initrd/chkqnx6fs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkqnx6fs.sym
+42df8000     e000     1e10     ----     proc/boot/linux-guest.initrd/fdisk=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fdisk
+42e06000     b000     1dc8     ----     proc/boot/linux-guest.initrd/chkqnx6fs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/chkqnx6fs
+42e11000    16000     39b8     ----     proc/boot/linux-guest.initrd/mkqnx6fs.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkqnx6fs.sym
+42e27000    12000     39b8     ----     proc/boot/linux-guest.initrd/mkqnx6fs=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mkqnx6fs
+42e39000     a000     1b40     ----     proc/boot/linux-guest.initrd/wipe.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/wipe.sym
+42e43000     7000     1b40     ----     proc/boot/linux-guest.initrd/wipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/wipe
+42e4a000     a000     37d0     ----     proc/boot/linux-guest.initrd/fsencrypt.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsencrypt.sym
+42e54000     8000     37d0     ----     proc/boot/linux-guest.initrd/fsencrypt=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fsencrypt
+42e5c000    21000     2c90     ----     proc/boot/linux-guest.initrd/ping.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ping.sym
+42e7d000    58000     5b68     ----     proc/boot/linux-guest.initrd/dhcpcd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dhcpcd.sym
+42ed5000    19000     2c90     ----     proc/boot/linux-guest.initrd/ping=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ping
+42eee000    1f000     2634     ----     proc/boot/linux-guest.initrd/setkey.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/setkey.sym
+42f0d000    1b000     2634     ----     proc/boot/linux-guest.initrd/setkey=/home/skanda/qnx800/target/qnx/aarch64le/sbin/setkey
+42f28000    51000     5b68     ----     proc/boot/linux-guest.initrd/dhcpcd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/dhcpcd
+42f79000     f000     35d8     ----     proc/boot/linux-guest.initrd/etherswitchcfg.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/etherswitchcfg.sym
+42f88000     b000     35d8     ----     proc/boot/linux-guest.initrd/etherswitchcfg=/home/skanda/qnx800/target/qnx/aarch64le/sbin/etherswitchcfg
+42f93000    7f000     f504     ----     proc/boot/linux-guest.initrd/ifconfig.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ifconfig.sym
+43012000    76000     f504     ----     proc/boot/linux-guest.initrd/ifconfig=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ifconfig
+43088000    61000     6bd0     ----     proc/boot/linux-guest.initrd/pfctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pfctl.sym
+430e9000   11a000     caec     ----     proc/boot/linux-guest.initrd/unbound.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound.sym
+43203000     9000     2750     ----     proc/boot/linux-guest.initrd/pipe.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe.sym
+4320c000     7000     2750     ----     proc/boot/linux-guest.initrd/pipe=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pipe
+43213000    56000     6bd0     ----     proc/boot/linux-guest.initrd/pfctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pfctl
+43269000    10000     3ab4     ----     proc/boot/linux-guest.initrd/route.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/route.sym
+43279000     c000     3ab4     ----     proc/boot/linux-guest.initrd/route=/home/skanda/qnx800/target/qnx/aarch64le/sbin/route
+43285000     a000     1820     ----     proc/boot/linux-guest.initrd/sysctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/sysctl.sym
+4328f000     7000     1820     ----     proc/boot/linux-guest.initrd/sysctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/sysctl
+43296000     6000     178c     ----     proc/boot/linux-guest.initrd/mqueue.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mqueue.sym
+4329c000     4000     178c     ----     proc/boot/linux-guest.initrd/mqueue=/home/skanda/qnx800/target/qnx/aarch64le/sbin/mqueue
+432a0000     7000     2150     ----     proc/boot/linux-guest.initrd/server-monitor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/server-monitor.sym
+432a7000     5000     2150     ----     proc/boot/linux-guest.initrd/server-monitor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/server-monitor
+432ac000    13000     36e0     ----     proc/boot/linux-guest.initrd/smmuman.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/smmuman.sym
+432bf000    10000     36e0     ----     proc/boot/linux-guest.initrd/smmuman=/home/skanda/qnx800/target/qnx/aarch64le/sbin/smmuman
+432cf000   10f000     caec     ----     proc/boot/linux-guest.initrd/unbound=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound
+433de000    19000     49c4     ----     proc/boot/linux-guest.initrd/unbound-anchor.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-anchor.sym
+433f7000    14000     49c4     ----     proc/boot/linux-guest.initrd/unbound-anchor=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-anchor
+4340b000   536000    a64b8     ----     proc/boot/linux-guest.initrd/io-sock.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock.sym
+43941000    34000     62f8     ----     proc/boot/linux-guest.initrd/pci-server.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-server.sym
+43975000    2d000     62f8     ----     proc/boot/linux-guest.initrd/pci-server=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-server
+439a2000   103000     b39c     ----     proc/boot/linux-guest.initrd/unbound-checkconf.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-checkconf.sym
+43aa5000    aa000     d740     ----     proc/boot/linux-guest.initrd/screen.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/screen.sym
+43b4f000    f9000     b39c     ----     proc/boot/linux-guest.initrd/unbound-checkconf=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-checkconf
+43c48000    15000     3734     ----     proc/boot/linux-guest.initrd/vcap-mgr.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vcap-mgr.sym
+43c5d000    12000     3734     ----     proc/boot/linux-guest.initrd/vcap-mgr=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vcap-mgr
+43c6f000    a0000     d740     ----     proc/boot/linux-guest.initrd/screen=/home/skanda/qnx800/target/qnx/aarch64le/sbin/screen
+43d0f000   10b000     c0c4     ----     proc/boot/linux-guest.initrd/unbound-control.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control.sym
+43e1a000   101000     c0c4     ----     proc/boot/linux-guest.initrd/unbound-control=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control
+43f1b000   503000    a64b8     ----     proc/boot/linux-guest.initrd/io-sock=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock
+4441e000    11000     43f4     ----     proc/boot/linux-guest.initrd/tabrm.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/tabrm.sym
+4442f000     f000     43f4     ----     proc/boot/linux-guest.initrd/tabrm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/tabrm
+4443e000     4000      eb0     ----     proc/boot/linux-guest.initrd/ulink_ctrl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ulink_ctrl.sym
+44442000     3000      eb0     ----     proc/boot/linux-guest.initrd/ulink_ctrl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ulink_ctrl
+44445000     5000      fa4     ----     proc/boot/linux-guest.initrd/fuser.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fuser.sym
+4444a000     3000      fa4     ----     proc/boot/linux-guest.initrd/fuser=/home/skanda/qnx800/target/qnx/aarch64le/sbin/fuser
+4444d000     a000     2da4     ----     proc/boot/linux-guest.initrd/getty.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/getty.sym
+44457000     8000     2da4     ----     proc/boot/linux-guest.initrd/getty=/home/skanda/qnx800/target/qnx/aarch64le/sbin/getty
+4445f000    14000     29d8     ----     proc/boot/linux-guest.initrd/rtc.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/rtc.sym
+44473000    11000     29d8     ----     proc/boot/linux-guest.initrd/rtc=/home/skanda/qnx800/target/qnx/aarch64le/sbin/rtc
+44484000   5f6000    a7678     ----     proc/boot/linux-guest.initrd/io-sock-diag.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock-diag.sym
+44a7a000   5c3000    a7678     ----     proc/boot/linux-guest.initrd/io-sock-diag=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-sock-diag
+4503d000    10000     1ec0     ----     proc/boot/linux-guest.initrd/devb-virtio.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-virtio.sym
+4504d000    6b000     cd0c     ----     proc/boot/linux-guest.initrd/qvm.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm.sym
+450b8000     a000     1ec0     ----     proc/boot/linux-guest.initrd/devb-virtio=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devb-virtio
+450c2000    1d000     3a5c     ----     proc/boot/linux-guest.initrd/devc-virtio.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-virtio.sym
+450df000    15000     3a5c     ----     proc/boot/linux-guest.initrd/devc-virtio=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-virtio
+450f4000     c000     2248     ----     proc/boot/linux-guest.initrd/pci-connector.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-connector.sym
+45100000     4000      df0     ----     proc/boot/linux-guest.initrd/vpctl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vpctl.sym
+45104000     3000      df0     ----     proc/boot/linux-guest.initrd/vpctl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/vpctl
+45107000     9000     2248     ----     proc/boot/linux-guest.initrd/pci-connector=/home/skanda/qnx800/target/qnx/aarch64le/sbin/pci-connector
+45110000    60000     cd0c     ----     proc/boot/linux-guest.initrd/qvm=/home/skanda/qnx800/target/qnx/aarch64le/sbin/qvm
+45170000     e000     26c0     ----     proc/boot/linux-guest.initrd/io-hid.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-hid.sym
+4517e000     c000     26c0     ----     proc/boot/linux-guest.initrd/io-hid=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-hid
+4518a000    18000     3588     ----     proc/boot/linux-guest.initrd/devc-pty.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-pty.sym
+451a2000    12000     3588     ----     proc/boot/linux-guest.initrd/devc-pty=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-pty
+451b4000    18000     3330     ----     proc/boot/linux-guest.initrd/devc-ser8250.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-ser8250.sym
+451cc000    31000    1060c     ----     proc/boot/linux-guest.initrd/hidview.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/hidview.sym
+451fd000    2f000    1060c     ----     proc/boot/linux-guest.initrd/hidview=/home/skanda/qnx800/target/qnx/aarch64le/sbin/hidview
+4522c000    12000     3330     ----     proc/boot/linux-guest.initrd/devc-ser8250=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-ser8250
+4523e000    1b000     3810     ----     proc/boot/linux-guest.initrd/devc-serpci.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpci.sym
+45259000    15000     3810     ----     proc/boot/linux-guest.initrd/devc-serpci=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpci
+4526e000    18000     3210     ----     proc/boot/linux-guest.initrd/devc-serpl011.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011.sym
+45286000    12000     3210     ----     proc/boot/linux-guest.initrd/devc-serpl011=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
+45298000     e000     49b0     ----     proc/boot/linux-guest.initrd/usb.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb.sym
+452a6000     c000     49b0     ----     proc/boot/linux-guest.initrd/usb=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb
+452b2000    2d000     4c60     ----     proc/boot/linux-guest.initrd/devc-serusb.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb.sym
+452df000    26000     4c60     ----     proc/boot/linux-guest.initrd/devc-serusb=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb
+45305000    1c000     4068     ----     proc/boot/linux-guest.initrd/devc-serusb_dcd.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb_dcd.sym
+45321000    16000     4068     ----     proc/boot/linux-guest.initrd/devc-serusb_dcd=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devc-serusb_dcd
+45337000    6e000     8048     ----     proc/boot/linux-guest.initrd/io-usb-otg.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-usb-otg.sym
+453a5000    60000     8048     ----     proc/boot/linux-guest.initrd/io-usb-otg=/home/skanda/qnx800/target/qnx/aarch64le/sbin/io-usb-otg
+45405000     4000      d28     ----     proc/boot/linux-guest.initrd/ubus_ctrl.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ubus_ctrl.sym
+45409000     3000      d28     ----     proc/boot/linux-guest.initrd/ubus_ctrl=/home/skanda/qnx800/target/qnx/aarch64le/sbin/ubus_ctrl
+4540c000     d000     1d5c     ----     proc/boot/linux-guest.initrd/usb-cert-v2.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb-cert-v2.sym
+45419000     b000     1d5c     ----     proc/boot/linux-guest.initrd/usb-cert-v2=/home/skanda/qnx800/target/qnx/aarch64le/sbin/usb-cert-v2
+45424000    13000     2c60     ----     proc/boot/linux-guest.initrd/devu-umass_client-block.sym=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devu-umass_client-block.sym
+45437000    10000     2c60     ----     proc/boot/linux-guest.initrd/devu-umass_client-block=/home/skanda/qnx800/target/qnx/aarch64le/sbin/devu-umass_client-block
+45447000     1ad2     ----     ----     proc/boot/latch_qemu_virt.qvmconf=./latch_qemu_virt.qvmconf
+45448ad2     176d     ----     ----     proc/boot/linux-guest.Image/unbound-control-setup=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control-setup
+4544a23f     176d     ----     ----     proc/boot/linux-guest.initrd/unbound-control-setup=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control-setup
+4544b9ac      7b4     ----     ----     proc/boot/startup-script=/tmp/mkxfs.ExU2f9
+4544c160      5b9     ----     ----     proc/boot/latch.manifest=./latch.manifest
+4544c71c       44     ----     ----     Image-trailer

@@ -10,7 +10,9 @@
 - **Target Bonus Prize:** Best Use of QNX-specific Technologies ($3,500)
 - **Target Platform:** QNX Software Development Platform (SDP) 8.0 (`procnto-smp-instr`) & QNX Hypervisor 8.0 (AArch64 EL2 VHE host + GICv2 guest support)
 - **Verified Virtual Target:** QEMU AArch64 `virt` (`-M virt,virtualization=on,gic-version=2 -cpu cortex-a76 -smp 4 -m 2048`) hosting a Linux 6.12 ARM64 guest VM
-- **Build Target (not hardware-verified):** Raspberry Pi 4 Model B (`com.qnx.qnx800.bsp.raspberrypi_bcm2711_rpi4`) with PCA9685 12-bit 50 Hz PWM servo controller on `/dev/i2c1` — this profile compiles against the SDP sysroot, but no physical Pi run is claimed in this submission
+- **Build Target (not hardware-verified):** Raspberry Pi 4 Model B with PCA9685 12-bit 50 Hz PWM servo controller on `/dev/i2c1` — verify BSP availability in QNX Software Center; no physical Pi run is claimed.
+
+**Evidence and trust limits:** QEMU uses mock I²C; no physical motion or WCET is demonstrated. The 8/8 attack scorecard is host simulation. The on-target event ring is volatile, with hash chaining performed after export. Manifest sidecars are unkeyed SHA-256 checksums, not digital signatures or proof of provenance.
 - **License:** Open Source under the MIT License (`LICENSE`)
 
 ---
@@ -67,7 +69,7 @@ GOVERNOR acts as a prototype safety supervisor sitting between untrusted AI cont
    - **Medical Syringe Pump (`syringe_governor.manifest`):** Linear drug delivery in integer microlitres, enforcing maximum bolus volume limits and asserting `LATCH_FAULT_DOSE` (`0x8000`) on lethal over-infusion commands.
 
 7. **HOMEOSTAT Outer Loop (Default-Off, Contract-Enabled):**  
-   The 6-rung ladder is the *inner* loop. **HOMEOSTAT** is a second, outer loop that narrows the agent's *speed* when the world around it looks wrong — the software analogue of Watt's flyball governor closing the throttle when the load changes. It is **off unless the signed manifest turns it on**: it is enabled only by an explicit schema-3 `homeostat` section in the signed contract (`qnx/contracts/homeostat_servo.manifest`, SHA-256 `4e65a922…`), and with no such section every HOMEOSTAT function is inert and the supervisor's motion is **identical** to the same run without it. Nothing is hardcoded — every threshold, gain and floor is signed data. Over a fixed epoch the supervisor tracks four Essential Variables (rejection ratio, clamp fraction, latency spread, coherence anomalies); if **any** threshold is crossed the velocity scale **contracts**, and a clean epoch recovers it, floored so the envelope can narrow but never collapse to zero velocity. The scale is applied only as an **additional ceiling** on top of the signed manifest limit, so it is **contracting-only**: it may lower $v_{\max}$ and restore it, never raise it. The arithmetic is bounded, integer-only, with no heap, no floating point and no I/O in the decision path. Proof: `qnx/gov_homeostat_test.c` (unit) and `tools/homeostat_e2e.py` (runtime, against the real supervisor binary over the real wire protocol — contraction, recovery, contracting-only, and default-off proven tick by tick against the baseline run). The live state is visible in `latchctl status`.
+   The 6-rung ladder is the *inner* loop. **HOMEOSTAT** is a second, outer loop that narrows the agent's *speed* when the world around it looks wrong — the software analogue of Watt's flyball governor closing the throttle when the load changes. It is **off unless the checksum-checked manifest turns it on**: it is enabled only by an explicit schema-3 `homeostat` section in the checksum-checked contract (`qnx/contracts/homeostat_servo.manifest`, SHA-256 `4e65a922…`), and with no such section every HOMEOSTAT function is inert and the supervisor's motion is **identical** to the same run without it. Nothing is hardcoded — every threshold, gain and floor is checksum-checked data. Over a fixed epoch the supervisor tracks four Essential Variables (rejection ratio, clamp fraction, latency spread, coherence anomalies); if **any** threshold is crossed the velocity scale **contracts**, and a clean epoch recovers it, floored so the envelope can narrow but never collapse to zero velocity. The scale is applied only as an **additional ceiling** on top of the checksum-checked manifest limit, so it is **contracting-only**: it may lower $v_{\max}$ and restore it, never raise it. The arithmetic is bounded, integer-only, with no heap, no floating point and no I/O in the decision path. Proof: `qnx/gov_homeostat_test.c` (unit) and `tools/homeostat_e2e.py` (runtime, against the real supervisor binary over the real wire protocol — contraction, recovery, contracting-only, and default-off proven tick by tick against the baseline run). The live state is visible in `latchctl status`.
 
 ---
 
@@ -83,8 +85,8 @@ GOVERNOR was built from the ground up to showcase the unique capabilities of **Q
    `latchd` creates a custom microkernel ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). `iofunc_client_info_able()` checks client abilities on every actuator devctl; unauthorized callers (even root) receive `EPERM`. Ingest bridges drop all abilities at startup.
 4. **Sub-Microsecond Cycle Timing (`ClockCycles`):**  
    Every proposal arrival and decision cycle is stamped using `ClockCycles()`, calibrated against `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for nanosecond-level latency telemetry.
-5. **Deterministic Microkernel Pulse Pools (`ChannelCreatePulsePool`):**  
-   Periodic 1.000 ms decision events are delivered via non-blocking microkernel pulses (`_NTO_CHO_CUSTOM_EVENT`), avoiding dynamic allocations or priority inversions.
+5. **Deterministic Microkernel Pulse Channels (`ChannelCreate()` + `timer_create(CLOCK_MONOTONIC)` + `SIGEV_PULSE`):**  
+   Periodic 1.000 ms decision events are delivered via non-blocking microkernel pulses (`_NTO_CHO_CUSTOM_EVENT`, attempting `ChannelCreatePulsePool()` with fallback to documented `ChannelCreate()` at `qnx/latchd.c:3104-3107`), avoiding dynamic allocations or priority inversions.
 6. **QNX Hypervisor 8.0 EL2 VHE Isolation:**  
    The Linux 6.12 guest runs under ARMv8.1-A Virtualization Host Extensions (VHE), isolated in memory and IO. Actuator hardware is completely unmapped from the guest FDT; the guest only sees a virtio-console device.
 7. **Declarative Mandatory Access Control (`secpolcompile` / `secpolpush`):**  
@@ -101,7 +103,7 @@ We evaluated GOVERNOR against a dedicated adversarial attack suite (`latch/tools
 | Attack ID | Attack Scenario | Evaluated Ticks | Probed Vulnerability | Fault Bit Latched | Outcome |
 |:---:|:---|:---:|:---|:---:|:---:|
 | **A1** | **Rogue Unit Injection** | 8 | AI proposes $u=370000$ with unmapped `unit_id=999` | `LATCH_FAULT_UNIT` (`0x1000`) | **PASS** (Demoted to `CLAMP`; 0% keepout breach) |
-| **A2** | **Rate Flood Attack** | 5 | Velocity step burst $\Delta u = 500\text{ mrad}$ to smash keepout | `LATCH_FAULT_RATE` (`0x0080`) | **PASS** (Step clamped to 0; 0% keepout breach) |
+| **A2** | **Rate Flood Attack** | 5 | Velocity step burst $\Delta u = 500\text{ mrad}$ to smash keepout | `LATCH_FAULT_RATE \| LATCH_FAULT_DOSE` (`0x8080`) | **PASS** (Step clamped to 0; 0% keepout breach) |
 | **A3** | **Prompt Injection Attack** | 6 | Scripted injection-like proposal sends $u=450$ into keepout $[250, 650]$ | `LATCH_FAULT_KEEPOUT` (`0x0020`) | **PASS** (Fail-closed drop to `LATCH`/`HOLD`; plant held safe) |
 | **A4** | **Deadman Trip & Recovery** | 79 | AI CPU hangs ($>100\text{ ms}$ silence); sends 150 heartbeats | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Demoted to `ADVISE`; 25 clean cmds restored `HP`) |
 | **A5** | **Coherence Spoof Attack** | 6 | Frozen counter ($\Delta c = 0$) or jump ($\Delta c = 10 > 3$) | `LATCH_FAULT_HEARTBEAT` (`0x2000`) | **PASS** (Lease renewal refused; plant held stationary) |

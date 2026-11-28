@@ -579,9 +579,29 @@ typedef struct latch_governor_status_reply {
  *
  *     bucket = LATCH_LATENCY_EXACT + 3 * (k - 6) + sub
  *     k      = floor(log2(cycles))                 (k >= 6)
- *     sub    = ((cycles >> (k - 2)) & 3) - 4        (0, 1 or 2)
+ *     q      = (cycles >> (k - 2)) & 3             (0..3, the quarter index)
+ *     sub    = min(q, 2)                           (0, 1 or 2)
  *
  * so octave k covers [1.00, 1.25), [1.25, 1.50) and [1.50, 2.00) times 2^k.
+ *
+ * WHY `sub` IS A SATURATION AND NOT A SUBTRACTION.  The scheme has THREE
+ * sub-buckets per octave but the quarter index `q` is TWO bits wide, so it
+ * has FOUR values.  The fourth quarter of an octave -- [1.75, 2.00) -- has
+ * no bucket of its own, because the third sub-bucket is the one that spans
+ * the LAST HALF of the octave, [1.50, 2.00).  So the mapping is
+ * {0,1,2,3} -> {0,1,2,2}: the top quarter collapses into the third
+ * sub-bucket.  Writing that as `q - 2` or `q - 4` in UNSIGNED arithmetic
+ * WRAPS, and a wrapped sub-bucket index puts every sample FOUR buckets
+ * low -- which is exactly the defect this rule exists to prevent.  The
+ * scheme is therefore a SATURATION, and `latch_latency_bucket()` and
+ * `latch_latency_bucket_range()` are ONE scheme expressed twice; the
+ * property that binds them is the round trip
+ *
+ *     latch_latency_bucket_range(latch_latency_bucket(c)).lo <= c < .hi
+ *
+ * which `qnx/latch_latency_test.c` checks over the WHOLE domain and
+ * `tools/consistency_check.py` gates.
+ *
  * A percentile is therefore reported as a RANGE, never as a fabricated
  * point estimate: the reader is told the bucket the sample fell into.
  * `min_cycles` and `max_cycles` are EXACT.
@@ -590,6 +610,27 @@ typedef struct latch_governor_status_reply {
 #define LATCH_LATENCY_EXACT     64u   /* buckets 0..63 are exact cycle counts */
 #define LATCH_LATENCY_BUCKETS  112u   /* 64 exact + 3 per octave up to 2^22    */
 #define LATCH_LATENCY_MODES     8u    /* latch_mode_t has 3; the rest are slack */
+
+/*
+ * The domain the histogram represents, DERIVED from the bucket count
+ * rather than written down: every octave above the exact range carries
+ * three buckets, so the number of octaves is (BUCKETS - EXACT) / 3, and
+ * the top octave's exclusive upper bound is 2^(6 + octaves).
+ *
+ * A cycle count at or above this bound is SATURATED into the last bucket:
+ * the histogram has no room for it, and a sample must never be reported as
+ * belonging to a bucket whose range does not contain it.
+ */
+#define LATCH_LATENCY_OCTAVES \
+    ((LATCH_LATENCY_BUCKETS - LATCH_LATENCY_EXACT) / 3u)
+#define LATCH_LATENCY_DOMAIN_CYCLES (1ULL << (6u + LATCH_LATENCY_OCTAVES))
+
+/* The scheme is three sub-buckets per octave; the bucket count has to say
+ * so, or the two halves of the scheme cannot describe the same table. */
+_Static_assert((LATCH_LATENCY_BUCKETS - LATCH_LATENCY_EXACT) % 3u == 0u,
+               "the latency histogram must carry three sub-buckets per "
+               "octave, or the bucket index and the bucket range describe "
+               "two different tables");
 
 /*
  * The bucket of a latency, in cycles.  Kept here -- and not in the
@@ -602,7 +643,14 @@ static inline unsigned latch_latency_bucket(uint64_t cycles) {
         return (unsigned)cycles;
     }
     unsigned k = 63u - (unsigned)__builtin_clzll(cycles);   /* floor(log2) */
-    unsigned sub = (unsigned)((cycles >> (k - 2u)) & 3u) - 4u;  /* 0..2 */
+    /* The quarter index is TWO bits wide, so it has FOUR values for a
+     * scheme that has THREE sub-buckets per octave: the top quarter of the
+     * octave collapses into the LAST sub-bucket, which spans half an
+     * octave.  So the mapping SATURATES at 2.  It must not be written as a
+     * subtraction: in unsigned arithmetic that wraps and puts every sample
+     * FOUR buckets low. */
+    unsigned q = (unsigned)((cycles >> (k - 2u)) & 3u);    /* 0..3 */
+    unsigned sub = (q >= 2u) ? 2u : q;                     /* 0, 1 or 2 */
     unsigned idx = LATCH_LATENCY_EXACT + 3u * (k - 6u) + sub;
     if (idx >= LATCH_LATENCY_BUCKETS) {
         idx = LATCH_LATENCY_BUCKETS - 1u;

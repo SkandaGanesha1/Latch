@@ -1,0 +1,39 @@
+==============================================================================
+LATCH cross-file consistency gate
+==============================================================================
+$ python3 tools/consistency_check.py
+
+exit status: 1
+
+[CONSISTENCY ERROR] docs/evidence/governor/LATENCY.md: the decision-path p50 is the range [160, 192) cycles, but the EXACT minimum of the same sample set is 223 cycles. A percentile can never be BELOW the minimum -- so the percentile ranges and the exact minimum describe two different measurements. The histogram's bucket index and its bucket range are not one scheme. Re-run `make -C qnx evidence-governor-latency`.
+=== LATCH Architectural Consistency & Invariant Verification ===
+[CONSISTENCY PASS] Default Plant (latch.manifest) sidecar SHA-256 match verified: 1a8e10234f8aabbdfe1ce2d5a8b67459e0c9d0cf386963e9deed8ebd5d27f823
+[CONSISTENCY PASS] Medical Syringe Plant sidecar SHA-256 match verified: a9d877ebf63d5670006593ac8eadc7303b324c52c1d30e29aeacb8b9253e0e5e
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract sidecar SHA-256 match verified: 7378df8166a4a83c6a91cd4fc74f7c434819ee417165710a65bd9e5328e046fd
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract sidecar SHA-256 match verified: a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
+[CONSISTENCY PASS] HOMEOSTAT schema-3 servo contract sidecar SHA-256 match verified: 4e65a92283e30e84898e332db1be9e510e8200f95094d28e6bb999e93dc9ba30
+[CONSISTENCY PASS] guest suite (84 frames, flush granularity 4) fits the manifest ingest.queue_depth (256) and timing.max_backlog_ticks (256) <= ring capacity (256)
+[CONSISTENCY PASS] GOVERNOR guest suite (235 frames) fits its enabled schema-3 queue/backlog contract
+[CONSISTENCY PASS] GOVERNOR A4 delay, recovery, and final silence are consistent with contract lease ticks
+[CONSISTENCY PASS] the scripted GOVERNOR profile lets the console drain for 1700 ms before the session opens (measured plan cost 1660 ms)
+[CONSISTENCY PASS] Enabled GOVERNOR schema-3 servo contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Medical Syringe Governor schema-3 contract is complete and selects wire protocol v2
+[CONSISTENCY PASS] Manifest schema version 2 valid
+[CONSISTENCY PASS] Manifest protocol 'LATH' version 1 verified
+[CONSISTENCY PASS] Manifest envelope bounds [-1000, 1000], home 0, and 1 keepout intervals valid
+[CONSISTENCY PASS] C protocol header constants, devctls & paths aligned
+[CONSISTENCY PASS] qnx/latch_qemu.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] QEMU virt buildfile EL2 flags, vdev DLLs, secpolpush, qvm unconstrained runmask, pipe/slogger2 & guest image/initrd verified
+[CONSISTENCY PASS] qnx/latch_qemu_governor.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd
+[CONSISTENCY PASS] qnx/latch_qemu_infer.build: all 12 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] in-guest inference initramfs size not checked (initramfs not built in this checkout)
+[CONSISTENCY PASS] Experimental in-guest inference profile: same signed contract, read-only asset disk, typed guest launch, heartbeat below the deadman lease
+[CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: all 11 vdev/shared-library payloads exist in the installed SDP aarch64le sysroot
+[CONSISTENCY PASS] C-2b notification-list locking: every resource manager that touches an iofunc notification list (latch_fb_sink.c) reaches it only through the locked wrappers -- the library's trigger walks and unlinks the armed list and its remove walks and frees it with no mutex of its own, so the notify call runs with the list locked, a lock that cannot be taken refuses the operation, and the two lock families are never held together
+[CONSISTENCY PASS] C-2 resource manager locking: every resource manager (latch_fb_sink.c, latch_guestd.c, latchd.c) reaches the iofunc library only through the locked wrappers -- the iofunc call runs with the device's shared attribute locked, a lock that cannot be taken refuses the operation, and the lock is released on the error path too
+[CONSISTENCY PASS] C-1 first reader: the decision is shared, host-tested and atomic -- a probe and a refused open do not consume the first-reader slot, the first GRANTED reader is the first reader, and the decision and the backlog discard are one critical section
+[CONSISTENCY PASS] C-3 publisher lifetime: the mutex and the condvar are process-lifetime objects -- they are initialised exactly once by pthread_once, never destroyed, and the shipped host test proves that a refused publish, a status snapshot and a RESTART all work after a stop
+[CONSISTENCY PASS] NEW-4 hold ordering: the shared decision takes the snapshot BEFORE it writes, both call sites use it, and the shipped host test proves that a refused command changes NOTHING
+[CONSISTENCY PASS] EVHEX hex sizing: no hex buffer carries a literal length, both sizes are derived from the things they render, and the shared renderer REFUSES a buffer that is one byte too small
+[CONSISTENCY PASS] NEW-1 bucket scheme: the shipped header's index and range are ONE scheme -- every cycle count in the derived domain lands in the bucket whose range contains it

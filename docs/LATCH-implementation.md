@@ -46,7 +46,7 @@ LATCH (**Last Authority for Trusted Control Handoff**) is a high-assurance Simpl
 |  +---------------------------------------------------------------------------------+  |
 |  | 1 kHz Pulse-Driven Decision Thread (`latch_decision_thread`)                    |  |
 |  | - Priority 63 (`SCHED_FIFO`), bound to dedicated safety core                     |  |
-|  | - Monotonic 1 ms tick (`CLOCK_MONOTONIC`, `ChannelCreatePulsePool`)             |  |
+|  | - Monotonic 1 ms tick (`CLOCK_MONOTONIC`, `ChannelCreate` / `ChannelCreatePulsePool`)|  |
 |  | - Seqlock Protected State (`latch_seqlock_t`) with `atomic_thread_fence`        |  |
 |  | - Discrete-Time Control Barrier Function (DT-CBF) Enforcer                     |  |
 |  | - NIST FIPS 180-2 SHA-256 Attested Contract Manifest Integration                 |  |
