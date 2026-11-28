@@ -1157,6 +1157,61 @@ cost a boot cycle; read them before changing the transport.
   instruction at all, so the source can read "fence" while the CPU is
   told nothing — and on a two-core guest, that is the whole defect.
 
+- **TWO COMPILERS SPELL THE SAME ASSEMBLY DIFFERENTLY, AND A GATE THAT
+  HAS ONLY EVER SEEN ONE SPELLING HAS ONLY EVER BEEN TESTED AGAINST
+  ONE SPELLING.** Measured on 2026-11-28, while chasing a CI failure
+  for the NEW-6 gate: the gate compiled the shipped header for AArch64
+  and read the `dmb` out of the generated assembly, and it was **green
+  on the workstation and RED on the runner**. The runner image carries
+  clang and NOT `gcc-aarch64-linux-gnu`, so the workstation had
+  exercised the **gcc** route and the runner exercised the **clang**
+  one — and the parser that attributed the assembly to a function
+  recognised only gcc's spelling.
+
+  The two conventions, measured on this tree with the SHIPPED header:
+
+  | | gcc (`aarch64-linux-gnu-gcc`) | clang (`--target=aarch64-linux-gnu`) |
+  |---|---|---|
+  | the function's TYPE directive | `.type NAME, %function` | `.type NAME, @function` |
+  | the function's LABEL | `NAME:` | `NAME: // @NAME` |
+  | the function's SIZE directive | `.size NAME, .-NAME` | `.size NAME, .Lfunc_endN-NAME` |
+
+  Two details are worth writing down because both would bite again:
+
+  - **ON AArch64, GAS's COMMENT CHARACTER IS `%`, NOT `@`** — so gcc
+    writes `%function` there, while clang writes `@function`. A parser
+    that looks for `@function` finds gcc's functions to be untyped.
+  - **CLANG PUTS A COMMENT AFTER THE LABEL.** `NAME: // @NAME` is a
+    label with a trailing comment, not a malformed label, and the
+    comment is part of clang's convention rather than noise.
+
+  The fix is not "accept more spellings until the gate goes green"; it
+  is to make the gate **run EVERY compiler route that is available**
+  rather than the first one that answers, and to parse the function
+  boundaries out of the `.type`/`.size` **directives** — which the two
+  compilers agree on — with the label convention as the fallback. Now
+  every machine that has BOTH compilers proves BOTH conventions on
+  every run, and the runner's single-compiler route is no longer the
+  only spelling anybody ever sees.
+
+  **THE GENERAL RULE: A GATE THAT CONSUMES A TOOL'S OUTPUT IS TESTED
+  AGAINST EVERY SPELLING OF THAT OUTPUT THE TOOL CAN PRODUCE — OR IT IS
+  TESTED AGAINST THE ONE SPELLING THE TESTER HAPPENED TO OWN.** The
+  symptom is always the same: green here, red there, and the diff is
+  one line of formatting. The CI failure was worth a commit of its own
+  precisely because the class is not "one regex was wrong" but "the
+  proof had only ever been run against one of its two inputs".
+
+  **AND THE INSTRUCTION-LEVEL HALF NEEDS A MUTATION OF ITS OWN.** Every
+  other NEW-6 mutation removes or misplaces the fence in the SOURCE, so
+  the source-level half catches them all and the "this accessor compiles
+  to NO `dmb`" branch had no mutation of its own — which would have
+  left it free to be dead code. The mutation that closes the hole puts
+  the fence in a branch the compiler proves unreachable: the source
+  still says "fence", the source-level half still sees a release fence
+  before the store, and the generated assembly has **no `dmb` at all**.
+  Only reading the assembly can catch it.
+
 ### 4d. Facts about the DECISION-LATENCY MEASUREMENT (U-4)
 
 These were measured on the QEMU AArch64 target on 2026-11-27. Each one

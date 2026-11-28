@@ -1682,6 +1682,35 @@ MUTATIONS = [
        "    latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);\n"
        "    g_fb_summary.opens = opens;\n"
        "}")]),
+
+    # The mutation that reaches the INSTRUCTION-level half of the gate.
+    #
+    # Every other NEW-6 mutation is caught by the STRUCTURAL half, because
+    # each of them removes or misplaces the fence in the SOURCE.  That left
+    # the instruction-level branch -- "this accessor compiles to NO `dmb`
+    # instruction" -- with NO mutation of its own, which is a hole in the
+    # proof: the branch could have been dead code and the battery would not
+    # have said so.
+    #
+    # This mutation closes it.  The fence is still THERE, it is still a
+    # RELEASE fence, and it is still BEFORE the publishing store -- so the
+    # source-level half has nothing to complain about -- but it sits in a
+    # branch the COMPILER proves unreachable, so no `dmb` is emitted.  The
+    # source says "fence"; the assembly says nothing; the CPU is told
+    # nothing.  Only reading the GENERATED assembly can catch this, and
+    # that is exactly the claim AGENTS.md §4c makes about the difference
+    # between a claim and the evidence for it.
+    ("NEW-6: the release fence is DEAD CODE (the source still says 'fence' "
+     "and the structural half still sees a release fence before the store, "
+     "but the COMPILER proves the branch unreachable and emits NO `dmb` -- "
+     "so only the instruction-level half can catch this)",
+     "guest/latch_fb_publish.h",
+     [("static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    __atomic_thread_fence(__ATOMIC_RELEASE);",
+       "static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    if (0) { __atomic_thread_fence(__ATOMIC_RELEASE); }")]),
 ]
 
 

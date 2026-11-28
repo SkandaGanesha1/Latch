@@ -3005,28 +3005,83 @@ def _fb_probe_driver(header_text, accessors):
     return "".join(out), None
 
 
+# The assembly function-boundary conventions.  TWO COMPILERS emit this
+# file's AArch64 assembly and they do NOT spell a function's boundary the
+# same way, so the parser below accepts both -- and the gate that uses it
+# FAILS CLOSED when it finds neither.
+#
+#   the DIRECTIVE convention, which the two compilers AGREE on:
+#       .type NAME, %function     gcc, on AArch64: `%` is GAS's comment
+#                                  character there, so the type marker is
+#                                  `%function`, NOT `@function`;
+#       .type NAME, @function     clang;
+#       .size NAME, ...           closes the function (gcc writes
+#                                  `.-NAME`, clang writes
+#                                  `.Lfunc_endN-NAME`).
+#
+#   the LABEL convention, the fallback for a compiler that emits no
+#   `.type` directive:
+#       NAME:                    gcc;
+#       NAME: // @NAME           clang -- the trailing comment is part of
+#                                clang's convention, not noise.
+_ASM_FUNCTION_TYPE_RE = re.compile(
+    r"^\s*\.type\s+([A-Za-z_][A-Za-z0-9_.$]*)\s*,\s*[@%]function\b")
+_ASM_SIZE_RE = re.compile(
+    r"^\s*\.size\s+([A-Za-z_][A-Za-z0-9_.$]*)\s*,")
+_ASM_LABEL_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_.$]*):(?:\s*(?:@|//|#).*)?$")
+
+
 def _asm_function_bodies(asm):
-    """Split generated assembly into {function name: body lines}."""
+    """Split generated assembly into {function name: body lines}.
+
+    MEASURED on this tree (2026-11-28): the FIRST version of this parser
+    recognised only gcc's `NAME:` form, so on the CI runner -- which
+    carries clang and NOT `gcc-aarch64-linux-gnu` -- it attributed no body
+    to any probe, and the guest's memory-barrier gate failed with "the
+    AArch64 build of guest/latch_fb_publish.h produced no
+    latch_probe_...()".  The tree was green on the workstation and red on
+    the runner, and the difference was ONE line of assembly spelling.
+
+    The lesson is the same one the evidence index follows: **a gate that
+    has only ever seen ONE spelling of its input is a gate that has only
+    ever been tested against one spelling.** So the parser accepts both
+    conventions, and the gate that uses it runs EVERY available compiler
+    route rather than the first one that answers -- which means the
+    second convention is exercised on every machine that has both
+    compilers, not only on the runner that happens to have one.
+    """
     out = {}
     cur = None
     body = []
+
+    def _flush():
+        if cur is not None:
+            out[cur] = body
+
     for line in asm.splitlines():
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_.$]*):\s*(?:@.*)?$", line)
+        m = _ASM_FUNCTION_TYPE_RE.match(line)
         if m:
-            if cur:
-                out[cur] = body
+            _flush()
             cur = m.group(1)
             body = []
             continue
-        if cur is not None:
-            if re.match(r"^\s*\.size\s+%s\b" % re.escape(cur), line):
-                out[cur] = body
+        m = _ASM_SIZE_RE.match(line)
+        if m:
+            if cur == m.group(1):
+                _flush()
                 cur = None
                 body = []
+            continue
+        if cur is None:
+            m = _ASM_LABEL_RE.match(line)
+            if m:
+                cur = m.group(1)
+                body = []
                 continue
+        if cur is not None:
             body.append(line)
-    if cur:
-        out[cur] = body
+    _flush()
     return out
 
 
@@ -3038,6 +3093,35 @@ def _asm_dmb_domains(lines):
         if m:
             doms.add(m.group(1))
     return doms
+
+
+def _asm_bodies_for(bodies, probe, accessor):
+    """The assembly that can hold ONE accessor's instructions.
+
+    The probe is generated to CALL the accessor, and at -O2 the accessor
+    is INLINED into it -- so the `dmb` is in the PROBE's body.  A
+    compiler is free not to inline, though, and then the accessor is
+    emitted as a function of its own and the `dmb` is THERE.
+
+    Both are correct: a call is itself a barrier for the caller's
+    memory, so a fence inside a non-inlined accessor still orders the
+    accesses it surrounds.  So the proof accepts EITHER, and does not
+    depend on an inlining decision the gate does not control.
+
+    The accessor's own body is matched by NAME, and only on a `.`
+    boundary, so gcc's `NAME.isra.0` and clang's `NAME.constprop.0`
+    are found and `NAME_something_else` is not.
+    """
+    out = []
+    lines = bodies.get(probe)
+    if lines is not None:
+        out.extend(lines)
+    for name, blines in bodies.items():
+        if name == probe:
+            continue
+        if name == accessor or name.startswith(accessor + "."):
+            out.extend(blines)
+    return out
 
 
 def verify_guest_publish_barrier():
@@ -3397,15 +3481,13 @@ def verify_guest_publish_barrier():
     header_text = io.open(header_path, encoding="utf-8").read()
     tmp = tempfile.mkdtemp(prefix="latch_fb_barrier_")
     try:
-        asm = None
-        used_route = None
-        last_err = ""
+        proved = []
         for argv, label in routes:
             src_path = os.path.join(tmp, "probe.c")
             driver, sig_err = _fb_probe_driver(header_text, accessors)
             if driver is None:
-                last_err = sig_err
-                continue
+                fail("the shipped guest/latch_fb_publish.h could not be "
+                     "probed: %s" % sig_err)
             with io.open(src_path, "w", encoding="utf-8") as f:
                 f.write(driver)
             comp = subprocess.run(
@@ -3413,45 +3495,50 @@ def verify_guest_publish_barrier():
                         "-o", os.path.join(tmp, "probe.s")],
                 capture_output=True, text=True, timeout=180)
             if comp.returncode != 0:
-                last_err = (comp.stderr.strip() or comp.stdout.strip()
-                            or "exit status %d" % comp.returncode)
-                continue
+                fail("the shipped guest/latch_fb_publish.h does not compile "
+                     "for AArch64 with %s: %s. The header is freestanding C, "
+                     "so this is a broken toolchain rather than a missing "
+                     "sysroot -- and a skipped check is a failure, not a "
+                     "warning." % (label, comp.stderr.strip()
+                                   or comp.stdout.strip()
+                                   or "exit status %d" % comp.returncode))
             with io.open(os.path.join(tmp, "probe.s"), encoding="utf-8",
                          errors="replace") as f:
                 asm = f.read()
-            used_route = label
-            break
-        if asm is None:
-            fail("the shipped guest/latch_fb_publish.h does not compile for "
-                 "AArch64: %s" % last_err)
 
-        bodies = _asm_function_bodies(asm)
-        for nm in sorted(accessors):
-            probe = "latch_probe_%s" % nm
-            lines = bodies.get(probe)
-            if lines is None:
-                fail("the AArch64 build of guest/latch_fb_publish.h produced "
-                     "no %s(), so the instruction-level proof of %s() could "
-                     "not be made." % (probe, nm))
-            doms = _asm_dmb_domains(lines)
-            if not doms:
-                fail("guest/latch_fb_publish.h: %s() compiles to NO `dmb` "
-                     "instruction on AArch64 (%s). A compiler barrier "
-                     "generates no instruction at all, so the source can "
-                     "say 'fence' while the CPU is told nothing -- and the "
-                     "guest has two cores." % (nm, used_route))
-            body = accessors[nm]
-            publishes = "__atomic_store_n" in body
-            consumes = "__atomic_load_n" in body
-            wanted = {"ishst", "ish"} if publishes else {"ishld", "ish"}
-            if not (doms & wanted):
-                fail("guest/latch_fb_publish.h: %s() compiles to `dmb %s` on "
-                     "AArch64 (%s), and a %s accessor needs one of %s. The "
-                     "wrong domain orders the wrong direction: `ishld` "
-                     "orders LOADS, and `ishst` orders STORES."
-                     % (nm, ", ".join(sorted(doms)), used_route,
-                        "publishing" if publishes else "consuming",
-                        ", ".join(sorted(wanted))))
+            bodies = _asm_function_bodies(asm)
+            for nm in sorted(accessors):
+                probe = "latch_probe_%s" % nm
+                if probe not in bodies:
+                    fail("the AArch64 build of guest/latch_fb_publish.h (%s) "
+                         "produced no %s(), so the instruction-level proof of "
+                         "%s() could not be made. The assembly's function "
+                         "bodies were: %s."
+                         % (label, probe, nm,
+                            ", ".join(sorted(bodies)) or "none"))
+                lines = _asm_bodies_for(bodies, probe, nm)
+                doms = _asm_dmb_domains(lines)
+                if not doms:
+                    fail("guest/latch_fb_publish.h: %s() compiles to NO `dmb` "
+                         "instruction on AArch64 (%s). A compiler barrier "
+                         "generates no instruction at all -- and neither does "
+                         "a fence the compiler can prove is dead -- so the "
+                         "source can say 'fence' while the CPU is told "
+                         "nothing -- and the guest has two cores."
+                         % (nm, label))
+                body = accessors[nm]
+                publishes = "__atomic_store_n" in body
+                consumes = "__atomic_load_n" in body
+                wanted = {"ishst", "ish"} if publishes else {"ishld", "ish"}
+                if not (doms & wanted):
+                    fail("guest/latch_fb_publish.h: %s() compiles to `dmb %s` "
+                         "on AArch64 (%s), and a %s accessor needs one of %s. "
+                         "The wrong domain orders the wrong direction: "
+                         "`ishld` orders LOADS, and `ishst` orders STORES."
+                         % (nm, ", ".join(sorted(doms)), label,
+                            "publishing" if publishes else "consuming",
+                            ", ".join(sorted(wanted))))
+            proved.append(label)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -3466,7 +3553,7 @@ def verify_guest_publish_barrier():
                "accessor compiles to a real `dmb` on AArch64 (%s)"
                % (len(scalars), ", ".join(scalars) or "none",
                   len(aggregates), ", ".join(aggregates) or "none",
-                  used_route))
+                  ", ".join(proved)))
 
 
 def verify_first_reader_decision():
