@@ -550,6 +550,20 @@ def _c_inline_func_body(src: str, name: str):
     return None
 
 
+def _join_continuations(text):
+    """Join C's backslash-continued lines, so a multi-line macro is one line.
+
+    A macro body that is wrapped over two lines is still ONE macro, and a
+    gate that reads only the first physical line would see half of it --
+    which is how a derivation check ends up reading a backslash.
+
+    This helper is SHARED: more than one gate derives a value out of a
+    macro body, and a helper that lived inside one gate's section would
+    disappear with it.
+    """
+    return re.sub(r"\\\r?\n\s*", " ", text)
+
+
 def verify_rm_attr_locking():
     """Every resource manager reaches the iofunc library under the lock.
 
@@ -1826,6 +1840,248 @@ def verify_force_hold_ordering():
                    "snapshot BEFORE it writes, both call sites use it, and "
                    "the shipped host test proves that a refused command "
                    "changes NOTHING")
+
+
+# ---------------------------------------------------------------------------
+# THE HEX RENDERING'S SIZING AND BOUNDS CHECK (EVHEX)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS A LITERAL BUFFER SIZE THAT WAS RIGHT BY COINCIDENCE.
+#
+# Two translation units render bytes as lowercase hex: `latchctl` (which
+# prints the governor event ring as JSON) and `latchd` (which writes the
+# same JSON into the evidence archive).  Both used to declare their output
+# buffer with a LITERAL length:
+#
+#     char ev_hex[125];      /* 62 bytes of event -> 124 hex chars + NUL */
+#     char sha_hex[65];      /* 32 bytes of digest -> 64 hex chars + NUL */
+#
+# The literals were RIGHT, and that is exactly the problem: the buffer's
+# size is a fact about the EVENT STRUCT and about the DIGEST LENGTH, and it
+# had been written down a third time.  Add a field to
+# `latch_gov_event_t`, update its `_Static_assert` -- a natural thing to
+# do, because the assert says "must be 62 bytes" -- and `ev_hex[125]` is
+# one field too small.  The rendering then writes `2 * 64 + 1 = 129` bytes
+# into a 125-byte stack buffer.
+#
+# Two things fix that, and both are needed:
+#
+#   1. the buffer's size is DERIVED, so it cannot drift away from the
+#      thing it renders; and
+#   2. the renderer CHECKS ITS OWN CAPACITY, so a caller that gets the
+#      size wrong gets a REFUSAL instead of a stack overflow.
+#
+# The first is a derivation and the second is a PROPERTY, so the gate
+# checks the first structurally and the second by COMPILING AND RUNNING
+# the shipped host test -- the same shape as the NEW-1 and NEW-4 gates.
+#
+# The gate also checks that the UNSAFE LOCAL RENDERER is gone: `latchctl`
+# used to carry its own `bytes_to_hex()`, which trusted its caller
+# completely.  Two renderers, one of them unchecked, is the shape that let
+# the coincidence survive.
+
+
+def verify_event_hex_sizing():
+    """The hex buffers are DERIVED, and the renderer BOUNDS-CHECKS."""
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hex_h_path = os.path.join(qnx_dir, "latch_hex.h")
+    proto_path = os.path.join(qnx_dir, "latch_protocol.h")
+    ctl_path = os.path.join(qnx_dir, "latchctl.c")
+    d_path = os.path.join(qnx_dir, "latchd.c")
+    test_path = os.path.join(qnx_dir, "latch_hex_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hex_h_path, proto_path, ctl_path, d_path, test_path,
+              makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hex_h_path, encoding="utf-8", errors="replace") as f:
+        hex_h = f.read()
+    with io.open(proto_path, encoding="utf-8", errors="replace") as f:
+        proto = f.read()
+    with io.open(ctl_path, encoding="utf-8", errors="replace") as f:
+        ctl = f.read()
+    with io.open(d_path, encoding="utf-8", errors="replace") as f:
+        latchd = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hex_h_code = strip_c_comments(hex_h)
+    proto_code = strip_c_comments(proto)
+    ctl_code = strip_c_comments(ctl)
+    latchd_code = strip_c_comments(latchd)
+
+    # --- 1. NO HEX BUFFER CARRIES A LITERAL LENGTH -----------------------
+    #
+    # A buffer whose size is written down is a buffer that goes stale the
+    # moment the thing it renders changes.  The scan is over the two
+    # rendering call sites, because that is where the buffers live.
+    literal_hex_buf = re.compile(
+        r"\b(?:char|u8|uint8_t|unsigned\s+char)\s+"
+        r"[A-Za-z_][A-Za-z0-9_]*hex[A-Za-z0-9_]*\s*\[\s*\d+\s*\]",
+        re.I)
+    for label, src in (("qnx/latchctl.c", ctl_code),
+                       ("qnx/latchd.c", latchd_code)):
+        for m in literal_hex_buf.finditer(src):
+            fail("%s declares a hex buffer with a LITERAL length (%r). The "
+                 "buffer's size is a fact about the thing it renders -- the "
+                 "event struct, or the digest length -- and it has to be "
+                 "DERIVED from it, so that changing the event cannot leave "
+                 "the buffer one field too small." % (label, m.group(0)))
+
+    # --- 2. THE TWO SIZES ARE DERIVED ------------------------------------
+    #
+    # The event's size is `sizeof(latch_gov_event_t)`, and the digest's is
+    # the byte count -- so each number appears ONCE and the hex size is
+    # computed from it.
+    m_ev = re.search(r"#define\s+LATCH_GOV_EVENT_HEX_CHARS\s+(.*)",
+                     _join_continuations(proto_code))
+    if not m_ev:
+        fail("qnx/latch_protocol.h must define LATCH_GOV_EVENT_HEX_CHARS: "
+             "the governor event's hex buffer size is DERIVED from the "
+             "event itself, so it cannot drift away from it.")
+    elif "sizeof" not in m_ev.group(1) or "latch_gov_event_t" not in m_ev.group(1):
+        fail("qnx/latch_protocol.h: LATCH_GOV_EVENT_HEX_CHARS must be "
+             "DERIVED from sizeof(latch_gov_event_t) (%r). A written-down "
+             "size is right only until the struct grows, and the struct "
+             "grows."
+             % m_ev.group(1).strip())
+
+    m_sha = re.search(r"#define\s+LATCH_SHA256_HEX_CHARS\s+(.*)",
+                      _join_continuations(proto_code))
+    if not m_sha:
+        fail("qnx/latch_protocol.h must define LATCH_SHA256_HEX_CHARS: the "
+             "digest's hex buffer size is DERIVED from the digest's byte "
+             "count, so the two cannot disagree.")
+    elif "LATCH_SHA256_BYTES" not in m_sha.group(1):
+        fail("qnx/latch_protocol.h: LATCH_SHA256_HEX_CHARS must be DERIVED "
+             "from LATCH_SHA256_BYTES (%r). The digest's byte count has to "
+             "be written down ONCE and used twice." % m_sha.group(1).strip())
+
+    # The digest's byte count has to be written down ONCE: the array that
+    # holds it and the hex size that renders it must agree by
+    # construction.
+    if not re.search(r"uint8_t\s+manifest_sha256\s*\[\s*LATCH_SHA256_BYTES\s*\]",
+                     proto_code):
+        fail("qnx/latch_protocol.h: the manifest digest array must be sized "
+             "by LATCH_SHA256_BYTES, so the digest's byte count is written "
+             "down ONCE and the hex size is computed from it.")
+
+    # --- 3. THE RENDERER BOUNDS-CHECKS ITS OWN CAPACITY ------------------
+    #
+    # The derivation keeps the CURRENT call sites right.  The capacity
+    # check is what makes the renderer SAFE for a caller that gets the
+    # size wrong -- and "a caller that gets the size wrong" is exactly
+    # the defect this gate exists to prevent coming back.
+    body = _c_inline_func_body(hex_h_code, "latch_bytes_to_hex")
+    if not body:
+        fail("qnx/latch_hex.h does not define latch_bytes_to_hex(): the hex "
+             "rendering has to be ONE shared, bounds-checked renderer, or "
+             "every caller carries its own unchecked copy.")
+    else:
+        if "out_cap" not in body:
+            fail("qnx/latch_hex.h: latch_bytes_to_hex() must take the "
+                 "output buffer's CAPACITY. A renderer that trusts its "
+                 "caller is a stack overflow waiting for the day the "
+                 "caller's struct grows.")
+        else:
+            m_false = body.find("return false")
+            m_write = re.search(r"out\s*\[", body)
+            if m_false < 0:
+                fail("qnx/latch_hex.h: latch_bytes_to_hex() must REFUSE a "
+                     "buffer that is too small, not merely accept the one "
+                     "that is big enough.")
+            elif not m_write:
+                fail("qnx/latch_hex.h: latch_bytes_to_hex() does not write "
+                     "the output buffer, so it is not the renderer.")
+            elif m_false > m_write.start():
+                fail("qnx/latch_hex.h: latch_bytes_to_hex() writes the "
+                     "output buffer BEFORE it has checked the capacity, so "
+                     "a buffer that is too small is overflowed rather than "
+                     "refused.")
+
+    # --- 4. THE UNSAFE LOCAL RENDERER IS GONE ---------------------------
+    #
+    # `latchctl` used to carry its own `bytes_to_hex()`, which trusted its
+    # caller completely.  Two renderers, one of them unchecked, is the
+    # shape that let the coincidence survive.
+    for label, src in (("qnx/latchctl.c", ctl_code),
+                       ("qnx/latchd.c", latchd_code)):
+        if re.search(r"(?m)^\s*(?:static\s+)?void\s+bytes_to_hex\s*\(",
+                     src):
+            fail("%s carries its own `bytes_to_hex()`. The hex rendering "
+                 "must be ONE shared, bounds-checked renderer -- the "
+                 "unchecked local copy is what let the literal buffer size "
+                 "survive." % label)
+
+    # --- 5. BOTH CALL SITES USE THE SHARED RENDERER ----------------------
+    for label, src in (("qnx/latchctl.c", ctl_code),
+                       ("qnx/latchd.c", latchd_code)):
+        if "latch_bytes_to_hex(" not in src:
+            fail("%s does not call the shared latch_bytes_to_hex(), so it "
+                 "is rendering hex with something else." % label)
+
+    # --- 6. THE HOST TEST IS PART OF THE REGRESSION SUITE ----------------
+    if "latch-hex-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-hex-check` target: the hex "
+             "rendering's bounds check has no proof at all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-hex-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-hex-check, or the hex rendering's bounds check is not "
+             "part of the regression suite.")
+
+    # --- 7. THE SHIPPED HEADER COMPILES AND REFUSES ---------------------
+    #
+    # The capacity check is a PROPERTY, not a derivation, so it has to be
+    # EXECUTED: a gate that reads the source can only check the shape.
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("EVHEX hex sizing: no hex buffer carries a literal "
+                   "length, both sizes are derived, the shared renderer "
+                   "bounds-checks its capacity, and the host test is in the "
+                   "regression suite (the COMPILED proof was skipped -- no "
+                   "C compiler on PATH, so only the structural half of the "
+                   "gate ran)")
+    else:
+        tmp = tempfile.mkdtemp(prefix="latch_hex_")
+        try:
+            test_bin = os.path.join(tmp, "latch_hex_test")
+            comp = subprocess.run(
+                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
+                 "-I", qnx_dir, test_path, "-o", test_bin,
+                 "-lpthread", "-lrt", "-lm"],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                fail("the shipped qnx/latch_hex.h does not compile against "
+                     "its own host test: %s. The hex rendering's bounds "
+                     "check has to be reachable from a HOST test, or the "
+                     "property it encodes cannot be proved off-target."
+                     % (comp.stderr.strip() or comp.stdout.strip()))
+            else:
+                run = subprocess.run([test_bin], capture_output=True, text=True,
+                                     timeout=120)
+                if run.returncode != 0:
+                    detail = (run.stdout.strip() or run.stderr.strip() or
+                              "exit status %d" % run.returncode)
+                    fail("the hex rendering does NOT refuse a buffer that "
+                         "is too small: %s. A renderer that trusts its "
+                         "caller overflows the caller's stack buffer the "
+                         "day the caller's struct grows." % detail)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        pass_check("EVHEX hex sizing: no hex buffer carries a literal "
+                   "length, both sizes are derived from the things they "
+                   "render, and the shared renderer REFUSES a buffer that "
+                   "is one byte too small")
 
 
 def verify_first_reader_decision():
@@ -5478,6 +5734,15 @@ def main():
     # had failed -- a fail-open on the error path, in two copies.  See
     # `verify_force_hold_ordering()`.
     verify_force_hold_ordering()
+
+    # --- THE HEX RENDERING'S SIZING AND BOUNDS CHECK (EVHEX) -----------
+    #
+    # A hex buffer whose size is written down is right only until the
+    # thing it renders changes -- and the event struct changed, silently,
+    # while the buffer stayed 125 bytes.  The sizes are now derived, and
+    # the shared renderer refuses a buffer that is too small instead of
+    # overflowing it.  See `verify_event_hex_sizing()`.
+    verify_event_hex_sizing()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #

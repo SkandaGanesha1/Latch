@@ -28,6 +28,7 @@
 
 #include "latch_protocol.h"
 #include "latch_manifest.h"
+#include "latch_hex.h"
 
 static const char *mode_name(uint16_t m) {
     switch (m) {
@@ -224,11 +225,13 @@ static int do_status(int fd) {
                gov.coherence_valid ? "valid" : "unset", gov.coherence_ctr);
     }
 
-    char sha_hex[65];
-    for (int i = 0; i < 32; ++i) {
-        snprintf(&sha_hex[i * 2], 3, "%02x", rep.manifest_sha256[i]);
+    char sha_hex[LATCH_SHA256_HEX_CHARS];
+    if (!latch_bytes_to_hex(rep.manifest_sha256, sizeof(rep.manifest_sha256),
+                            sha_hex, sizeof(sha_hex))) {
+        fprintf(stderr, "latchctl: the manifest digest's hex rendering does "
+                        "not fit its buffer\n");
+        return 1;
     }
-    sha_hex[64] = '\0';
     printf("Manifest SHA-256     : %s\n", sha_hex);
 
     return 0;
@@ -730,13 +733,6 @@ static int do_dump(int fd, const char *out_csv) {    latch_tape_dump_t dump;    
     return 0;
 }
 
-static void bytes_to_hex(const uint8_t *bytes, size_t len, char *hex_out) {
-    for (size_t i = 0; i < len; ++i) {
-        sprintf(&hex_out[i * 2], "%02x", bytes[i]);
-    }
-    hex_out[len * 2] = '\0';
-}
-
 static const char *rung_str(uint8_t r) {
     switch (r) {
         case 0: return "HP";
@@ -811,8 +807,13 @@ static int do_events(int fd, int argc, char *argv[]) {
         return (rc == EPERM) ? 2 : 1;
     }
 
-    char sha_hex[65];
-    bytes_to_hex(dump.manifest_sha256, 32, sha_hex);
+    char sha_hex[LATCH_SHA256_HEX_CHARS];
+    if (!latch_bytes_to_hex(dump.manifest_sha256, sizeof(dump.manifest_sha256),
+                            sha_hex, sizeof(sha_hex))) {
+        fprintf(stderr, "latchctl: the manifest digest's hex rendering does "
+                        "not fit its buffer\n");
+        return 1;
+    }
 
     if (json_out) {
         printf("{\n");
@@ -828,8 +829,17 @@ static int do_events(int fd, int argc, char *argv[]) {
             const latch_gov_event_t *e = &dump.entries[i];
             char fault_str[160];
             format_fault_bits(e->fault_bits, fault_str, sizeof(fault_str));
-            char ev_hex[125];
-            bytes_to_hex((const uint8_t *)e, sizeof(*e), ev_hex);
+            /* The buffer is sized from the EVENT, and the renderer checks
+             * its own capacity: a hex buffer that is one field too small is
+             * a stack overflow, and the event's size is not a number
+             * anybody should write down a third time. */
+            char ev_hex[LATCH_GOV_EVENT_HEX_CHARS];
+            if (!latch_bytes_to_hex((const uint8_t *)e, sizeof(*e),
+                                    ev_hex, sizeof(ev_hex))) {
+                fprintf(stderr, "latchctl: the governor event's hex "
+                                "rendering does not fit its buffer\n");
+                return 1;
+            }
 
             printf("    {\n");
             printf("      \"event_index\": %" PRIu64 ",\n", e->event_index);

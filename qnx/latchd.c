@@ -67,6 +67,7 @@
 #include "latch_manifest.h"
 #include "latch_ipc.h"
 #include "latch_hold.h"
+#include "latch_hex.h"
 #include "governor_policy.h"
 #include "gov_gate_precheck.h"
 #include "gov_homeostat.h"
@@ -3630,9 +3631,13 @@ static int latch_export_events_json(const char *json_path) {
     dump.count = LATCH_GOV_EVENT_DUMP_MAX;
     (void)latch_fill_governor_event_dump(&dump);
 
-    char sha_hex[65];
-    for (int i = 0; i < 32; ++i) snprintf(&sha_hex[i * 2], 3, "%02x", dump.manifest_sha256[i]);
-    sha_hex[64] = '\0';
+    char sha_hex[LATCH_SHA256_HEX_CHARS];
+    if (!latch_bytes_to_hex(dump.manifest_sha256, sizeof(dump.manifest_sha256),
+                            sha_hex, sizeof(sha_hex))) {
+        fprintf(stderr, "latchd: the manifest digest's hex rendering does "
+                        "not fit its buffer\n");
+        return 1;
+    }
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"start_index\": %" PRIu64 ",\n", dump.start_index);
@@ -3645,9 +3650,18 @@ static int latch_export_events_json(const char *json_path) {
     fprintf(fp, "  \"events\": [\n");
     for (uint32_t i = 0; i < dump.count; ++i) {
         const latch_gov_event_t *e = &dump.entries[i];
-        char ev_hex[125];
-        for (size_t b = 0; b < sizeof(*e); ++b) snprintf(&ev_hex[b * 2], 3, "%02x", ((const uint8_t *)e)[b]);
-        ev_hex[124] = '\0';
+        /* The buffer is sized from the EVENT, and the renderer checks its
+         * own capacity: a hex buffer that is one field too small is a
+         * stack overflow, and the event's size is not a number anybody
+         * should write down a third time. */
+        char ev_hex[LATCH_GOV_EVENT_HEX_CHARS];
+        if (!latch_bytes_to_hex((const uint8_t *)e, sizeof(*e),
+                                ev_hex, sizeof(ev_hex))) {
+            fprintf(stderr, "latchd: the governor event's hex rendering "
+                            "does not fit its buffer\n");
+            fclose(fp);
+            return 1;
+        }
         fprintf(fp, "    {\n");
         fprintf(fp, "      \"event_index\": %" PRIu64 ",\n", e->event_index);
         fprintf(fp, "      \"tick\": %" PRIu64 ",\n", e->tick);

@@ -717,6 +717,30 @@ typedef struct __attribute__((packed)) latch_gov_event {
 _Static_assert(sizeof(latch_gov_event_t) == 62u,
                "latch_gov_event_t must be 62 bytes packed");
 
+/*
+ * THE HEX BUFFER SIZES, DERIVED.
+ *
+ * A hex rendering needs two characters per byte plus the terminator, and
+ * the number of bytes is a fact about the EVENT and about the DIGEST --
+ * not a number anybody should write down a third time.  These constants
+ * exist so that a change to `latch_gov_event_t` cannot leave a buffer that
+ * is one field too small: the old code declared `char ev_hex[125]` and
+ * `char sha_hex[65]`, which were right BY COINCIDENCE.
+ */
+#define LATCH_GOV_EVENT_HEX_CHARS (sizeof(latch_gov_event_t) * 2u + 1u)
+#define LATCH_SHA256_BYTES         32u
+#define LATCH_SHA256_HEX_CHARS    (LATCH_SHA256_BYTES * 2u + 1u)
+
+/* A SHA-256 digest is 32 bytes BY DEFINITION (FIPS 180-4).  The fact is
+ * stated once, here; the hex size is DERIVED from it, so the number 65 --
+ * the old `char sha_hex[65]` -- is never written down anywhere.
+ *
+ * The event's own size needs no such assert: the `_Static_assert` above
+ * already pins `latch_gov_event_t` at 62 bytes, and the hex size follows
+ * from `sizeof`. */
+_Static_assert(LATCH_SHA256_BYTES == 32u,
+               "a SHA-256 digest is 32 bytes (FIPS 180-4)");
+
 typedef struct latch_gov_event_dump {
     uint64_t start_index;
     uint64_t latest_index;
@@ -724,7 +748,7 @@ typedef struct latch_gov_event_dump {
     uint32_t dropped;
     uint32_t overflow;
     uint32_t record_version;
-    uint8_t manifest_sha256[32];
+    uint8_t manifest_sha256[LATCH_SHA256_BYTES];
     latch_gov_event_t entries[LATCH_GOV_EVENT_DUMP_MAX];
 } latch_gov_event_dump_t;
 

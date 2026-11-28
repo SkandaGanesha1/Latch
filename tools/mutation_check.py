@@ -1398,6 +1398,67 @@ MUTATIONS = [
      "operator-hold command's order of operations would have no proof)",
      "qnx/Makefile",
      [("\t$(MAKE) --no-print-directory latch-hold-check\n", "")]),
+
+    # ------------------------------------------------------------------------
+    # EVHEX: THE HEX RENDERING'S SIZING AND BOUNDS CHECK
+    # ------------------------------------------------------------------------
+    #
+    # `latchctl` (which prints the governor event ring as JSON) and `latchd`
+    # (which writes the same JSON into the evidence archive) both render
+    # bytes as hex, and both used to declare their output buffer with a
+    # LITERAL length -- `char ev_hex[125]` and `char sha_hex[65]`.
+    #
+    # The literals were RIGHT, and that was the problem: the buffer's size
+    # is a fact about the event struct and about the digest length, and it
+    # had been written down a third time.  Add a field to
+    # `latch_gov_event_t`, update its `_Static_assert`, and the buffer is
+    # one field too small -- a stack overflow.
+    #
+    # The fix is two-fold: the sizes are DERIVED, and the renderer CHECKS
+    # ITS OWN CAPACITY.  These mutations attack each half, plus the
+    # unchecked local renderer that let the coincidence survive.
+
+    ("EVHEX: the hex buffer goes back to a LITERAL length (the size is a "
+     "fact about the event struct, and a written-down size is right only "
+     "until the struct grows -- then the rendering overflows the buffer)",
+     "qnx/latchctl.c",
+     [("            char ev_hex[LATCH_GOV_EVENT_HEX_CHARS];",
+       "            char ev_hex[125];")]),
+
+    ("EVHEX: the derived event hex size is written down instead (a literal "
+     "stops describing the struct the moment the struct changes)",
+     "qnx/latch_protocol.h",
+     [("#define LATCH_GOV_EVENT_HEX_CHARS (sizeof(latch_gov_event_t) * 2u + 1u)",
+       "#define LATCH_GOV_EVENT_HEX_CHARS 125u")]),
+
+    ("EVHEX: the shared renderer STOPS checking its capacity (a caller that "
+     "gets the size wrong then overflows the stack buffer instead of "
+     "getting a refusal)",
+     "qnx/latch_hex.h",
+     [("    /* The overflow-safe form of `len * 2 + 1 > out_cap`. */\n"
+       "    if (len > (out_cap - 1u) / 2u) {\n"
+       "        return false;\n"
+       "    }",
+       "    /* The capacity check is gone. */")]),
+
+    ("EVHEX: `latchctl` grows its own UNCHECKED hex renderer again (two "
+     "renderers, one of them unchecked, is the shape that let the literal "
+     "buffer size survive)",
+     "qnx/latchctl.c",
+     [("static const char *rung_str(uint8_t r) {",
+       "static void bytes_to_hex(const uint8_t *bytes, size_t len, char *hex_out) {\n"
+       "    for (size_t i = 0; i < len; ++i) {\n"
+       "        sprintf(&hex_out[i * 2], \"%02x\", bytes[i]);\n"
+       "    }\n"
+       "    hex_out[len * 2] = '\\0';\n"
+       "}\n"
+       "\n"
+       "static const char *rung_str(uint8_t r) {")]),
+
+    ("EVHEX: the host test is dropped from the regression suite (the "
+     "renderer's refusal of a too-small buffer would have no proof)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-hex-check\n", "")]),
 ]
 
 
