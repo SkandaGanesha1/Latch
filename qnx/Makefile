@@ -1020,7 +1020,7 @@ EVIDENCE_TOOL := ../tools/capture_evidence.py
 EVIDENCE_OUT  := ../docs/evidence
 
 # Everything except the QEMU boot (~20 s).
-evidence:
+evidence: check
 	python3 $(EVIDENCE_TOOL) --all
 
 # The workstation pipeline only (~5 s). No QNX licence, no QEMU.

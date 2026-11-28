@@ -101,7 +101,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2094 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (8546 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)
@@ -112,6 +112,7 @@ exit status: 0
 [CONSISTENCY PASS] Every count the demo script states matches the code (attack suite and replay sub-tests)
 [CONSISTENCY PASS] The demo narration fits the submission's hard limit: 359 words = 166 s at 130 wpm, inside the 180 s cap (storyboard 155 s)
 [CONSISTENCY PASS] Evidence archive complete and self-consistent; exactly one canonical on-target family, the derived numbers agree with the session they name, and nothing in the archive is git-ignored
+[CONSISTENCY PASS] The evidence capture declares the build it needs: `make -C qnx evidence` depends on `check` (which depends on `host-sim`), and the Makefile can build every binary the capture runs (build/host-sim/gov_homeostat_test, build/host-sim/latch-ingest, build/host-sim/latch_feedback_test, build/host-sim/latch_manifest_test, build/host-sim/latchctl, build/host-sim/latchd, build/host-sim/suite_tape.csv)
 [CONSISTENCY PASS] Every document states the LFBK verdict frame's size as the 28 bytes the header defines
 [CONSISTENCY PASS] HOMEOSTAT is visible in the README, the Devpost submission and the video script, and each says it is off unless the signed contract enables it
 [CONSISTENCY PASS] There is exactly ONE canonical video storyboard (DEMO_VIDEO_SCRIPT.md); every other video document is a SUPERSEDED banner naming it

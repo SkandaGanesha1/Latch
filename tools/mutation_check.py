@@ -1801,6 +1801,22 @@ MUTATIONS = [
        "        return LATCH_GUESTCTL_DENY_NO_ABILITY;\n"
        "    }\n",
        "    (void)has_ability;\n")]),
+
+    # ------------------------------------------------------------------------
+    # THE EVIDENCE CAPTURE'S BUILD PREREQUISITE
+    # ------------------------------------------------------------------------
+    #
+    # `make -C qnx evidence` is a documented command, and the target did not
+    # declare the host-sim build its own capture tool runs.  On a fresh
+    # checkout the capture died with a FileNotFoundError -- AFTER writing a
+    # partial archive file, which is the worse outcome: the tree was left
+    # holding an incomplete archive.
+    ("EVIDENCE: the `evidence` target stops declaring its `check` "
+     "prerequisite, so the documented command fails on a fresh checkout and "
+     "leaves a PARTIAL archive behind",
+     "qnx/Makefile",
+     [("evidence: check\n\tpython3 $(EVIDENCE_TOOL) --all",
+       "evidence:\n\tpython3 $(EVIDENCE_TOOL) --all")]),
 ]
 
 
