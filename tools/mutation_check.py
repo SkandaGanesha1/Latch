@@ -1512,6 +1512,52 @@ MUTATIONS = [
        "reserved2;\n} latch_ipc_proposal_v2_t;\n\n_Static_assert(sizeof("
        "latch_ipc_proposal_v2_t) == 60u,\n               \"latch_ipc_"
        "proposal_v2_t must be exactly 60 bytes\");")]),
+
+    # ------------------------------------------------------------------------
+    # NEW-DOC-7: THE SIDECARS ARE `sha256sum` FILES
+    # ------------------------------------------------------------------------
+    #
+    # A `.sha256` sidecar is supposed to be a `sha256sum` output file, so
+    # the judge can check it with the tool every Linux and macOS already
+    # has.  Three of the five could not be checked at all: two carried the
+    # digest ALONE, and the third carried a path RELATIVE TO `qnx/`.
+    #
+    # The failure mode is the worst kind: the digests were all CORRECT,
+    # so every gate that reads the DIGEST stayed GREEN while the one
+    # command a judge would type failed.  A digest-only sidecar has
+    # nothing for `sha256sum -c` to look up.
+    #
+    # The anchors are CALLABLES, because the sidecar's text carries the
+    # contract's digest -- and the digest changes every time a contract
+    # changes, so a literal anchor would be stale the next time it was.
+
+    ("NEW-DOC-7: a sidecar goes back to carrying the DIGEST ALONE (there is "
+     "then nothing for `sha256sum -c` to look up, and the judge's own "
+     "command fails on a file whose digest is perfectly correct)",
+     "qnx/latch.manifest.sha256",
+     [(lambda t: t.strip(),
+       lambda t: t.strip().split()[0])]),
+
+    ("NEW-DOC-7: a sidecar's path goes back to being RELATIVE TO `qnx/` (the "
+     "judge's command runs from the repository root, so `contracts/...` "
+     "names a file that does not exist there)",
+     "qnx/contracts/governor_servo.manifest.sha256",
+     [(lambda t: t.strip(),
+       lambda t: t.strip().split()[0] + "  contracts/governor_servo.manifest")]),
+
+    ("NEW-DOC-7: a sidecar's path names a DIFFERENT file (the sidecar would "
+     "then attest something other than the contract it sits next to)",
+     "qnx/contracts/homeostat_servo.manifest.sha256",
+     [(lambda t: t.strip(),
+       lambda t: t.strip().split()[0] + "  qnx/contracts/governor_servo.manifest")]),
+
+    ("NEW-DOC-7: a sidecar is written with ONE space instead of the two "
+     "`sha256sum` prints (GNU's `-c` accepts it, but the file is then not "
+     "in the format the tool PRINTS, and a checker that accepts every "
+     "dialect accepts a file no other tool wrote)",
+     "qnx/contracts/syringe_pump_bolus.manifest.sha256",
+     [(lambda t: t.strip(),
+       lambda t: t.strip().replace("  ", " ", 1))]),
 ]
 
 

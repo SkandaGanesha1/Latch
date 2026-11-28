@@ -12,12 +12,12 @@ exit status: 0
   Offset     Size    Entry   Ramoff     Target=Host
 40080000      fa0        0     ----     *.boot=/home/skanda/qnx800/target/qnx/aarch64le/boot/sys/raw.boot
 40080fa0      100     ----     ----     Startup-header
-400810a0    2bfe8 40081da8     ----     startup.*=/tmp/mkxfs.0f67no
+400810a0    2bfe8 40081da8     ----     startup.*=/tmp/mkxfs.d1VHH7
 400ac0e8       5c     ----     ----     Image-header
 400ac144     53d0     ----     ----     Image-directory
     ----     ----     ----     ----     Root-dirent
 400b1514      880     ----     ----     proc/boot/secpol.bin=build/secpol.bin
-400b1d94       41     ----     ----     proc/boot/latch.manifest.sha256=./latch.manifest.sha256
+400b1d94       55     ----     ----     proc/boot/latch.manifest.sha256=./latch.manifest.sha256
     ----     ----     ----     ----     bin/sh -> /proc/boot/ksh
     ----     ----     ----     ----     dev/console -> /dev/ser1
     ----     ----     ----     ----     tmp -> /dev/shmem
@@ -30,7 +30,7 @@ exit status: 0
     ----     ----     ----     ----         lib
     ----     ----     ----     ----         lib/dll
     ----     ----     ----     ----         lib/dll/qvm
-400b2000    dd000 ffffff8060077c80     ----     proc/boot/procnto-smp-instr=/tmp/mkxfs.Gk0yWs
+400b2000    dd000 ffffff8060077c80     ----     proc/boot/procnto-smp-instr=/tmp/mkxfs.4FijMi
 4018f000    3d000     5348     ----     proc/boot/ldqnx-64.so.2=/home/skanda/qnx800/target/qnx/aarch64le/usr/lib/ldqnx-64.so.2
     ----     ----     ----     ----     proc/boot/ldqnx-64.so -> ldqnx-64.so.2
 401cc000    ad000        0     ----     proc/boot/libc.so.6=/home/skanda/qnx800/target/qnx/aarch64le/lib/libc.so
@@ -320,6 +320,6 @@ exit status: 0
 45447000     1ad2     ----     ----     proc/boot/latch_qemu_virt.qvmconf=./latch_qemu_virt.qvmconf
 45448ad2     176d     ----     ----     proc/boot/linux-guest.Image/unbound-control-setup=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control-setup
 4544a23f     176d     ----     ----     proc/boot/linux-guest.initrd/unbound-control-setup=/home/skanda/qnx800/target/qnx/aarch64le/sbin/unbound-control-setup
-4544b9ac      7b4     ----     ----     proc/boot/startup-script=/tmp/mkxfs.q9SKCq
+4544b9ac      7b4     ----     ----     proc/boot/startup-script=/tmp/mkxfs.Cg2e60
 4544c160      5b9     ----     ----     proc/boot/latch.manifest=./latch.manifest
 4544c71c       44     ----     ----     Image-trailer

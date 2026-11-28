@@ -244,6 +244,175 @@ def verify_manifest_sidecar(manifest_path: str, sha256_path: str, label: str):
 
 
 # ---------------------------------------------------------------------------
+# THE SIDECARS ARE `sha256sum` FILES (NEW-DOC-7)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS A FILE THAT A JUDGE'S STANDARD TOOL CANNOT READ.
+#
+# A `.sha256` sidecar is supposed to be a `sha256sum` output file, so the
+# judge can check it with the tool every Linux and macOS already has:
+#
+#     sha256sum -c qnx/latch.manifest.sha256 qnx/contracts/*.sha256
+#
+# That command reads each sidecar's line as `<digest>  <path>` and looks
+# the PATH UP, RELATIVE TO THE CURRENT DIRECTORY.  So the sidecar is only
+# useful if its path is the one the judge's command will resolve -- and
+# three of the five were not:
+#
+#   * `qnx/latch.manifest.sha256` was the digest ALONE, with no path, so
+#     `sha256sum -c` had nothing to look up and refused the line;
+#   * `qnx/contracts/syringe_pump_bolus.manifest.sha256` was the digest
+#     ALONE as well;
+#   * `qnx/contracts/homeostat_servo.manifest.sha256` carried the path
+#     RELATIVE TO `qnx/`, so from the repository root it named
+#     `homeostat_servo.manifest` -- a file that does not exist there.
+#
+# The other two carried `contracts/<name>.manifest`, which is relative to
+# `qnx/` too.  So the judge command failed for FIVE of the five, and the
+# failure mode is the worst kind: the digests are all CORRECT, so every
+# gate in this tree that reads the digest (the loader, the attestation
+# gate, the evidence audit) stayed GREEN, while the one command a judge
+# would actually type failed.
+#
+# THE RULE IS DERIVED, NOT A FILE LIST.
+#
+# The scope is every `*.manifest` that has a `*.sha256` sidecar next to
+# it, found by walking the tree -- so a sixth contract is covered the day
+# it is added, with no edit here.  The path in each sidecar has to be
+# REPOSITORY-ROOT-RELATIVE, because that is the directory the judge's
+# command runs in, and it is the only prefix that works from the
+# repository root AND from a CI checkout whose directory is named
+# `Latch` rather than `latch`.
+#
+# TWO HALVES.  The structural half parses the sidecar and checks its
+# shape; the EXECUTIONAL half runs the judge's own command and requires
+# it to succeed.  The second half is the one that matters, because it is
+# the one the judge runs.
+# ---------------------------------------------------------------------------
+
+# `sha256sum`'s own output format: a 64-hex digest, TWO spaces, and the
+# path.  (GNU's `-c` also accepts one space and the `*` binary marker,
+# but a sidecar that is written by hand has to be in the format the tool
+# PRINTS, and a checker that accepts every dialect accepts a file that
+# no other tool wrote.)
+SHA256SUM_LINE_RE = re.compile(r"^([0-9a-f]{64})  (\S+)$")
+
+
+def _signed_manifest_paths():
+    """Every signed contract in the tree, as (abs_path, repo_relative_path).
+
+    A CONTRACT is a `*.manifest` file that has a `*.sha256` sidecar next
+    to it.  The walk is the same one the attestation gate uses, so the
+    two cannot disagree about what is signed.
+    """
+    out = []
+    qnx = os.path.join(REPO_ROOT, "qnx")
+    for dirpath, dirnames, filenames in os.walk(qnx):
+        dirnames[:] = [d for d in dirnames if d != "build"]
+        for fn in sorted(filenames):
+            if not fn.endswith(".manifest"):
+                continue
+            path = os.path.join(dirpath, fn)
+            if not os.path.isfile(path + ".sha256"):
+                continue
+            out.append((path, os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")))
+    return sorted(out, key=lambda p: p[1])
+
+
+def verify_sidecar_sha256sum_format():
+    """Every signed contract's sidecar is a `sha256sum` file a judge can check."""
+    pairs = _signed_manifest_paths()
+    if not pairs:
+        fail("no signed contract found under qnx/ -- a repository with no "
+             "attested contract cannot pass the sidecar-format gate")
+
+    bad = []
+    for abs_path, rel in pairs:
+        sidecar = abs_path + ".sha256"
+        with io.open(sidecar, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+
+        # --- THE FILE IS ONE `sha256sum` LINE ---------------------------
+        stripped = text.strip()
+        m = SHA256SUM_LINE_RE.match(stripped)
+        if not m:
+            bad.append("%s.sha256 is not a `sha256sum` line (it must be "
+                       "`<64-hex digest><two spaces><path>`; it reads %r)"
+                       % (rel, stripped))
+            continue
+        digest, named = m.group(1), m.group(2)
+
+        # --- THE PATH IS REPOSITORY-ROOT-RELATIVE ----------------------
+        if os.path.isabs(named) or named.startswith("./") or "\\" in named:
+            bad.append("%s.sha256 names %r, which is not a repository-root-"
+                       "relative path. The judge's command runs from the "
+                       "repository root, so that is the only prefix that "
+                       "resolves there." % (rel, named))
+            continue
+        parts = named.split("/")
+        if ".." in parts:
+            bad.append("%s.sha256 names %r, which climbs out of the "
+                       "repository" % (rel, named))
+            continue
+
+        # --- AND IT NAMES THIS CONTRACT --------------------------------
+        resolved = os.path.normpath(os.path.join(REPO_ROOT, named))
+        if resolved != os.path.normpath(abs_path):
+            bad.append("%s.sha256 names %r, which resolves to %s and not to "
+                       "the contract the sidecar belongs to"
+                       % (rel, named,
+                          os.path.relpath(resolved, REPO_ROOT).replace(os.sep, "/")))
+            continue
+
+        # --- AND THE DIGEST IS THE CONTRACT'S --------------------------
+        with open(abs_path, "rb") as f:
+            computed = hashlib.sha256(f.read()).hexdigest()
+        if computed != digest:
+            bad.append("%s.sha256 carries the digest %s, but the contract's "
+                       "digest is %s" % (rel, digest, computed))
+            continue
+
+    if bad:
+        fail("these sidecars are not files a judge's `sha256sum -c` can "
+             "check:\n  - %s\nA sidecar is only useful if the standard tool "
+             "can verify it, and the failure mode is the worst kind: the "
+             "digests are correct, so every gate that reads the DIGEST "
+             "stays green while the one command a judge types fails."
+             % "\n  - ".join(bad))
+
+    # --- THE JUDGE'S OWN COMMAND ---------------------------------------
+    #
+    # The structural half above checks the shape; this half runs the
+    # command.  A gate that only parses the file would accept a sidecar
+    # that `sha256sum -c` refuses, which is the defect in its purest
+    # form.
+    sha256sum = shutil.which("sha256sum")
+    if sha256sum is None:
+        pass_check("every signed contract's sidecar is a `sha256sum` line "
+                   "naming the contract by its repository-root-relative path "
+                   "(%d sidecar(s); the EXECUTIONAL half was skipped -- no "
+                   "`sha256sum` on PATH)" % len(pairs))
+        return
+
+    sidecars = [abs_path + ".sha256" for abs_path, _rel in pairs]
+    proc = subprocess.run([sha256sum, "-c"] + sidecars, cwd=REPO_ROOT,
+                          capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        fail("the judge's own command does not verify the sidecars:\n"
+             "  `sha256sum -c %s`\n%s\n"
+             "A sidecar exists so that a judge can check the contract with "
+             "the standard tool, and every signed contract's sidecar has "
+             "to survive that check."
+             % (" ".join(os.path.relpath(s, REPO_ROOT) for s in sidecars),
+                (proc.stdout + proc.stderr).strip()))
+
+    pass_check("every signed contract's sidecar is a `sha256sum` line naming "
+               "the contract by its repository-root-relative path, and "
+               "`sha256sum -c` verifies all %d of them from the repository "
+               "root" % len(pairs))
+
+
+# ---------------------------------------------------------------------------
 # THE ATTESTATION GATE
 #
 # A document that quotes a SHA-256 digest is making a claim about a FILE.
@@ -5945,6 +6114,16 @@ def main():
     # header's own assertion now, so the documents cannot drift away from
     # the ABI.  See `verify_lpr2_size_claims()`.
     verify_lpr2_size_claims()
+
+    # --- THE SIDECARS ARE `sha256sum` FILES (NEW-DOC-7) -----------------
+    #
+    # Three of the five sidecars could not be checked by the standard
+    # tool, and the failure was invisible to every gate that reads the
+    # DIGEST -- because the digests were right.  The sidecars are now
+    # `sha256sum` lines naming their contract by its repository-root-
+    # relative path, and the gate runs the judge's own command.
+    # See `verify_sidecar_sha256sum_format()`.
+    verify_sidecar_sha256sum_format()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #
