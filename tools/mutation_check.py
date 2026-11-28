@@ -1868,6 +1868,121 @@ MUTATIONS = [
      "qnx/Makefile",
      [("evidence: check\n\tpython3 $(EVIDENCE_TOOL) --all",
        "evidence:\n\tpython3 $(EVIDENCE_TOOL) --all")]),
+
+    # ------------------------------------------------------------------------
+    # NEW-8: THE INGEST'S START-UP CONTRACT
+    # ------------------------------------------------------------------------
+    #
+    # `latch-ingest` is the unprivileged bridge between the guest's byte
+    # stream and the supervisor's proposal node.  THREE of its start-up
+    # decisions failed OPEN:
+    #
+    #   1. the `-c` option was parsed and then silently overwritten by the
+    #      signed manifest, so the option was a LIE;
+    #   2. the CPU pin's return value was discarded, so an ingest that could
+    #      not be placed started anyway -- UNPINNED, possibly on the
+    #      supervisor's own CPU; and
+    #   3. a failed `procmgr_ability_lookup()` was ignored, so the bridge
+    #      kept HOLDING `latch/actuator` -- the ability to move the plant.
+    #
+    # The fix puts the decisions in the shipped header
+    # `qnx/latch_ingest_start.h` and makes every one of them fail closed.
+    # The mutations below come in TWO families, and the split matters:
+    #
+    #   * the STRUCTURAL ones attack the CALL SITE -- the bridge no longer
+    #     consults the decision, decides on something else, or refuses with
+    #     a condition that can never fire; and
+    #   * the COMPILED ones attack the SHIPPED HEADER -- the bridge still
+    #     consults it, but the header itself has stopped refusing.  Only
+    #     the compiled half of the gate can catch those, because the
+    #     call site is unchanged.
+    #
+    # A mutation that merely removes a refusal from the SOURCE would be
+    # caught by the source-level half alone, so the header mutations below
+    # are the ones that prove the compiled half is load-bearing.
+
+    ("NEW-8: the CPU refusal is conditioned on the ALLOW CONSTANT (so it "
+     "can never fire -- the `-c` contradiction is computed and then "
+     "ignored, which is the original defect wearing a hat)",
+     "qnx/latch_ingest.c",
+     [("    if (!latch_ingest_start_allowed(cpu_choice.decision)) {",
+       "    if (!latch_ingest_start_allowed(LATCH_INGEST_START_ALLOW)) {")]),
+
+    ("NEW-8: the PIN refusal is conditioned on the ALLOW CONSTANT (so an "
+     "ingest that could not be placed starts UNPINNED again)",
+     "qnx/latch_ingest.c",
+     [("    if (!latch_ingest_start_allowed(pin_decision)) {",
+       "    if (!latch_ingest_start_allowed(LATCH_INGEST_START_ALLOW)) {")]),
+
+    ("NEW-8: the ABILITY refusal is conditioned on the ALLOW CONSTANT (so a "
+     "failed lookup is ignored and the bridge keeps latch/actuator)",
+     "qnx/latch_ingest.c",
+     [("        if (!latch_ingest_start_allowed(ability_decision)) {",
+       "        if (!latch_ingest_start_allowed(LATCH_INGEST_START_ALLOW)) {")]),
+
+    ("NEW-8: the CPU pin's result is DISCARDED again (the bridge's outcome "
+     "is hard-wired to success, so an unplaceable ingest starts UNPINNED)",
+     "qnx/latch_ingest.c",
+     [("    const int pin_rc = latch_ingest_pin_cpu(target_cpu);\n",
+       "    const int pin_rc = 0;\n"
+       "    (void)latch_ingest_pin_cpu(target_cpu);\n")]),
+
+    ("NEW-8: the pin SILENTLY SUBSTITUTES a different CPU for the signed one "
+     "(the signed datum is replaced by a compiled-in default -- and the "
+     "default is the CPU THE SAFETY SUPERVISOR RUNS ON)",
+     "qnx/latch_ingest.c",
+     [("    if (!latch_ingest_cpu_in_range(target_cpu, num_cpu)) {\n",
+       "    if (target_cpu >= num_cpu) {\n"
+       "        target_cpu = (num_cpu > 1u) ? 1u : 0u;\n"
+       "    }\n"
+       "    if (target_cpu >= num_cpu) {\n")]),
+
+    ("NEW-8: the ability lookup's outcome is decided on a LITERAL instead of "
+     "on the lookup's own result (a hard-wired 'it worked')",
+     "qnx/latch_ingest.c",
+     [("            latch_ingest_ability_decide(custom_aid);",
+       "            latch_ingest_ability_decide(1);")]),
+
+    ("NEW-8: the SHIPPED header's pin decision stops refusing (the bridge "
+     "still consults it, but the header has stopped refusing -- only the "
+     "COMPILED half of the gate can catch this)",
+     "qnx/latch_ingest_start.h",
+     [("    return (pin_rc == 0) ? LATCH_INGEST_START_ALLOW\n"
+       "                         : LATCH_INGEST_START_REFUSE_PIN;",
+       "    (void)pin_rc;\n"
+       "    return LATCH_INGEST_START_ALLOW;")]),
+
+    ("NEW-8: the SHIPPED header's ability decision stops refusing (a failed "
+     "lookup is treated as a success -- only the COMPILED half of the gate "
+     "can catch this)",
+     "qnx/latch_ingest_start.h",
+     [("    return (lookup_rc > 0) ? LATCH_INGEST_START_ALLOW\n"
+       "                           : LATCH_INGEST_START_REFUSE_ABILITY;",
+       "    (void)lookup_rc;\n"
+       "    return LATCH_INGEST_START_ALLOW;")]),
+
+    ("NEW-8: the SHIPPED header's CPU choice becomes an OVERRIDE (the `-c` "
+     "option wins over the signed contract -- the original defect, moved "
+     "into the header)",
+     "qnx/latch_ingest_start.h",
+     [("    if (option_cpu != signed_cpu) {\n"
+       "        out.decision = LATCH_INGEST_START_REFUSE_CPU;\n"
+       "        out.agrees = false;\n"
+       "        return out;\n"
+       "    }",
+       "    if (option_cpu != signed_cpu) {\n"
+       "        out.decision = LATCH_INGEST_START_ALLOW;\n"
+       "        out.cpu = option_cpu;\n"
+       "        out.agrees = false;\n"
+       "        return out;\n"
+       "    }")]),
+
+    ("NEW-8: the ALLOW decision becomes the ZERO value (a decision variable "
+     "that was never assigned would then START the bridge -- the opposite "
+     "of failing closed)",
+     "qnx/latch_ingest_start.h",
+     [("    LATCH_INGEST_START_ALLOW          = 1,",
+       "    LATCH_INGEST_START_ALLOW          = 0,")]),
 ]
 
 

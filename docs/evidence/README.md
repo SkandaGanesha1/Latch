@@ -53,8 +53,8 @@ docs/evidence/
       linux_baseline_metrics.txt
       linux_baseline_tape.csv
   build/
-      20261128-194505-ifs.txt
-      20261128-194505-initrd.txt
+      20261128-204245-ifs.txt
+      20261128-204245-initrd.txt
   derived/
       RUN-OUTPUT-MANIFEST.md
       fuzz-summary-20261124.txt
@@ -84,8 +84,8 @@ docs/evidence/
       latency-console.txt
       secpol-audit.txt
   host-sim/
-      20261128-194503-consistency.txt
-      20261128-194503-host-sim.txt
+      20261128-204243-consistency.txt
+      20261128-204243-host-sim.txt
   on-target/
       01-guest-boot-console.txt
       02-run1-51-envelope-vetoes.txt

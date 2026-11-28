@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check latch-guestctl-guard-check
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check latch-hex-check latch-guestctl-guard-check latch-ingest-start-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -104,7 +104,7 @@ $(IPC_OBJ): latch_ipc.c latch_ipc.h latch_protocol.h | dirs
 $(LATCHD_BIN): latchd.c latch_protocol.h latch_ipc.h governor_policy.c governor_policy.h gov_gate_precheck.c gov_gate_precheck.h gov_homeostat.c gov_homeostat.h latch_feedback.c latch_feedback.h latch_feedback_pub.c latch_feedback_pub.h $(MANIFEST_OBJ) $(IPC_OBJ) | dirs
 	$(CC) $(CFLAGS) latchd.c governor_policy.c gov_gate_precheck.c gov_homeostat.c latch_feedback.c latch_feedback_pub.c $(MANIFEST_OBJ) $(IPC_OBJ) -o $@ $(LDFLAGS)
 
-$(INGEST_BIN): latch_ingest.c latch_protocol.h governor_wire.c governor_wire.h $(MANIFEST_OBJ) | dirs
+$(INGEST_BIN): latch_ingest.c latch_protocol.h governor_wire.c governor_wire.h latch_ingest_start.h $(MANIFEST_OBJ) | dirs
 	$(CC) $(CFLAGS) latch_ingest.c governor_wire.c $(MANIFEST_OBJ) -o $@ $(LDFLAGS)
 
 $(LATCHCTL_BIN): latchctl.c latch_protocol.h $(MANIFEST_OBJ) | dirs
@@ -195,6 +195,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory latch-hold-check
 	$(MAKE) --no-print-directory latch-hex-check
 	$(MAKE) --no-print-directory latch-guestctl-guard-check
+	$(MAKE) --no-print-directory latch-ingest-start-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
@@ -282,7 +283,9 @@ check-asan:
 	$$ASAN_CC $$ASAN_FLAGS latch_hex_test.c -o $(BUILD_DIR)/asan/latch_hex_test -lpthread -lrt -lm && \
 	./$(BUILD_DIR)/asan/latch_hex_test && \
 	$$ASAN_CC $$ASAN_FLAGS latch_guestctl_guard_test.c -o $(BUILD_DIR)/asan/latch_guestctl_guard_test -lpthread -lrt -lm && \
-	./$(BUILD_DIR)/asan/latch_guestctl_guard_test
+	./$(BUILD_DIR)/asan/latch_guestctl_guard_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_ingest_start_test.c -o $(BUILD_DIR)/asan/latch_ingest_start_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_ingest_start_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -411,6 +414,30 @@ $(BUILD_DIR)/host-sim/latch_guestctl_guard_test: latch_guestctl_guard.h latch_gu
 
 latch-guestctl-guard-check: $(BUILD_DIR)/host-sim/latch_guestctl_guard_test
 	./$(BUILD_DIR)/host-sim/latch_guestctl_guard_test
+
+# THE INGEST'S START-UP CONTRACT (NEW-8).
+#
+# `latch-ingest` is the unprivileged bridge between the guest's byte stream
+# and the supervisor's proposal node.  Three of its start-up decisions failed
+# OPEN: the `-c` option was parsed and then silently overwritten by the
+# signed manifest (so the option was a lie), the CPU pin's return value was
+# discarded (so an ingest that could not be placed ran UNPINNED, possibly on
+# the supervisor's own CPU), and a failed `procmgr_ability_lookup()` was
+# ignored (so the bridge kept HOLDING `latch/actuator` -- the ability to move
+# the plant).
+#
+# The QNX path cannot be exercised off-target -- `ThreadCtl()` and
+# `procmgr_ability()` are QNX calls -- so the DECISIONS live in the SHIPPED
+# header `qnx/latch_ingest_start.h`, and the bridge and this test run the
+# same code.  The decisive assertions are COUNTS: EXACTLY ONE pin outcome
+# allows the start, EXACTLY ONE kind of lookup outcome allows it, and the
+# effective CPU is ALWAYS the signed one -- `-c` is an ASSERTION, not an
+# OVERRIDE.
+$(BUILD_DIR)/host-sim/latch_ingest_start_test: latch_ingest_start.h latch_ingest_start_test.c | dirs
+	$(CC) $(CFLAGS) latch_ingest_start_test.c -o $@ $(LDFLAGS)
+
+latch-ingest-start-check: $(BUILD_DIR)/host-sim/latch_ingest_start_test
+	./$(BUILD_DIR)/host-sim/latch_ingest_start_test
 
 # THE HEX RENDERING, WITH A BOUNDS CHECK.
 #

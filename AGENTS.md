@@ -1972,6 +1972,75 @@ own). Read them before touching `qnx/latch_guestd.c` or the policy's
   ability's negative case is proved **off-target**, by the host test's
   truth table.
 
+### 4j. Facts about the INGEST'S START-UP CONTRACT (NEW-8)
+
+These were measured on this tree on 2026-11-28, while remediating the v13
+audit finding NEW-8 (the ingest's start-up decisions failed open). Read them
+before touching `qnx/latch_ingest.c`.
+
+- **`-c` WAS NEVER AN OVERRIDE, AND IT MUST NOT BECOME ONE.** The option
+  was parsed at `latch_ingest.c` and then **overwritten** by
+  `manifest.ingest.cpu` a few lines later, so it was a lie: a caller could
+  ask for a CPU and get a different one, with no diagnostic. It is now an
+  **ASSERTION** against the signed contract — a `-c` that disagrees with
+  `ingest.cpu` **refuses to start** — and the reason it cannot be an
+  override is specific to this target: the qvmconf already pins the bridge
+  with `on -T latch_ingest_t -C 1 …`, so an override would try to move the
+  bridge off the CPU the hypervisor configuration gave it, and it would
+  replace **signed** data with the command line of whoever happened to be
+  able to start the process. The signed contract is the authority.
+
+- **THE PIN SILENTLY MOVED THE BRIDGE, AND THE FALLBACK WAS THE
+  SUPERVISOR'S OWN CPU.** `latch_ingest_pin_cpu()` used to answer "that CPU
+  does not exist on this platform" by **substituting** CPU 1 — or CPU 0 on
+  a single-CPU platform — and reporting **success**. That is a compiled-in
+  default substituted for a signed datum, and CPU 0 is where the safety
+  supervisor runs. The range rule is now the shipped header's
+  (`latch_ingest_cpu_in_range()`), so it is a host-tested property rather
+  than a branch nobody can reach off-target, and an out-of-range CPU is a
+  refusal (`-EINVAL`).
+
+- **A FAILED `procmgr_ability_lookup()` WAS AN ESCALATION, NOT A CRASH.**
+  The manifest names the custom ability the bridge must surrender
+  (`paths.ability` is `latch/actuator` in **every** shipped contract), and
+  the old code did `if (custom_aid > 0) { … }` with **no else** — so a
+  failed lookup left the bridge **holding `latch/actuator`**, the ability
+  to move the plant. The least-privilege step silently became a no-op. The
+  lookup's outcome is now decided, and a failure stops the bridge.
+
+- **THERE IS NO START-UP RACE, AND IT IS A PROPERTY OF THE TREE, NOT A
+  HOPE.** The ability lookup is fatal, so an ability that did not exist
+  *yet* would stop the bridge for the wrong reason. The ordering that
+  prevents it: `latchd` calls `procmgr_ability_create()` at
+  `latchd.c:3262`, **before** it attaches the actuator node at
+  `latchd.c:3365`, and every shipped buildfile does
+  `waitfor /dev/latch/actuator 4` **before** it starts the guest — so the
+  node that proves the ability exists cannot appear before the ability
+  does. `tools/consistency_check.py` checks that order in `latchd.c`, so a
+  future edit that moves the creation below the attachment fails the build.
+
+- **"ALLOW IS THE ZERO VALUE" IS THE WRONG CONVENTION FOR A START-UP
+  GATE.** The guest-control gate (`qnx/latch_guestctl_guard.h`) uses
+  `ALLOW = 0`, because there the decision is always produced by a function
+  and the refusal is a distinct value. A start-up gate is different: a
+  decision variable that was **never assigned** must not start the bridge,
+  so `qnx/latch_ingest_start.h` gives the **zero** value to
+  `LATCH_INGEST_START_REFUSE_UNKNOWN` and gives `ALLOW` the value 1. The
+  header's own test asserts that `ALLOW != 0`, so the convention cannot be
+  flipped back by accident.
+
+- **THE GATE HAS TWO HALVES, AND ONLY ONE OF THEM IS ENOUGH ON ITS OWN.**
+  The **structural** half reads the bridge's source: it requires the
+  decisions to be made on the platform's **own results** (the variable the
+  pin's value is stored in, the variable the lookup's value is stored in),
+  it requires each refusal to be an `if` whose **condition tests the
+  decision** and whose **body returns a failure**, and it rejects a
+  refusal conditioned on the ALLOW **constant** — a tautology that can
+  never fire. The **compiled** half compiles the shipped header against
+  its own host test and RUNS it, so a header that has stopped refusing is
+  caught even though the call site is unchanged. The mutation battery
+  attacks both families separately.
+
 ---
 
 ## 5. What this project must never claim

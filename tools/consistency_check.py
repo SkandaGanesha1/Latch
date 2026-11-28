@@ -2301,6 +2301,510 @@ def verify_event_hex_sizing():
 # What the gate removes is the "connect implies mutate" implication.
 
 
+# ---------------------------------------------------------------------------
+# THE INGEST'S START-UP CONTRACT (NEW-8)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS THAT THREE START-UP DECISIONS FAILED OPEN.
+#
+# `qnx/latch_ingest.c` is the UNPRIVILEGED bridge between the guest's byte
+# stream and the supervisor's proposal node.  Three of its start-up
+# decisions were safety properties, and all three of them were defects:
+#
+#   1. THE CPU WAS NOT THE CALLER'S TO CHOOSE.  `-c` was parsed and then
+#      silently overwritten by the manifest's value (`target_cpu =
+#      manifest.ingest.cpu;`), so the option was a LIE: a caller could ask
+#      for a CPU and get a different one, with no diagnostic.
+#
+#   2. THE PIN'S RESULT WAS THROWN AWAY.  `(void)latch_ingest_pin_cpu(...)`
+#      discarded the outcome, so an ingest that could not bind itself to its
+#      CPU started anyway -- UNPINNED, on whatever CPU the scheduler chose.
+#      The bridge's whole reason for being on `_cpu-1` is that it is not on
+#      `_cpu-0`, where the safety supervisor runs.  And the pin itself
+#      answered "that CPU does not exist here" by MOVING the bridge to a
+#      compiled-in default (CPU 1, or CPU 0 on a single-CPU platform) and
+#      reporting SUCCESS -- which is a signed datum replaced by a default,
+#      and the default is the supervisor's own CPU.
+#
+#   3. THE ABILITY LOOKUP'S RESULT WAS THROWN AWAY.  A failed
+#      `procmgr_ability_lookup()` was ignored, so the bridge carried on
+#      HOLDING `latch/actuator` -- the ability to move the plant.  The
+#      least-privilege step silently became a no-op, and the failure mode
+#      was an ESCALATION, not a crash.
+#
+# THE FIX IS THREE DECISIONS THAT FAIL CLOSED, AND THEY LIVE IN A SHIPPED
+# HEADER.
+#
+# The QNX path cannot be exercised off-target -- `ThreadCtl()` and
+# `procmgr_ability()` are QNX calls -- so the decisions live in
+# `qnx/latch_ingest_start.h`, which the bridge AND a host test compile.  The
+# gate therefore has TWO halves:
+#
+#   * STRUCTURAL -- the bridge really calls the shipped decisions, really
+#     refuses on each of them, and really no longer carries the three
+#     shapes that failed open; and
+#   * COMPILED -- the shipped header compiles against its own host test and
+#     the test's COUNTS hold (exactly one pin outcome allows the start,
+#     exactly the positive ability ids allow it, and the effective CPU is
+#     ALWAYS the signed one -- `-c` is an ASSERTION, not an OVERRIDE).
+#
+# THE GATE IS DERIVED, NEVER HARD-CODED.
+#
+#   * The ability's NAME comes out of the shipped manifests'
+#     `paths.ability`, so the gate cannot drift onto a different spelling.
+#   * The start-up ORDER comes out of the manifests themselves: every
+#     shipped contract must name a non-empty custom ability, because an
+#     empty one would make the lookup branch dead code and the escalation
+#     it closes would come back.
+#   * The no-start-up-race property is checked in `latchd`: the ability has
+#     to be CREATED before the node that proves it exists is ATTACHED, or a
+#     bridge that starts early would refuse for the wrong reason.
+#
+# NOTHING HERE IS A LIST OF HARD-CODED NUMBERS: the CPU count, the ability
+# name and the order are all read out of the tree.
+
+
+def _manifest_paths_and_ingest_cpu(manifest_path):
+    """Read `paths.ability` and `ingest.cpu` out of one shipped manifest.
+
+    Returns (ability_name, ingest_cpu, error).  The manifest is JSON, and
+    the loader in `qnx/latch_manifest.c` is the authority -- but the loader
+    is C, so the gate reads the file the same way the loader's own schema
+    defines it and lets the loader's own test cover the rest.
+    """
+    try:
+        with io.open(manifest_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (IOError, OSError, ValueError) as exc:
+        return None, None, "cannot read %s: %s" % (manifest_path, exc)
+    paths = data.get("paths") or {}
+    ingest = data.get("ingest") or {}
+    ability = paths.get("ability")
+    cpu = ingest.get("cpu")
+    if not isinstance(ability, str) or not isinstance(cpu, int):
+        return None, None, ("%s does not carry a string `paths.ability` and an "
+                            "integer `ingest.cpu`" % manifest_path)
+    return ability, cpu, None
+
+
+def verify_ingest_fails_closed():
+    """The ingest's start-up: three decisions, all fail-closed (NEW-8)."""
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    start_h_path = os.path.join(qnx_dir, "latch_ingest_start.h")
+    ingest_path = os.path.join(qnx_dir, "latch_ingest.c")
+    test_path = os.path.join(qnx_dir, "latch_ingest_start_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+    latchd_path = os.path.join(qnx_dir, "latchd.c")
+
+    for p in (start_h_path, ingest_path, test_path, makefile_path,
+              latchd_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(start_h_path, encoding="utf-8", errors="replace") as f:
+        start_h = f.read()
+    with io.open(ingest_path, encoding="utf-8", errors="replace") as f:
+        ingest = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+    with io.open(latchd_path, encoding="utf-8", errors="replace") as f:
+        latchd = f.read()
+
+    start_code = strip_c_comments(start_h)
+    ingest_code = strip_c_comments(ingest)
+    test_code = strip_c_comments(test_src)
+
+    main_body = _c_inline_func_body(ingest_code, "main")
+    pin_body = _c_inline_func_body(ingest_code, "latch_ingest_pin_cpu")
+    if not main_body:
+        fail("qnx/latch_ingest.c does not define main(): the ingest's "
+             "start-up cannot be checked.")
+        return
+    if not pin_body:
+        fail("qnx/latch_ingest.c does not define latch_ingest_pin_cpu(): the "
+             "ingest's CPU placement cannot be checked.")
+        return
+
+    # --- 1. THE CPU: `-c` IS AN ASSERTION, NOT AN OVERRIDE ---------------
+    #
+    # The old shape was a single unconditional assignment AFTER the
+    # manifest was loaded, which overwrote whatever `-c` had parsed.  The
+    # new shape is a decision through the shipped header, and a refusal.
+    if "latch_ingest_cpu_choose(" not in ingest_code:
+        fail("qnx/latch_ingest.c must decide the CPU through the shipped "
+             "latch_ingest_cpu_choose(). The `-c` option used to be parsed "
+             "and then silently overwritten by the manifest's value, so it "
+             "was a lie: a caller could ask for a CPU and get a different "
+             "one.")
+    if re.search(r"target_cpu\s*=\s*manifest\.ingest\.cpu\s*;", ingest_code):
+        fail("qnx/latch_ingest.c must NOT overwrite the CPU with the "
+             "manifest's value after the option was parsed. The signed "
+             "contract is the authority and `-c` is an ASSERTION against "
+             "it; a disagreement refuses to start.")
+
+    # THE DECISION MUST BE MADE ON THE SIGNED CPU.  The third argument is
+    # the authority, and the gate reads it out of the call rather than
+    # assuming it -- so a decision made on anything else (a literal, a
+    # different field, the option's own value) is caught.
+    m_cpu_call = re.search(r"latch_ingest_cpu_choose\s*\(([^;]*?)\)\s*;", ingest_code,
+                            re.S)
+    if not m_cpu_call:
+        fail("qnx/latch_ingest.c does not call latch_ingest_cpu_choose() "
+             "with an argument list the gate can read.")
+    else:
+        args = m_cpu_call.group(1)
+        if "manifest.ingest.cpu" not in args:
+            fail("qnx/latch_ingest.c: the CPU decision must be made against "
+                 "the signed contract's `manifest.ingest.cpu`. A decision "
+                 "made on anything else is not a cross-check of the signed "
+                 "value.")
+
+    # The refusal must STOP the bridge, not merely be computed.  The
+    # decision and the refusal are looked for together, within a short
+    # window, so a decision that is computed and then ignored does not
+    # pass.
+    cpu_refusal = _refusal_after(ingest_code, "latch_ingest_cpu_choose(",
+                                  stop="latch_ingest_pin_decide(")
+    if not cpu_refusal:
+        fail("qnx/latch_ingest.c: the CPU decision is not followed by a "
+             "refusal. A `-c` that contradicts the signed contract must "
+             "STOP the bridge (a `return EXIT_FAILURE;`), not merely be "
+             "computed and ignored.")
+
+    # --- 2. THE PIN: ITS RESULT MUST NOT BE THROWN AWAY ------------------
+    if "latch_ingest_pin_decide(" not in ingest_code:
+        fail("qnx/latch_ingest.c must decide the pin through the shipped "
+             "latch_ingest_pin_decide(). The pin's return value used to be "
+             "discarded, so an ingest that could not bind itself to its CPU "
+             "started anyway -- UNPINNED, possibly on the supervisor's own "
+             "CPU.")
+    if re.search(r"\(void\)\s*latch_ingest_pin_cpu\s*\(", ingest_code):
+        fail("qnx/latch_ingest.c must NOT discard the CPU pin's return "
+             "value. An ingest that cannot be placed must REFUSE TO START, "
+             "not start UNPINNED.")
+
+    # THE DECISION MUST BE MADE ON THE PIN'S OWN RESULT.  The variable the
+    # pin's value is stored in is read out of the source, and the decision
+    # has to be made on THAT variable -- so a decision made on a literal
+    # (or on anything else) is caught.
+    m_pin_call = re.search(r"(\w+)\s*=\s*latch_ingest_pin_cpu\s*\(", ingest_code)
+    if not m_pin_call:
+        fail("qnx/latch_ingest.c does not store the CPU pin's result in a "
+             "variable: the outcome cannot be checked at all.")
+    else:
+        pin_var = m_pin_call.group(1)
+        if not re.search(r"latch_ingest_pin_decide\s*\(\s*" + re.escape(pin_var) +
+                         r"\s*\)", ingest_code):
+            fail("qnx/latch_ingest.c: the pin's outcome must be decided on "
+                 "the pin's OWN result (`%s`). A decision made on anything "
+                 "else is not a check of the pin." % pin_var)
+
+    pin_refusal = _refusal_after(ingest_code, "latch_ingest_pin_decide(",
+                                 stop="latch_ingest_ability_decide(")
+    if not pin_refusal:
+        fail("qnx/latch_ingest.c: the pin's outcome is not followed by a "
+             "refusal. A failed CPU pin must STOP the bridge (a `return "
+             "EXIT_FAILURE;`).")
+
+    # The pin itself must not MOVE the bridge to a different CPU.  The
+    # range rule is the shipped header's, so the branch is derived rather
+    # than spelled out here.
+    if "latch_ingest_cpu_in_range(" not in pin_body:
+        fail("qnx/latch_ingest.c: latch_ingest_pin_cpu() must use the "
+             "shipped latch_ingest_cpu_in_range() rule. The old code "
+             "answered 'that CPU does not exist here' by MOVING the bridge "
+             "to a compiled-in default -- CPU 1, or CPU 0 on a single-CPU "
+             "platform -- and reporting SUCCESS. The fallback is the CPU "
+             "THE SAFETY SUPERVISOR RUNS ON.")
+    if re.search(r"target_cpu\s*=\s*\(\s*num_cpu\s*>\s*1u\s*\)\s*\?\s*1u\s*:\s*0u\s*;",
+                 pin_body):
+        fail("qnx/latch_ingest.c: latch_ingest_pin_cpu() must NOT silently "
+             "substitute a different CPU for the signed one. A signed datum "
+             "replaced by a compiled-in default is a fail-open.")
+
+    # --- 3. THE ABILITY LOOKUP: ITS RESULT MUST NOT BE THROWN AWAY -------
+    if "latch_ingest_ability_decide(" not in ingest_code:
+        fail("qnx/latch_ingest.c must decide the custom-ability lookup "
+             "through the shipped latch_ingest_ability_decide(). A failed "
+             "procmgr_ability_lookup() used to be ignored, so the bridge "
+             "carried on HOLDING latch/actuator -- the ability to move the "
+             "plant. That failure mode is an ESCALATION, not a crash.")
+    if re.search(r"if\s*\(\s*custom_aid\s*>\s*0\s*\)\s*\{", ingest_code):
+        fail("qnx/latch_ingest.c must NOT treat a failed ability lookup as "
+             "'nothing to do'. The old shape -- `if (custom_aid > 0) { ... "
+             "}` with no else -- silently kept the custom ability when the "
+             "lookup failed.")
+
+    # THE DECISION MUST BE MADE ON THE LOOKUP'S OWN RESULT.  The variable
+    # the lookup's value is stored in is read out of the source, and the
+    # decision has to be made on THAT variable -- so a decision made on a
+    # literal (or on anything else) is caught.
+    m_lookup = re.search(r"(\w+)\s*=\s*procmgr_ability_lookup\s*\(", ingest_code)
+    if not m_lookup:
+        fail("qnx/latch_ingest.c does not store the custom-ability lookup's "
+             "result in a variable: the outcome cannot be checked at all.")
+    else:
+        lookup_var = m_lookup.group(1)
+        if not re.search(r"latch_ingest_ability_decide\s*\(\s*" +
+                         re.escape(lookup_var) + r"\s*\)", ingest_code):
+            fail("qnx/latch_ingest.c: the ability lookup's outcome must be "
+                 "decided on the lookup's OWN result (`%s`). A decision made "
+                 "on anything else is not a check of the lookup." % lookup_var)
+
+    ability_refusal = _refusal_after(ingest_code,
+                                      "latch_ingest_ability_decide(")
+    if not ability_refusal:
+        fail("qnx/latch_ingest.c: the ability lookup's outcome is not "
+             "followed by a refusal. A failed lookup must STOP the bridge "
+             "(a `return EXIT_FAILURE;`).")
+
+    # --- 4. THE START-UP ORDER IS DERIVED FROM THE MANIFESTS --------------
+    #
+    # The lookup branch is only live when the manifest names a custom
+    # ability.  An empty name would make the branch dead code and the
+    # escalation it closes would come back -- so every shipped contract
+    # must name one, and the name is what the gate reports.
+    manifest_paths = []
+    base_manifest = os.path.join(qnx_dir, "latch.manifest")
+    contracts_dir = os.path.join(qnx_dir, "contracts")
+    if os.path.isfile(base_manifest):
+        manifest_paths.append(base_manifest)
+    if os.path.isdir(contracts_dir):
+        for name in sorted(os.listdir(contracts_dir)):
+            if name.endswith(".manifest"):
+                manifest_paths.append(os.path.join(contracts_dir, name))
+    if not manifest_paths:
+        fail("qnx/latch.manifest and qnx/contracts/*.manifest are missing: "
+             "the ingest's start-up contract cannot be derived.")
+
+    abilities = set()
+    for mp in manifest_paths:
+        ability, cpu, err = _manifest_paths_and_ingest_cpu(mp)
+        if err:
+            fail(err)
+            continue
+        if not ability:
+            fail("%s does not name a custom ability (`paths.ability` is "
+                 "empty). The ingest surrenders that ability so it cannot "
+                 "move the plant; with an empty name the surrender is "
+                 "skipped and the escalation comes back." % mp)
+            continue
+        abilities.add(ability)
+        if cpu < 0:
+            fail("%s names a negative ingest.cpu (%d)." % (mp, cpu))
+
+    if len(abilities) > 1:
+        fail("the shipped manifests name DIFFERENT custom abilities (%s). "
+             "The ingest surrenders the ability its own signed contract "
+             "names, so one spelling is required for the surrender to be "
+             "the same step everywhere." % ", ".join(sorted(abilities)))
+
+    # --- 5. NO START-UP RACE: THE ABILITY IS CREATED BEFORE THE NODE -----
+    #
+    # The ability lookup is now FATAL, so an ability that does not exist
+    # YET would stop the bridge for the wrong reason.  `latchd` creates
+    # the ability before it attaches the node whose presence proves it, and
+    # every shipped buildfile waits for that node before it starts the
+    # guest -- so the ordering is a property of the tree, not a hope.
+    latchd_code = strip_c_comments(latchd)
+    m_create = re.search(r"procmgr_ability_create\s*\(", latchd_code)
+    m_attach = re.search(r"resmgr_attach\s*\(", latchd_code)
+    if not m_create:
+        fail("qnx/latchd.c does not call procmgr_ability_create(): the "
+             "supervisor no longer creates the custom ability the ingest "
+             "surrenders.")
+    elif not m_attach:
+        fail("qnx/latchd.c does not call resmgr_attach(): the supervisor no "
+             "longer serves the actuator node.")
+    elif m_create.start() > m_attach.start():
+        fail("qnx/latchd.c creates the custom ability AFTER it attaches the "
+             "actuator node. The ingest's ability lookup is now FATAL, so a "
+             "bridge that starts between the two would refuse for the "
+             "wrong reason -- the ability would exist, but the node that "
+             "proves it would not.")
+
+    # --- 6. THE HEADER, THE TEST, AND THE SUITE --------------------------
+    if "latch_ingest_start.h" not in ingest_code:
+        fail("qnx/latch_ingest.c must include the shipped "
+             "qnx/latch_ingest_start.h, so the bridge and the host test "
+             "run the SAME decisions.")
+
+    # The zero value of the decision enum must be a REFUSAL.  "ALLOW is
+    # zero" is the tempting convention and it is wrong here: a decision
+    # variable that was never assigned would then be permissive.
+    if not re.search(r"LATCH_INGEST_START_REFUSE_UNKNOWN\s*=\s*0", start_code):
+        fail("qnx/latch_ingest_start.h: the decision enum's ZERO value must "
+             "be a REFUSAL (LATCH_INGEST_START_REFUSE_UNKNOWN = 0). If "
+             "ALLOW is the zero value, a decision variable that was never "
+             "assigned starts the bridge -- the opposite of failing closed.")
+    if re.search(r"LATCH_INGEST_START_ALLOW\s*=\s*0", start_code):
+        fail("qnx/latch_ingest_start.h: LATCH_INGEST_START_ALLOW must NOT be "
+             "the zero value. A zeroed decision variable must refuse to "
+             "start the bridge.")
+
+    # The host test must exercise the SHIPPED decisions, not a copy.
+    for fn in ("latch_ingest_cpu_choose(", "latch_ingest_pin_decide(",
+               "latch_ingest_ability_decide(", "latch_ingest_start_allowed(",
+               "latch_ingest_cpu_in_range("):
+        if fn not in test_code:
+            fail("qnx/latch_ingest_start_test.c must call the shipped %s. A "
+                 "test that re-implements the decision proves nothing about "
+                 "the decision." % fn)
+
+    # The test has to be in the suite, or it is a file nobody runs.
+    if "latch-ingest-start-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-ingest-start-check` target: the "
+             "ingest's start-up contract has no proof at all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-ingest-start-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-ingest-start-check, or the ingest's start-up contract is "
+             "not part of the regression suite.")
+
+    # --- 7. THE COMPILED HALF --------------------------------------------
+    cc = _c_compiler()
+    if cc is None:
+        fail("no C compiler is available, so the ingest's start-up contract "
+             "was NOT proved: the shipped qnx/latch_ingest_start.h has to "
+             "compile against its own host test and the test has to PASS. "
+             "A skipped proof is a hole in the proof.")
+    else:
+        tmp = tempfile.mkdtemp(prefix="latch_ingest_start_")
+        try:
+            test_bin = os.path.join(tmp, "latch_ingest_start_test")
+            comp = subprocess.run(
+                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
+                 "-I", qnx_dir, test_path, "-o", test_bin,
+                 "-lpthread", "-lrt", "-lm"],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                fail("the shipped qnx/latch_ingest_start.h does not compile "
+                     "against its own host test: %s. The ingest's start-up "
+                     "contract has to be reachable from a HOST test, or the "
+                     "properties it encodes cannot be proved off-target."
+                     % (comp.stderr.strip() or comp.stdout.strip()))
+            else:
+                run = subprocess.run([test_bin], capture_output=True, text=True,
+                                     timeout=120)
+                if run.returncode != 0:
+                    detail = (run.stdout.strip() or run.stderr.strip() or
+                              "exit status %d" % run.returncode)
+                    fail("the ingest's start-up contract does NOT hold: %s. "
+                         "Exactly one pin outcome may allow the start, only a "
+                         "POSITIVE ability id may allow it, and the "
+                         "effective CPU must ALWAYS be the signed one -- `-c` "
+                         "is an ASSERTION, not an OVERRIDE." % detail)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        pass_check("NEW-8 ingest start-up: the CPU is the signed contract's "
+                   "to decide (`-c` asserts it and a contradiction refuses), "
+                   "the CPU pin's result is checked and an out-of-range CPU "
+                   "is refused rather than substituted, the custom-ability "
+                   "lookup's result is checked, every decision's zero value "
+                   "is a refusal, the ability is created before the node "
+                   "that proves it, and the shipped host test proves the "
+                   "counts")
+
+
+def _refusal_after(src: str, marker: str, stop: str = None, window: int = 2400):
+    """True when a decision call is followed by an `if` that REFUSES.
+
+    THE SHAPE UNDER TEST
+
+        if (!latch_ingest_start_allowed(<decision>)) {
+            ...
+            return EXIT_FAILURE;
+        }
+
+    Three properties are checked, and all three matter:
+
+      * the `if` CONDITION tests the decision -- so the refusal is
+        conditioned on the decision and not on something else;
+      * the condition is not a TAUTOLOGY -- a refusal conditioned on the
+        ALLOW constant can never fire, which is the original defect
+        wearing a hat; and
+      * the `if` BODY returns a failure -- so the refusal actually STOPS
+        the bridge.
+
+    A decision that is computed and then IGNORED therefore does not pass.
+
+    THE FIRST `if` THAT TESTS THE DECISION IS THE ONE UNDER TEST.  A
+    LATER `if` is guarding something else, and it must not be allowed to
+    stand in for this decision's refusal -- otherwise a decision whose
+    own refusal was neutered is "covered" by the NEXT decision's refusal,
+    and the gate goes green on a tree that fails open.  That is not a
+    hypothetical: it is exactly what the first version of this helper
+    did, and its own mutation caught it.
+
+    The region is also bounded by the NEXT decision call (`stop`), so the
+    search cannot run past the decision it is about.
+    """
+    idx = src.find(marker)
+    if idx < 0:
+        return False
+    region = src[idx:idx + window]
+    if stop:
+        k = region.find(stop)
+        if k > 0:
+            region = region[:k]
+
+    # Walk the `if` statements in the region.
+    for m in re.finditer(r"\bif\s*\(", region):
+        open_paren = m.end() - 1
+        # Match the closing parenthesis of the condition.
+        depth = 0
+        j = open_paren
+        while j < len(region):
+            if region[j] == "(":
+                depth += 1
+            elif region[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j >= len(region):
+            continue
+        condition = region[open_paren:j + 1]
+        if "latch_ingest_start_allowed(" not in condition:
+            continue
+
+        # THIS is the refusal's condition.  A refusal conditioned on the
+        # ALLOW CONSTANT is a tautology: the condition is always false,
+        # so the refusal never fires.
+        if "LATCH_INGEST_START_ALLOW" in condition:
+            return False
+
+        # The body: a braced block, or a single statement.
+        k = j + 1
+        while k < len(region) and region[k] in " \t\r\n":
+            k += 1
+        if k < len(region) and region[k] == "{":
+            depth = 0
+            end = k
+            while end < len(region):
+                if region[end] == "{":
+                    depth += 1
+                elif region[end] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                end += 1
+            body = region[k:end + 1]
+        else:
+            semi = region.find(";", k)
+            body = region[k:semi + 1] if semi >= 0 else region[k:k + 200]
+
+        return bool(re.search(r"return\s+(?:EXIT_FAILURE|1)\s*;", body))
+    return False
+
+
 def verify_guestctl_is_guarded():
     """The guest-control node: TWO independent gates, and a named grant."""
     qnx_dir = os.path.join(REPO_ROOT, "qnx")
@@ -7694,6 +8198,22 @@ def main():
     # ability -- and of the four combinations, exactly ONE allows the
     # mutation.  See `verify_guestctl_is_guarded()`.
     verify_guestctl_is_guarded()
+
+    # --- THE INGEST'S START-UP CONTRACT (NEW-8) --------------------------
+    #
+    # `latch-ingest` is the unprivileged bridge between the guest's byte
+    # stream and the supervisor's proposal node, and THREE of its start-up
+    # decisions failed OPEN: the `-c` option was parsed and then silently
+    # overwritten by the signed manifest (so the option was a lie), the CPU
+    # pin's return value was discarded (so an ingest that could not be
+    # placed ran UNPINNED, possibly on the supervisor's own CPU), and a
+    # failed `procmgr_ability_lookup()` was ignored (so the bridge kept
+    # HOLDING `latch/actuator` -- the ability to move the plant).
+    #
+    # The decisions now live in the shipped `qnx/latch_ingest_start.h`, so
+    # the bridge and a host test run the same code, and every decision
+    # fails closed.  See `verify_ingest_fails_closed()`.
+    verify_ingest_fails_closed()
 
     # --- THE LPR2 PROPOSAL'S SIZE, AND WHAT THE DOCUMENTS SAY (NEW-DOC-4)
     #

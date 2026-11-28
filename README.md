@@ -153,11 +153,11 @@ GOVERNOR is not an abstract concept; it is an engineered QNX 8.0 application uti
 | QNX 8.0 Subsystem / API | Source File & Exact Line Citation | Engineering Role in GOVERNOR |
 |:---|:---|:---|
 | `resmgr_attach()` | `latch/qnx/latchd.c:3362, 3365, 3368` | Registers `/dev/latch/proposal` (ingest sink), `/dev/latch/actuator` (ability-protected actuator devctl node), and `/dev/governor` (supervisor alias) into QNX pathname space. |
-| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:2720`<br>`latch/qnx/latch_ingest.c:100` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
+| `ThreadCtl(_NTO_TCTL_RUNMASK_...)` | `latch/qnx/latchd.c:2720`<br>`latch/qnx/latch_ingest.c:111` | Binds safety-critical decision loop exclusively to core 0 (`_cpu-0`) and unprivileged ingest bridge to core 1 (`_cpu-1`). |
 | `procmgr_ability_create()` | `latch/qnx/latchd.c:3262, 3270` | Creates custom ability `latch/actuator` with `flags=0` (default-deny for both root and non-root users). |
-| `procmgr_ability()` | `latch/qnx/latch_ingest.c:399, 422` | Ingestion bridge drops all root abilities, sub-range abilities, and custom abilities at startup (Principle of Least Privilege). |
+| `procmgr_ability()` | `latch/qnx/latch_ingest.c:462, 510` | Ingestion bridge drops all root abilities, sub-range abilities, and custom abilities at startup (Principle of Least Privilege). |
 | `iofunc_client_info_able()` | `latch/qnx/latchd.c:2688, 2742, 2780` | Verifies client process holds `latch/actuator` ability before allowing actuation devctls; unauthorized callers receive `EPERM`. |
-| `ClockCycles()` | `latch/qnx/latchd.c:356`<br>`latch/qnx/latch_ingest.c:69` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
+| `ClockCycles()` | `latch/qnx/latchd.c:356`<br>`latch/qnx/latch_ingest.c:70` | Sub-microsecond hardware cycle timestamping calibrated via `SYSPAGE_ENTRY(qtime)->cycles_per_sec` for deterministic latency tracking. |
 | `ChannelCreatePulsePool()` | `latch/qnx/latchd.c:3105` | Allocates non-blocking microkernel pulse pool for deterministic 1.000 ms periodic decision events. |
 | `timer_create(CLOCK_MONOTONIC)` | `latch/qnx/latchd.c:3126` | Hardware monotonic timer delivering periodic `SIGEV_PULSE` directly to the `SCHED_FIFO` priority 63 decision loop. |
 | `devctl()` Extensions (`DCMD_LATCH_GET_GOV_STATUS`, `DCMD_LATCH_DUMP_GOV_EVENTS`) | `latch/qnx/latchd.c:3009, 3056, 3543, 3549, (+3 more)`<br>`latch/qnx/latchctl.c:142, 821` | Versioned extension devctls: `DCMD_LATCH_GET_GOV_STATUS` (`0x43`) and `DCMD_LATCH_DUMP_GOV_EVENTS` (`0x44`). |

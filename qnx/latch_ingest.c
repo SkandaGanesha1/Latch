@@ -47,6 +47,7 @@
 #include "latch_protocol.h"
 #include "latch_manifest.h"
 #include "governor_wire.h"
+#include "latch_ingest_start.h"
 
 /*
  * There is deliberately no prefill constant here any more. A previous
@@ -77,8 +78,18 @@ static inline uint64_t latch_ingest_cycles(void) {
 static int latch_ingest_pin_cpu(unsigned int target_cpu) {
 #ifdef __QNXNTO__
     unsigned int num_cpu = _syspage_ptr->num_cpu;
-    if (target_cpu >= num_cpu) {
-        target_cpu = (num_cpu > 1u) ? 1u : 0u;
+    if (!latch_ingest_cpu_in_range(target_cpu, num_cpu)) {
+        /*
+         * THE SIGNED CONTRACT NAMES A CPU THIS PLATFORM DOES NOT HAVE.
+         *
+         * The old code silently moved the bridge to CPU 1 -- or to CPU 0
+         * on a single-CPU platform -- and reported SUCCESS.  That is a
+         * silent substitution of a compiled-in default for SIGNED data,
+         * and the fallback is the CPU THE SAFETY SUPERVISOR RUNS ON.  So
+         * the bridge refuses to be placed rather than being placed
+         * somewhere else, and the caller is told why.
+         */
+        return -EINVAL;
     }
 
     int rsize = RMSK_SIZE(num_cpu);
@@ -222,7 +233,18 @@ int main(int argc, char *argv[]) {
     const char *proposal_path = LATCH_DEV_PROPOSAL;
     const char *manifest_path = "latch.manifest";
     bool explicit_manifest    = false;
-    unsigned int target_cpu   = 1u;
+    /*
+     * THE CPU, AS AN ASSERTION.
+     *
+     * `-c` is NOT an override: the SIGNED manifest is the authority for
+     * where the bridge runs, and `-c` says "I expect the bridge on CPU
+     * N".  A disagreement with the signed contract is a REFUSAL, not a
+     * substitution -- see `qnx/latch_ingest_start.h` for why an override
+     * would be wrong on this target.  The option used to be parsed and
+     * then overwritten by the manifest's value, which made it a lie.
+     */
+    bool cpu_asserted          = false;
+    unsigned int cpu_assertion = 0u;
     bool verbose              = false;
     /*
      * Producer identity (L-2).
@@ -282,7 +304,8 @@ int main(int argc, char *argv[]) {
                 explicit_manifest = true;
                 break;
             case 'c':
-                target_cpu = (unsigned int)strtoul(optarg, NULL, 10);
+                cpu_assertion = (unsigned int)strtoul(optarg, NULL, 10);
+                cpu_asserted = true;
                 break;
             case 't':
                 producer_tag = (uint16_t)strtoul(optarg, NULL, 10);
@@ -298,7 +321,9 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Usage: %s [-i input_dev] [-o /dev/latch/proposal|-] "
                                 "[-m latch.manifest] [-c cpu] [-t producer_tag] "
                                 "[-e session_epoch] [-v]\n"
-                                "       %s --session-epoch N --producer-tag N\n",
+                                "       %s --session-epoch N --producer-tag N\n"
+                                "       (-c ASSERTS the signed contract's ingest.cpu; a "
+                                "disagreement refuses to start)\n",
                         argv[0], argv[0]);
                 return EXIT_FAILURE;
         }
@@ -370,7 +395,28 @@ int main(int argc, char *argv[]) {
                 manifest_path, err_buf);
         return EXIT_FAILURE;
     }
-    target_cpu = manifest.ingest.cpu;
+    /*
+     * THE CPU IS THE SIGNED CONTRACT'S TO DECIDE.
+     *
+     * The manifest is loaded before the CPU is chosen, because the
+     * manifest is the authority.  `-c` may ASSERT the CPU the bridge
+     * expects; it may not CHANGE it.  A contradiction is a refusal.
+     */
+    const latch_ingest_cpu_choice_t cpu_choice =
+        latch_ingest_cpu_choose(cpu_asserted, cpu_assertion, manifest.ingest.cpu);
+    if (!latch_ingest_start_allowed(cpu_choice.decision)) {
+        fprintf(stderr, "latch-ingest: FATAL: the requested CPU (%u) contradicts the signed "
+                        "contract's ingest.cpu (%u); refusing to start (Fail-Closed)\n",
+                cpu_assertion, manifest.ingest.cpu);
+        return EXIT_FAILURE;
+    }
+    const unsigned int target_cpu = cpu_choice.cpu;
+    if (verbose) {
+        fprintf(stderr, "[latch-ingest] cpu=%u (%s)\n", target_cpu,
+                cpu_choice.asserted ? (cpu_choice.agrees ? "asserted, agrees with the signed contract"
+                                                        : "asserted, DISAGREES with the signed contract")
+                                     : "from the signed contract");
+    }
     if (strcmp(proposal_path, LATCH_DEV_PROPOSAL) == 0 && manifest.paths.proposal[0] != '\0') {
         proposal_path = manifest.paths.proposal;
     }
@@ -379,7 +425,24 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, latch_ingest_sig_handler);
     signal(SIGPIPE, SIG_IGN);
 
-    (void)latch_ingest_pin_cpu(target_cpu);
+    /*
+     * THE PIN IS FATAL.
+     *
+     * The bridge's whole reason for being on `_cpu-1` is that it is not
+     * on `_cpu-0`, where the safety supervisor runs.  A bridge that could
+     * not be placed used to carry on anyway -- UNPINNED, on whatever CPU
+     * the scheduler chose -- because the pin's return value was
+     * discarded.  So the result is checked, and a failure stops the
+     * bridge.
+     */
+    const int pin_rc = latch_ingest_pin_cpu(target_cpu);
+    const latch_ingest_start_decision_t pin_decision = latch_ingest_pin_decide(pin_rc);
+    if (!latch_ingest_start_allowed(pin_decision)) {
+        const int pin_errno = (pin_rc < 0) ? (-pin_rc) : EINVAL;
+        fprintf(stderr, "latch-ingest: FATAL: could not pin to CPU %u (%s); refusing to start "
+                        "UNPINNED (Fail-Closed)\n", target_cpu, strerror(pin_errno));
+        return EXIT_FAILURE;
+    }
 
     int in_fd = STDIN_FILENO;
     if (input_path != NULL && strcmp(input_path, "-") != 0) {
@@ -417,18 +480,42 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     if (manifest.paths.ability[0] != '\0') {
-        int custom_aid = procmgr_ability_lookup(manifest.paths.ability);
-        if (custom_aid > 0) {
-            int custom_rc = procmgr_ability(0, drop_flags | (unsigned)custom_aid, PROCMGR_AID_EOL);
-            if (custom_rc != EOK) {
-                int err = (custom_rc > 0) ? custom_rc : errno;
-                fprintf(stderr, "latch-ingest: FATAL: procmgr_ability(%s) failed (%s) (Fail-Closed)\n",
-                        manifest.paths.ability, strerror(err));
-                if (in_fd != STDIN_FILENO) {
-                    close(in_fd);
-                }
-                return EXIT_FAILURE;
+        /*
+         * THE ABILITY LOOKUP IS FATAL.
+         *
+         * The manifest names the custom ability the bridge must
+         * surrender -- `latch/actuator` in every shipped contract.  A
+         * FAILED lookup means the bridge cannot prove it has surrendered
+         * it, and carrying on would leave the guest's bridge HOLDING the
+         * ability to move the plant: the failure mode of the old code
+         * was an ESCALATION, not a crash.  So the lookup's result is
+         * checked, and a failure stops the bridge.
+         *
+         * There is no start-up race here: `latchd` creates the ability
+         * BEFORE it attaches the actuator node, and every shipped
+         * buildfile waits for that node before it starts the guest.
+         */
+        const int custom_aid = procmgr_ability_lookup(manifest.paths.ability);
+        const latch_ingest_start_decision_t ability_decision =
+            latch_ingest_ability_decide(custom_aid);
+        if (!latch_ingest_start_allowed(ability_decision)) {
+            fprintf(stderr, "latch-ingest: FATAL: could not resolve the custom ability '%s' "
+                            "(lookup returned %d); refusing to start while it may still be held "
+                            "(Fail-Closed)\n", manifest.paths.ability, custom_aid);
+            if (in_fd != STDIN_FILENO) {
+                close(in_fd);
             }
+            return EXIT_FAILURE;
+        }
+        int custom_rc = procmgr_ability(0, drop_flags | (unsigned)custom_aid, PROCMGR_AID_EOL);
+        if (custom_rc != EOK) {
+            int err = (custom_rc > 0) ? custom_rc : errno;
+            fprintf(stderr, "latch-ingest: FATAL: procmgr_ability(%s) failed (%s) (Fail-Closed)\n",
+                    manifest.paths.ability, strerror(err));
+            if (in_fd != STDIN_FILENO) {
+                close(in_fd);
+            }
+            return EXIT_FAILURE;
         }
     }
 #endif
