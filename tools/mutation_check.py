@@ -1803,6 +1803,57 @@ MUTATIONS = [
        "    (void)has_ability;\n")]),
 
     # ------------------------------------------------------------------------
+    # NEW-2 / M-10: THE HYPERVISOR HOST'S `settypeid` IS SCOPED
+    # ------------------------------------------------------------------------
+    #
+    # `qvm_host_t` held a BARE `settypeid`, which permits a transition into
+    # ANY type in the policy -- including `latchd_t`, the safety supervisor
+    # itself.  A compromised hypervisor-host process could therefore
+    # BECOME the supervisor and then hold `latch/actuator`.
+    #
+    # TWO mutations, because "the scoped form is present" and "the bare
+    # form is ABSENT" are two different properties: a policy that held
+    # BOTH would still permit the transition, because the scoped ability
+    # is a RESTRICTION and not an addition.
+    ("NEW-2: qvm_host_t regains the UNRESTRICTED settypeid (a bare "
+     "`settypeid` permits a transition into ANY type in the policy -- "
+     "including latchd_t, the safety supervisor itself)",
+     "qnx/latch.secpol",
+     [("    settypeid:latch_ingest_t\n", "    settypeid\n")]),
+
+    ("NEW-2: qvm_host_t holds BOTH the scoped and the bare settypeid (the "
+     "scoped ability is a RESTRICTION, not an addition -- holding both "
+     "still permits the transition)",
+     "qnx/latch.secpol",
+     [("    settypeid:latch_ingest_t\n",
+       "    settypeid:latch_ingest_t\n    settypeid\n")]),
+
+    # ------------------------------------------------------------------------
+    # NEW-2 / M-10: THE POST-AUDIT VALIDATION RECORD
+    # ------------------------------------------------------------------------
+    #
+    # §8 of the audit review said the narrowing was "to be validated on the
+    # enforced image in its own reviewed change".  A recommendation applied
+    # without a validation record is a recommendation adopted on the
+    # strength of one run -- the mistake the audit exists to prevent.
+    ("NEW-2: the post-audit enforced-validation section is GONE (the "
+     "narrowing was applied with no record of what was validated, and of "
+     "what was NOT)",
+     "docs/secpol-audit-review.md",
+     [("## 9. Post-Audit Enforced Validation (`M-10`)\n", "")]),
+
+    ("NEW-2: the post-audit validation OVERCLAIMS -- it says the negative "
+     "transition was demonstrated on the target, which no shipped image "
+     "ever attempts (a record that hides its own limit is worse than no "
+     "record)",
+     "docs/secpol-audit-review.md",
+     [("| the **NEGATIVE** transition | **NOT demonstrated.** No shipped "
+       "image attempts a transition into `latchd_t`, so the refusal is a "
+       "property of the policy text, not an observed target event. |",
+       "| the **NEGATIVE** transition | **Demonstrated.** The policy "
+       "refused the transition into `latchd_t` on the target. |")]),
+
+    # ------------------------------------------------------------------------
     # THE EVIDENCE CAPTURE'S BUILD PREREQUISITE
     # ------------------------------------------------------------------------
     #

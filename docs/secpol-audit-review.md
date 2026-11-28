@@ -258,3 +258,58 @@ The target builds the disposable image, boots it, runs the 235-frame
 scenario, reads the five observation files, and writes
 `docs/evidence/governor/secpol-audit.txt`. A failed run exits non-zero
 **without touching `docs/evidence/`**.
+
+---
+
+## 9. Post-Audit Enforced Validation (`M-10`)
+
+§8 said the one actionable recommendation — narrow `qvm_host_t`'s
+unrestricted `settypeid` to `settypeid:latch_ingest_t` — was to be
+validated on the **enforced** image "in its own reviewed change". This
+section is that change's validation record.
+
+**What was changed.** `qnx/latch.secpol` — `qvm_host_t` now holds
+`settypeid:latch_ingest_t` instead of the bare `settypeid`. Nothing else
+in the policy changed. The proposal channel type was deliberately **not**
+split: that is a separate policy change with its own on-target
+requirements, so it is recorded here rather than applied.
+
+**What was measured, and where.** The enforced QNX AArch64 `virt` image
+(`qnx/latch_qemu_governor.build`, whose buildfile pushes the compiled
+policy with `secpolpush`) was booted on 2026-11-28 from the tree that
+carries the narrowing. The evidence is the archive's own transcript,
+`docs/evidence/governor/governor-vm-kill-resume.txt`, refreshed by that
+run:
+
+| observation | result |
+|---|---|
+| the policy was **ENFORCED**, not merely compiled | `latchctl grant-check` from the operator shell printed **DENIED**, and the supervisor counted `EPERM Rejections: 1`. The least-privilege boundary was live during the run, so a permitted transition is a fact about an enforced policy and not about an unenforced one. |
+| the boot-time transition | `qvm_host_t` → `latch_ingest_t` was permitted. The qvmconf's `hostdev >"\|on -T latch_ingest_t …"` spawn succeeded, the ingest opened the proposal node and the guest streamed (`[GUEST ACTIVE] Successfully received 53 proposals from Linux guest VM`). A refused transition would have produced no ingest and therefore no stream at all. |
+| the transition after a **RESTART** | the lifecycle daemon's `latchctl guest-restart` re-launched qvm (`generation 2`), the new qvm spawned a new ingest under the same scoped rule, the restarted guest streamed again (`[VERIFIED] The new session is streaming (rx 106 -> 114)`) and the supervisor reported a **NEW** writer session (`Session Gen: 1 -> 2`, `Writer Held: 1`). |
+| the **NEGATIVE** transition | **NOT demonstrated.** No shipped image attempts a transition into `latchd_t`, so the refusal is a property of the policy text, not an observed target event. |
+
+The negative case is the important limit and it is stated rather than
+papered over. "The bare `settypeid` is gone" is proved by the policy and
+by the gate (`tools/consistency_check.py` requires the scoped form **and**
+the absence of the bare form, and two mutations cover the two halves
+separately). "A transition into `latchd_t` is refused" is proved
+**off-target**, by that gate's own derivation. Demonstrating it on target
+would need a disposable image whose qvmconf deliberately asks for a
+transition the policy forbids — and a deliberately-malicious image is not
+something this repository ships, so the claim is not made.
+
+**A LATER capture of the same scenario did not complete, and it is
+recorded rather than hidden.** The VM-kill + restart capture
+(`make -C qnx evidence-governor-vm-kill`) was run a second time against
+this same enforced image later the same day. PHASES 1-11 passed —
+including the operator's `latchctl guest-restart`, the guest status read
+through a read-only open, and the new writer session — but PHASE 12 (the
+restarted guest must stream again) did not: the restarted guest Linux
+delivered no frame within the harness's 120 s window (`rx 406 -> 406`).
+The cause was the **workstation**, not the policy: the host had ~190 MiB
+of free RAM and ~18 GiB of swap in use while that capture ran, and QEMU
+had been asked for 2 GiB of guest RAM. A memory-exhausted host cannot
+boot a Linux guest in any bounded time — the same class of failure as the
+TCG measurement in AGENTS.md §4d. That run wrote **no** archive file (the
+harness writes the archive only on success), so it claims **no** PASS,
+and the transcript quoted above is the earlier, complete one.

@@ -125,6 +125,19 @@ allow operator_shell_t self:ability {
     latch/guestctl
 };
 
+# The hypervisor host.  It owns the QVM process and the guest's memory, and
+# it is the ONLY type the guest's ingest is spawned into.
+#
+# `settypeid` is SCOPED to `latch_ingest_t` (NEW-2 / M-10), and that is the
+# whole point of the scoping: a BARE `settypeid` permits a transition into
+# ANY type in this policy -- including `latchd_t`, the safety supervisor
+# itself -- so a compromised hypervisor-host process could BECOME the
+# supervisor and then hold `latch/actuator`.  The scoped grammar is the
+# same one `latch_guestd_t` already uses for `settypeid:qvm_host_t`, and
+# the one transition the `secpolgenerate` audit actually OBSERVED was
+# `settypeid:latch_ingest_t`, matching every profile's identical
+# `hostdev >"|on -T latch_ingest_t ..."` form.  The disposition of that
+# audit finding is `docs/secpol-audit-review.md`.
 allow qvm_host_t self:ability {
     hyp
     io
@@ -141,7 +154,7 @@ allow qvm_host_t self:ability {
     event
     fork
     spawn
-    settypeid
+    settypeid:latch_ingest_t
 };
 
 # The guest-lifecycle daemon (U-1).

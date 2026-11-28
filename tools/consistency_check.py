@@ -9329,6 +9329,82 @@ def main():
                "spawn + settypeid:qvm_host_t, the guest-control channel is its own type, "
                "and the operator shell still cannot actuate")
 
+    # 5a-bis. THE HYPERVISOR HOST'S `settypeid` IS SCOPED (NEW-2 / M-10).
+    #
+    # `qvm_host_t` used to hold a BARE `settypeid`, which permits a
+    # transition into ANY type in this policy -- including `latchd_t`, the
+    # safety supervisor itself.  A compromised hypervisor-host process
+    # could therefore BECOME the supervisor and then hold `latch/actuator`,
+    # which is the one thing the whole trust boundary exists to prevent.
+    #
+    # The fix is the SCOPED grammar, `settypeid:latch_ingest_t`, which is
+    # the same form `latch_guestd_t` already uses for
+    # `settypeid:qvm_host_t` and the only transition the
+    # `secpolgenerate` audit actually OBSERVED.
+    #
+    # The check is written as "the block contains the scoped form AND does
+    # NOT contain the bare form", because a policy that held BOTH would
+    # still permit the transition -- the scoped ability is a restriction,
+    # not an addition.
+    qvm_block = _secpol_block(secpol, "qvm_host_t")
+    if not qvm_block:
+        fail("Security policy does not declare an ability block for qvm_host_t -- "
+             "the hypervisor host's privileges are undeclared")
+    if "settypeid:latch_ingest_t" not in qvm_block:
+        fail("qvm_host_t must narrow settypeid to settypeid:latch_ingest_t (NEW-2 / "
+             "M-10). A BARE settypeid permits a transition into ANY type in this "
+             "policy -- including latchd_t, the safety supervisor itself -- so a "
+             "compromised hypervisor-host process could BECOME the supervisor.")
+    if "settypeid" in qvm_block.replace("settypeid:latch_ingest_t", ""):
+        fail("qvm_host_t must hold settypeid ONLY for latch_ingest_t (NEW-2 / M-10). "
+             "A policy that holds BOTH the scoped and the bare form still permits "
+             "the transition: the scoped ability is a RESTRICTION, not an addition.")
+    pass_check("M-10 qvm_host_t settypeid narrowed to settypeid:latch_ingest_t")
+
+    # 5a-ter. THE POST-AUDIT VALIDATION IS RECORDED (NEW-2 / M-10).
+    #
+    # §8 of `docs/secpol-audit-review.md` said the narrowing was "to be
+    # validated on the enforced image in its own reviewed change".  A
+    # recommendation that is applied without a validation record is a
+    # recommendation that was adopted on the strength of one run -- the
+    # mistake the audit exists to prevent.  So the record is required, and
+    # it is required to carry the LIMIT as well as the result: a review
+    # that says "validated" without saying what was NOT validated is the
+    # failure mode this document already exists to prevent (§7).
+    review_path = os.path.join(REPO_ROOT, "docs", "secpol-audit-review.md")
+    if not os.path.isfile(review_path):
+        fail("docs/secpol-audit-review.md is missing: the audit's one actionable "
+             "recommendation was applied, and the applied change must carry its "
+             "own validation record")
+    with open(review_path, "r", encoding="utf-8") as f:
+        review = f.read()
+    m10_section = ""
+    for marker in ("## 9. Post-Audit Enforced Validation",
+                   "## 10. Post-Audit Enforced Validation"):
+        idx = review.find(marker)
+        if idx >= 0:
+            m10_section = review[idx:]
+            break
+    if not m10_section:
+        fail("docs/secpol-audit-review.md has no post-audit enforced-validation "
+             "section: qvm_host_t's settypeid was narrowed, and the applied change "
+             "must record what was validated on the enforced image")
+    for token, why in (
+            ("enforced",
+             "the validation was on an ENFORCED image; an unenforced run proves "
+             "nothing about a policy"),
+            ("settypeid:latch_ingest_t",
+             "the section must name the scoped form that was applied"),
+            ("NOT demonstrated",
+             "the section must state which case was NOT demonstrated on the "
+             "target, so the record cannot be read as a blanket claim")):
+        if token not in m10_section:
+            fail("docs/secpol-audit-review.md's post-audit validation section does "
+                 "not state '{0}': {1}".format(token, why))
+    pass_check("M-10 post-audit validation recorded: the scoped settypeid was "
+               "validated on the ENFORCED image, and the section states which "
+               "case was NOT demonstrated")
+
     # 5b. The security-policy generation audit's WRITTEN REVIEW (U-6 / M-4).
     #
     # The audit's value is NOT the raw observation -- it is the review that

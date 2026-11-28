@@ -25,8 +25,8 @@ pidin
        1  13 /proc/boot/procnto-smp-instr   1f NANOSLEEP                                  
        1  14 /proc/boot/procnto-smp-instr  10r ???                                        
        1  15 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  16 /proc/boot/procnto-smp-instr  10r RUNNING                                    
-       1  17 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  16 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  17 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
        1  18 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  19 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  20 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
@@ -38,7 +38,7 @@ pidin
        1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  27 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  29 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
+       1  29 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        1  30 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
        2   2 proc/boot/devc-serpl011      254i INTR                                       
@@ -48,8 +48,10 @@ pidin
     8196   2 proc/boot/pipe                10r RECEIVE        1                           
     8196   3 proc/boot/pipe                10r RECEIVE        1                           
     8196   4 proc/boot/pipe                10r RECEIVE        1                           
-   12293   1 proc/boot/latchd              10f RECEIVE        1                           
-   12293   2 proc/boot/latchd              63f RECEIVE        2                           
+   12293   1 proc/boot/latchd              10f RECEIVE        2                           
+   12293   2 proc/boot/latchd              20f RECEIVE        1                           
+   12293   3 proc/boot/latchd              10f RECEIVE        3                           
+   12293   4 proc/boot/latchd              63f RECEIVE        4                           
    16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
    16391   1 proc/boot/latch_guestd        10r RECEIVE        1                           
    24584   1 proc/boot/qvm                 10r REPLY          1                           
@@ -102,6 +104,8 @@ pidin -F "%a %b %_ %28n"
     8196   4 pipe_t           proc/boot/pipe              
    12293   1 latchd_t         proc/boot/latchd            
    12293   2 latchd_t         proc/boot/latchd            
+   12293   3 latchd_t         proc/boot/latchd            
+   12293   4 latchd_t         proc/boot/latchd            
    16390   1 latchlog_t       proc/boot/latchlog          
    16391   1 latch_guestd_t   proc/boot/latch_guestd      
    24584   1 qvm_host_t       proc/boot/qvm               
@@ -112,36 +116,36 @@ pidin -F "%a %b %_ %28n"
   [VERIFIED] qvm=qvm_host_t, latch_guestd=latch_guestd_t, latchd=latchd_t, operator shell=operator_shell_t.
 
 [PHASE 3] Waiting for Linux guest VM to boot and stream telemetry (rx >= 5)...
-  [GUEST ACTIVE] Successfully received 196 proposals from Linux guest VM.
+  [GUEST ACTIVE] Successfully received 53 proposals from Linux guest VM.
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 10923 ticks
+Tick Counter         : 17529 ticks
 Current Mode         : HP (High Performance)
-Actuator Angle       : 100 mrad
+Actuator Angle       : 9 mrad
 Velocity / Omega     : 0 mrad/tick | 0 mrad/s
-Last Proposed Angle  : 100 mrad (seq=196)
-Decision Latency     : last = 115 cyc (1840 ns) | max = 67303 cyc (1076848 ns)
-Proposals Received   : 196
+Last Proposed Angle  : 100 mrad (seq=53)
+Decision Latency     : last = 315 cyc (5040 ns) | max = 214173 cyc (3426768 ns)
+Proposals Received   : 53
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
-Ring Drops / WCET    : 0 drops | 2 overruns
-Proposal Backlog     : peak 3 frames | 0 over limit
+Ring Drops / WCET    : 0 drops | 4 overruns
+Proposal Backlog     : peak 2 frames | 0 over limit
 EPERM Rejections     : 0
 Operator Hold Locked : NO
 Active Fault Bits    : 0x0000 (NONE)
 Latched Fault Bits   : 0x0000 (NONE)
 Clean Streak         : 0 frames
-GOVERNOR             : enabled | rung=HP (0)
-V2 Session / Lease   : active | 95 ticks left | lease age 5 ticks
-Warm-up / Agent      : 154 heartbeats | state 1
-Recovery Clean       : 16 accepted commands
-Deadline Misses      : 1 overruns
+GOVERNOR             : enabled | rung=ADVISE (1)
+V2 Session / Lease   : active | 65 ticks left | lease age 35 ticks
+Warm-up / Agent      : 52 heartbeats | state 1
+Recovery Clean       : 0 accepted commands
+Deadline Misses      : 2 overruns
 HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
 Lease Owner          : valid | producer tag 1 | session dead NO
 Foreign / Takeovers  : 0 frames | 0 takeovers
-Session Epoch        : bound | 0x3AB6D5F6
+Session Epoch        : bound | 0x169A1F57
 Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=196
+Coherence            : valid | counter=53
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
 
@@ -150,7 +154,7 @@ slay -9 qvm
 #
 
 [PHASE 5] Verifying Process Table: Guest VM Purged From Memory...
-[latch-ingest] Completed: 204 frames processed (204 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
+[latch-ingest] Completed: 65 frames processed (65 nominal forwarded, 0 silence ticks, 0 wire faults sanitized) -> /dev/latch/proposal
 pidin
      pid tid name                         prio STATE          Blocked                     
        1   1 /proc/boot/procnto-smp-instr   0f RUNNING                                    
@@ -169,7 +173,7 @@ pidin
        1  14 /proc/boot/procnto-smp-instr  10r ???                                        
        1  15 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  16 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  17 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
+       1  17 /proc/boot/procnto-smp-instr  10r RUNNING                                    
        1  18 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  19 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  20 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
@@ -180,57 +184,59 @@ pidin
        1  25 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  26 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  27 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  28 /proc/boot/procnto-smp-instr  11r RECEIVE        1                           
+       1  28 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        1  29 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
-       1  30 /proc/boot/procnto-smp-instr  10r RUNNING                                    
+       1  30 /proc/boot/procnto-smp-instr  10r RECEIVE        1                           
        2   1 proc/boot/devc-serpl011       10r RECEIVE        1                           
        2   2 proc/boot/devc-serpl011      254i INTR                                       
     4099   1 proc/boot/slogger2            10r RECEIVE        1                           
     4099   2 proc/boot/slogger2            10r RECEIVE        2                           
     8196   1 proc/boot/pipe                10r SIGWAITINFO                                
-    8196   2 proc/boot/pipe                10r RECEIVE        1                           
+    8196   2 proc/boot/pipe                30r RECEIVE        1                           
     8196   3 proc/boot/pipe                10r RECEIVE        1                           
-    8196   4 proc/boot/pipe                30r RECEIVE        1                           
-    8196   5 proc/boot/pipe                 8r RECEIVE        1                           
-   12293   1 proc/boot/latchd              10f RECEIVE        1                           
-   12293   2 proc/boot/latchd              63f RECEIVE        2                           
+    8196   4 proc/boot/pipe                10r RECEIVE        1                           
+    8196   5 proc/boot/pipe                30r RECEIVE        1                           
+   12293   1 proc/boot/latchd              10f RECEIVE        2                           
+   12293   2 proc/boot/latchd              20f RECEIVE        1                           
+   12293   3 proc/boot/latchd              30f RECEIVE        3                           
+   12293   4 proc/boot/latchd              63f RECEIVE        4                           
    16390   1 proc/boot/latchlog            10r NANOSLEEP                                  
    16391   1 proc/boot/latch_guestd        10r RECEIVE        1                           
    24585   1 proc/boot/ksh                 10r SIGSUSPEND                                 
-  245768   1 proc/boot/pidin               10r REPLY          1                           
+  335880   1 proc/boot/pidin               10r REPLY          1                           
 #
   [VERIFIED] qvm is completely purged from memory. Safety supervisor remains active.
 
 [PHASE 6] Verifying Supervisor State After Guest Loss...
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 12519 ticks
+Tick Counter         : 19278 ticks
 Current Mode         : HOLD (High Assurance 1)
 Actuator Angle       : 0 mrad
-Velocity / Omega     : 0 mrad/tick | -10000 mrad/s
-Last Proposed Angle  : 100 mrad (seq=204)
-Decision Latency     : last = 4362 cyc (69792 ns) | max = 67303 cyc (1076848 ns)
-Proposals Received   : 204
+Velocity / Omega     : 0 mrad/tick | 0 mrad/s
+Last Proposed Angle  : 100 mrad (seq=65)
+Decision Latency     : last = 36418 cyc (582688 ns) | max = 214173 cyc (3426768 ns)
+Proposals Received   : 65
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
-Ring Drops / WCET    : 0 drops | 5 overruns
-Proposal Backlog     : peak 3 frames | 0 over limit
+Ring Drops / WCET    : 0 drops | 7 overruns
+Proposal Backlog     : peak 2 frames | 0 over limit
 EPERM Rejections     : 0
 Operator Hold Locked : NO
 Active Fault Bits    : 0x0000 (NONE)
 Latched Fault Bits   : 0x2000 (HEARTBEAT)
 Clean Streak         : 0 frames
 GOVERNOR             : enabled | rung=LATCH (5)
-V2 Session / Lease   : active | 42 ticks left | lease age 1555 ticks
-Warm-up / Agent      : 154 heartbeats | state 1
+V2 Session / Lease   : active | 51 ticks left | lease age 1641 ticks
+Warm-up / Agent      : 64 heartbeats | state 1
 Recovery Clean       : 0 accepted commands
-Deadline Misses      : 1 overruns
+Deadline Misses      : 2 overruns
 HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
 Lease Owner          : valid | producer tag 1 | session dead YES
 Foreign / Takeovers  : 0 frames | 0 takeovers
-Session Epoch        : bound | 0x3AB6D5F6
+Session Epoch        : bound | 0x169A1F57
 Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
-Coherence            : valid | counter=204
+Coherence            : valid | counter=65
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
   Current Rung   : LATCH
@@ -255,8 +261,8 @@ Session Gen      : 1
 /proc/boot/latchctl guest-restart --timeout 60
 latchctl: guest VM stopped (generation 1, running=NO)
 latchctl: writer-session handoff OBSERVED (no writer OCB is open)
-latch_guestd: guest VM started (pid 282634, generation 2) argv: '/proc/boot/qvm' '@/proc/boot/latch_qemu_governor.qvmconf'
-latchctl: guest VM started (pid 282634, generation 2)
+latch_guestd: guest VM started (pid 372746, generation 2) argv: '/proc/boot/qvm' '@/proc/boot/latch_qemu_governor.qvmconf'
+latchctl: guest VM started (pid 372746, generation 2)
 latchctl: The guest must boot and re-establish its session before it streams again; the supervisor stays in LATCH until then.
 #
   [VERIFIED] Writer-session handoff OBSERVED (polled, not timed); guest re-launched.
@@ -265,7 +271,7 @@ latchctl: The guest must boot and re-establish its session before it streams aga
 /proc/boot/latchctl guest-status
 === LATCH Guest VM Status ===
 Guest Running    : YES
-Guest PID        : 282634
+Guest PID        : 372746
 Launch Generation: 2
 Last Exit Status : 0x9
 #
@@ -282,36 +288,36 @@ Session Gen      : 2
 [PHASE 12] Waiting For The New Session To Stream...
 /proc/boot/latchctl status
 === LATCH Simplex Supervisor Status ===
-Tick Counter         : 23898 ticks
+Tick Counter         : 38570 ticks
 Current Mode         : HOLD (High Assurance 1)
 Actuator Angle       : 0 mrad
 Velocity / Omega     : 0 mrad/tick | 0 mrad/s
-Last Proposed Angle  : 37 mrad (seq=235)
-Decision Latency     : last = 92 cyc (1472 ns) | max = 67303 cyc (1076848 ns)
-Proposals Received   : 439
+Last Proposed Angle  : 100 mrad (seq=49)
+Decision Latency     : last = 250 cyc (4000 ns) | max = 214173 cyc (3426768 ns)
+Proposals Received   : 114
 Wire Faults Caught   : 0
 Envelope Vetoes      : 0
-Ring Drops / WCET    : 0 drops | 6 overruns
-Proposal Backlog     : peak 4 frames | 0 over limit
+Ring Drops / WCET    : 0 drops | 9 overruns
+Proposal Backlog     : peak 2 frames | 0 over limit
 EPERM Rejections     : 1
 Operator Hold Locked : NO
 Active Fault Bits    : 0x0000 (NONE)
-Latched Fault Bits   : 0x7800 (EPERM|UNIT|HEARTBEAT|WIDEN)
+Latched Fault Bits   : 0x2800 (EPERM|HEARTBEAT)
 Clean Streak         : 0 frames
 GOVERNOR             : enabled | rung=LATCH (5)
-V2 Session / Lease   : active | 26 ticks left | lease age 374 ticks
-Warm-up / Agent      : 154 heartbeats | state 1
+V2 Session / Lease   : active | 76 ticks left | lease age 24 ticks
+Warm-up / Agent      : 48 heartbeats | state 1
 Recovery Clean       : 0 accepted commands
-Deadline Misses      : 1 overruns
+Deadline Misses      : 2 overruns
 HOMEOSTAT            : disabled | scale_q8=256 (256=unity) | v_max ceiling=0 | stress epochs=0
-Lease Owner          : valid | producer tag 1 | session dead YES
+Lease Owner          : valid | producer tag 1 | session dead NO
 Foreign / Takeovers  : 0 frames | 0 takeovers
-Session Epoch        : bound | 0x00E9042E
-Rate / Shrink        : 40 tokens | active=1 v_max=12 scale_q8=128
-Coherence            : valid | counter=235
+Session Epoch        : bound | 0x245510FE
+Rate / Shrink        : 40 tokens | active=0 v_max=0 scale_q8=255
+Coherence            : valid | counter=49
 Manifest SHA-256     : a29b81341077ac0e4276d91b5ff703c700243db69b674f7cbb466c0689ddc53b
 #
-  [VERIFIED] The new session is streaming (rx 208 -> 439).
+  [VERIFIED] The new session is streaming (rx 106 -> 114).
 
 [PHASE 13] Writer-Session State After The Restart:
 /proc/boot/latchctl session-status
