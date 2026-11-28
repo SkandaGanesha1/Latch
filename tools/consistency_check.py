@@ -2446,6 +2446,1029 @@ def verify_lpr2_size_claims():
                    "checked)" % (size, checked))
 
 
+# ---------------------------------------------------------------------------
+# THE GUEST'S CROSS-CORE PUBLICATION PROTOCOL (NEW-6)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS MEASURED, AND IT IS A MISSING MEMORY BARRIER.
+#
+# The guest has TWO vCPUs (`_cpu-2` and `_cpu-3` in
+# `qnx/latch_qemu_governor.qvmconf`), so the verdict watcher and the main
+# thread can be running on DIFFERENT cores at the same time.  AArch64 is
+# WEAKLY ORDERED: a store can become VISIBLE to another core before an
+# EARLIER store of the same program has become visible, and two loads can
+# be reordered with respect to each other.
+#
+# The code this replaces used a COMPILER barrier:
+#
+#     static inline void fb_barrier(void) {
+#         __asm__ volatile("" ::: "memory");
+#     }
+#
+# That stops the COMPILER from reordering the accesses, and it does
+# NOTHING for the CPU.  Two consequences, both real:
+#
+#   1. the watcher's summary stores could become visible AFTER the
+#      volatile flag store that announces them, so the main thread could
+#      read a HALF-UPDATED summary -- and the summary is PLAIN memory, so
+#      nothing else ordered it;
+#
+#   2. the two sequence-number stores could become visible in the
+#      OPPOSITE order, so the watcher could read `cmd_seq = N` together
+#      with `seq_sent = N-1`.  The guest's own documentation claims the
+#      opposite -- "a fold that saw `cmd_seq = N` is guaranteed to see
+#      `seq_sent >= N`" -- and a compiler barrier did not deliver that
+#      guarantee on weakly ordered hardware.  A verdict thrown away by
+#      that stale read is a verdict the guest never acts on.
+#
+# A compiler barrier is not a memory barrier, and a guest with two cores
+# needs a memory barrier.
+#
+# THE FIX IS A SHARED PROTOCOL, AND THE ORDER LIVES INSIDE IT
+# -----------------------------------------------------------
+# `guest/latch_fb_publish.h` owns the whole protocol: the release fence
+# is BEFORE the store, the acquire fence is AFTER the load, and the
+# sequence-number pair is stored general-first and read command-first
+# with a fence between the two.  A call site cannot spell the order
+# wrongly, because there is only one way to spell it -- the same lesson
+# the operator-hold fix (NEW-4) taught.
+#
+# THE GATE HAS TWO HALVES, AND BOTH ARE NECESSARY
+# ------------------------------------------------
+#   1. STRUCTURAL: the protocol's shape is read out of the header and
+#      out of the guest, and the CROSS-CORE SET is DERIVED -- from the
+#      thread boundary and a call graph, not from a list of names.  A
+#      gate that hard-coded the seven words would stop covering
+#      anything the day a sixth word was added, and the day it was not
+#      updated is the day the defect comes back.
+#
+#   2. INSTRUCTION: the SHIPPED header is compiled for AArch64 and the
+#      generated assembly is read.  This is the half that proves the
+#      fences are HARDWARE barriers: a compiler barrier generates no
+#      instruction at all, so the `dmb` has to be there.
+#
+# The instruction half needs an AArch64 compiler.  Both routes are
+# tried, and BOTH are known to work:
+#
+#   - `aarch64-linux-gnu-gcc` (the cross compiler this repository
+#     already needs for `make guest-initrd`);
+#   - `clang --target=aarch64-linux-gnu`, which needs NO sysroot --
+#     clang carries its own freestanding headers -- and is therefore
+#     available on the CI runner image without installing anything.
+#
+# If neither is present the gate FAILS.  A gate that cannot run its own
+# decisive half must not report success: "the instruction-level proof
+# was skipped" is a hole in the proof, and this repository's rule is
+# that a skipped check is a failure.
+# ---------------------------------------------------------------------------
+
+
+def _c_code_only(src):
+    """Return `src` with comments removed and literal CONTENTS masked.
+
+    Length is preserved, so an offset into the result is an offset into
+    the original -- which is what lets the gates below say "this
+    identifier is inside THAT call" without re-parsing the file, and
+    what lets a brace-depth map be indexed by position.
+
+    The string and character literal CONTENTS are masked rather than
+    removed, because a literal may contain a brace or a parenthesis and
+    the depth map and the call matcher both have to ignore them.
+    """
+    out = []
+    i = 0
+    n = len(src)
+    while i < n:
+        ch = src[i]
+        if ch == '"' or ch == "'":
+            quote = ch
+            out.append(ch)
+            i += 1
+            while i < n:
+                if src[i] == "\\" and i + 1 < n:
+                    out.append("xx")
+                    i += 2
+                    continue
+                if src[i] == quote:
+                    out.append(quote)
+                    i += 1
+                    break
+                out.append("x")
+                i += 1
+            continue
+        if src.startswith("/*", i):
+            end = src.find("*/", i + 2)
+            if end < 0:
+                out.append(" " * (n - i))
+                i = n
+            else:
+                out.append(" " * (end + 2 - i))
+                i = end + 2
+            continue
+        if src.startswith("//", i):
+            end = src.find("\n", i)
+            if end < 0:
+                out.append(" " * (n - i))
+                i = n
+            else:
+                out.append(" " * (end - i))
+                i = end
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _c_brace_depth(src):
+    """The brace depth at every offset (0 outside any braces)."""
+    d = [0] * (len(src) + 1)
+    depth = 0
+    for i, ch in enumerate(src):
+        d[i] = depth
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = depth - 1 if depth > 0 else 0
+    d[len(src)] = depth
+    return d
+
+
+def _c_match_brace(src, i):
+    """The text of the brace-delimited block that starts at `src[i]`,
+    and the offset just past its close."""
+    depth = 0
+    n = len(src)
+    j = i
+    while j < n:
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[i:j + 1], j + 1
+        j += 1
+    return src[i:], n
+
+
+def _c_name_before_params(header):
+    """The name of the function whose parameter list CLOSES `header`.
+
+    The last ')' is the parameter list's close; the matching '(' is its
+    open; the name is the identifier before that.  Taking the identifier
+    before the CLOSE would read the last PARAMETER's name instead --
+    which is how a parser ends up believing the guest has fifty-three
+    functions called `a5`.
+    """
+    close = header.rfind(")")
+    if close < 0:
+        return None
+    depth = 0
+    i = close
+    while i >= 0:
+        if header[i] == ")":
+            depth += 1
+        elif header[i] == "(":
+            depth -= 1
+            if depth == 0:
+                m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", header[:i])
+                return m.group(1) if m else None
+        i -= 1
+    return None
+
+
+def _c_file_scope_functions(src):
+    """Every function DEFINED at file scope: name -> body text.
+
+    A definition is a function whose parameter list is followed by a
+    brace at brace depth zero.  A CALL is not a definition, and a
+    forward declaration is not either.
+    """
+    out = {}
+    d = _c_brace_depth(src)
+    for m in re.finditer(
+            r"(?m)^[A-Za-z_][A-Za-z0-9_ \t\*]*\b([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            src):
+        if d[m.start()] != 0:
+            continue
+        close = src.find(")", m.end())
+        if close < 0:
+            continue
+        brace = src.find("{", close)
+        semi = src.find(";", close)
+        if brace < 0 or (0 <= semi < brace):
+            continue
+        name = _c_name_before_params(src[m.start():close + 1])
+        if not name:
+            continue
+        body, _ = _c_match_brace(src, brace)
+        out.setdefault(name, body)
+    return out
+
+
+def _c_declarator_name(body):
+    """The declared object's name, and the offset where it starts.
+
+    The name is the LAST identifier of the declarator, or the identifier
+    before a trailing array suffix.  A declaration whose text contains a
+    '(' is a FUNCTION, not an object, and is rejected.
+    """
+    if "(" in body:
+        return None, None
+    toks = list(re.finditer(r"[A-Za-z_][A-Za-z0-9_]*|\[|\]", body))
+    if not toks:
+        return None, None
+    if toks[-1].group(0) == "]":
+        depth = 0
+        for idx in range(len(toks) - 1, -1, -1):
+            t = toks[idx]
+            if t.group(0) == "]":
+                depth += 1
+            elif t.group(0) == "[":
+                depth -= 1
+                if depth == 0:
+                    if idx == 0:
+                        return None, None
+                    nt = toks[idx - 1]
+                    return nt.group(0), nt.start()
+        return None, None
+    nt = toks[-1]
+    return nt.group(0), nt.start()
+
+
+def _c_file_scope_objects(src):
+    """Every file-scope `static` OBJECT: name -> (type text, is_array)."""
+    out = {}
+    d = _c_brace_depth(src)
+    n = len(src)
+    for m in re.finditer(r"\bstatic\b", src):
+        if d[m.start()] != 0:
+            continue
+        j = m.end()
+        while j < n and src[j] not in ";{":
+            j += 1
+        decl = src[m.start():j]
+        body = decl[len("static"):].strip()
+        eq = body.find("=")
+        if eq >= 0:
+            body = body[:eq].strip()
+        if not body:
+            continue
+        name, off = _c_declarator_name(body)
+        if not name or off is None:
+            continue
+        out.setdefault(name, (body[:off].strip(), "[" in body))
+    return out
+
+
+def _c_enclosing_call(code, idx):
+    """The name of the innermost call whose argument list holds `idx`."""
+    depth = 0
+    i = idx - 1
+    while i >= 0:
+        c = code[i]
+        if c == ")":
+            depth += 1
+        elif c == "(":
+            if depth == 0:
+                m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", code[:i])
+                return m.group(1) if m else None
+            depth -= 1
+        i -= 1
+    return None
+
+
+def _c_calls_in(body, defined):
+    """The defined functions a body calls."""
+    found = set()
+    for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
+        nm = m.group(1)
+        if nm in defined:
+            found.add(nm)
+    return found
+
+
+# The C types that are SCALARS.  Anything else is an AGGREGATE: a struct
+# typedef, an array, a pointer to a struct.  A cross-core AGGREGATE is
+# plain memory whose individual fields cannot be fenced one at a time, so
+# it is published as a whole behind one flag -- and that is a different
+# rule from the one a cross-core SCALAR obeys.
+_C_SCALAR_TYPES = frozenset((
+    "bool", "_Bool", "char", "signed char", "unsigned char",
+    "short", "unsigned short", "int", "unsigned", "unsigned int",
+    "long", "unsigned long", "long long", "unsigned long long",
+    "int8_t", "int16_t", "int32_t", "int64_t",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+    "size_t", "ssize_t", "intptr_t", "uintptr_t",
+    "float", "double",
+))
+
+# A COMPILER BARRIER: an asm statement with an EMPTY template and a
+# memory clobber.  It is the shape the guest's old `fb_barrier()` had,
+# and it is the defect NEW-6 closes.
+#
+# The template has to be EMPTY on purpose.  The guest's syscall wrapper
+# is `__asm__ volatile("svc #0" ... : "memory", "cc")`, which also has a
+# memory clobber -- and it is not a compiler barrier: it carries an
+# instruction, and it is the CPU's own way of asking for a trap.
+_COMPILER_BARRIER_RE = re.compile(
+    r"(?:__asm__|\basm)\s*(?:__volatile__|volatile)?\s*\(\s*\"\s*\""
+    r"[^)]{0,300}?\"memory\"", re.S)
+
+
+def _c_is_scalar(type_text):
+    """True when a declared type is a scalar rather than an aggregate."""
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", type_text)
+    if not words:
+        return False
+    if "struct" in words or "union" in words:
+        return False
+    base = words[-1]
+    return base in _C_SCALAR_TYPES
+
+
+def _c_assignments_to(code, name):
+    """The offsets of every WRITE to `name` (an assignment whose left-hand
+    side starts with `name`)."""
+    out = []
+    pat = re.compile(r"\b%s\b" % re.escape(name))
+    for m in pat.finditer(code):
+        j = m.end()
+        while j < len(code):
+            c = code[j]
+            if c in " \t\r\n":
+                j += 1
+                continue
+            if c == "." or c == "[":
+                # a member or an element: step over it
+                if c == "[":
+                    close = code.find("]", j)
+                    if close < 0:
+                        break
+                    j = close + 1
+                else:
+                    mm = re.match(r"\.[A-Za-z_][A-Za-z0-9_]*", code[j:])
+                    if not mm:
+                        break
+                    j += mm.end()
+                continue
+            break
+        if j < len(code) and code[j] == "=" and not code[j:j + 2] == "==":
+            out.append(m.start())
+    return out
+
+
+def _c_reads_of(code, name):
+    """The offsets of every READ of `name` (every mention that is not an
+    assignment's left-hand side)."""
+    writes = set(_c_assignments_to(code, name))
+    out = []
+    for m in re.finditer(r"\b%s\b" % re.escape(name), code):
+        if m.start() not in writes:
+            out.append(m.start())
+    return out
+
+
+def _c_published_words(body):
+    """The file-scope words a body PUBLISHES: the `&word` arguments of
+    the protocol's release-store accessors."""
+    out = []
+    for m in re.finditer(
+            r"\blatch_fb_publish_release_store(?:32|64)\s*\(\s*&([A-Za-z_][A-Za-z0-9_]*)",
+            body):
+        out.append(m.group(1))
+    for m in re.finditer(
+            r"\blatch_fb_publish_seq_set\s*\(\s*&([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"
+            r"&([A-Za-z_][A-Za-z0-9_]*)", body):
+        out.append(m.group(1))
+        out.append(m.group(2))
+    return out
+
+
+def _c_consumed_words(body):
+    """The file-scope words a body CONSUMES: the `&word` arguments of
+    the protocol's acquire-load accessors."""
+    out = []
+    for m in re.finditer(
+            r"\blatch_fb_publish_acquire_load(?:32|64)\s*\(\s*&([A-Za-z_][A-Za-z0-9_]*)",
+            body):
+        out.append(m.group(1))
+    for m in re.finditer(
+            r"\blatch_fb_publish_seq_get\s*\(\s*&([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"
+            r"&([A-Za-z_][A-Za-z0-9_]*)", body):
+        out.append(m.group(1))
+        out.append(m.group(2))
+    return out
+
+
+def _c_publish_call_offsets(body, word):
+    """The offsets of every protocol call that publishes `word`."""
+    out = []
+    for m in re.finditer(r"\blatch_fb_publish_[A-Za-z0-9_]*\s*\(", body):
+        end = body.find(")", m.end())
+        if end < 0:
+            continue
+        args = body[m.end():end]
+        if re.search(r"&%s\b" % re.escape(word), args):
+            out.append(m.start())
+    return out
+
+
+def _c_consume_call_offsets(body, word):
+    """The offsets of every protocol call that consumes `word`."""
+    out = []
+    for m in re.finditer(r"\blatch_fb_publish_[A-Za-z0-9_]*\s*\(", body):
+        end = body.find(")", m.end())
+        if end < 0:
+            continue
+        args = body[m.end():end]
+        if re.search(r"&%s\b" % re.escape(word), args):
+            out.append(m.start())
+    return out
+
+
+def _aarch64_compilers():
+    """The AArch64 compiler routes this gate can use, in order.
+
+    Both are known to work on this tree, and the second one needs NO
+    sysroot -- clang carries its own freestanding headers -- so it is
+    available on the CI runner image without installing anything.
+    """
+    routes = []
+    cross = shutil.which("aarch64-linux-gnu-gcc")
+    if cross:
+        routes.append(([cross, "-ffreestanding"], "aarch64-linux-gnu-gcc"))
+    clang = shutil.which("clang")
+    if clang:
+        routes.append(([clang, "--target=aarch64-linux-gnu", "-ffreestanding"],
+                       "clang --target=aarch64-linux-gnu"))
+    return routes
+
+
+def _split_c_params(text):
+    """Split a parameter list on its top-level commas."""
+    out = []
+    depth = 0
+    cur = []
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    tail = "".join(cur).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _c_accessor_signature(src, name):
+    """The return type and the parameters of one accessor.
+
+    The parameters come back as a list of (type text, parameter name).
+    The signature is read out of the header rather than written down, so
+    a seventh accessor is probed as soon as it is written -- and the
+    probe that is generated for it is the one that calls IT.
+    """
+    m = re.search(
+        r"(?m)^[ \t]*static[ \t]+inline[ \t]+"
+        r"(?P<ret>[A-Za-z_][A-Za-z0-9_ \t\*]*?)[ \t]+"
+        + re.escape(name) + r"[ \t]*\((?P<params>[^)]*)\)", src)
+    if not m:
+        return None, None
+    params = []
+    for raw in _split_c_params(m.group("params")):
+        pm = re.match(r"^(.*?)\b([A-Za-z_][A-Za-z0-9_]*)$", raw, re.S)
+        if not pm:
+            return None, None
+        params.append((pm.group(1).strip(), pm.group(2)))
+    return m.group("ret").strip(), params
+
+
+def _probe_argument(param_type):
+    """The argument to pass for one parameter of a generated probe.
+
+    A pointer parameter is given a real object of the right width, and a
+    writable one is given a writable object: the protocol's out-pointers
+    have to be written to, or the probe would be a lie about what the
+    accessor does.
+    """
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", param_type)
+    is_pointer = "*" in param_type
+    is_const = "const" in words
+    elem = words[-1] if words else "uint32_t"
+    width64 = elem in ("uint64_t", "int64_t", "unsigned long long")
+    if is_pointer:
+        if is_const:
+            return "&g_probe64" if width64 else "&g_probe32"
+        return "&g_probe_out64" if width64 else "&g_probe_out32"
+    if elem in ("int", "signed", "long", "short"):
+        return "0"
+    return "0u"
+
+
+def _fb_probe_driver(header_text, accessors):
+    """The C driver that exercises the SHIPPED header on AArch64.
+
+    One probe per accessor, each calling ONLY that accessor, so the
+    generated assembly's function bodies can be attributed to the
+    accessor they belong to.  The driver includes the shipped header --
+    it does not copy it -- because a proof of a copy is not a proof of
+    the thing that ships.
+
+    Returns (driver text, None) or (None, the reason it could not be
+    built).
+    """
+    out = ['#include "latch_fb_publish.h"\n',
+           "static volatile uint32_t g_probe32;\n",
+           "static volatile uint64_t g_probe64;\n",
+           "static uint32_t g_probe_out32;\n",
+           "static uint64_t g_probe_out64;\n"]
+    for nm in sorted(accessors):
+        ret, params = _c_accessor_signature(header_text, nm)
+        if ret is None:
+            return None, ("the signature of %s() could not be read out of "
+                          "guest/latch_fb_publish.h" % nm)
+        args = ", ".join(_probe_argument(t) for t, _ in params)
+        call = "%s(%s)" % (nm, args)
+        decl = ", ".join("%s %s" % (t, p) for t, p in params)
+        out.append("__attribute__((noinline)) %s latch_probe_%s(%s) {\n"
+                   % ("void" if ret == "void" else ret, nm, decl))
+        if ret == "void":
+            out.append("    %s;\n" % call)
+        else:
+            out.append("    return %s;\n" % call)
+        out.append("}\n")
+    return "".join(out), None
+
+
+def _asm_function_bodies(asm):
+    """Split generated assembly into {function name: body lines}."""
+    out = {}
+    cur = None
+    body = []
+    for line in asm.splitlines():
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_.$]*):\s*(?:@.*)?$", line)
+        if m:
+            if cur:
+                out[cur] = body
+            cur = m.group(1)
+            body = []
+            continue
+        if cur is not None:
+            if re.match(r"^\s*\.size\s+%s\b" % re.escape(cur), line):
+                out[cur] = body
+                cur = None
+                body = []
+                continue
+            body.append(line)
+    if cur:
+        out[cur] = body
+    return out
+
+
+def _asm_dmb_domains(lines):
+    """The `dmb` domains a function's assembly contains."""
+    doms = set()
+    for line in lines:
+        m = re.match(r"^\s*dmb\s+([A-Za-z0-9]+)", line)
+        if m:
+            doms.add(m.group(1))
+    return doms
+
+
+def verify_guest_publish_barrier():
+    """The guest's cross-core words are published with HARDWARE barriers.
+
+    See the block comment above for the measured defect this closes.
+    """
+    guest_dir = os.path.join(REPO_ROOT, "guest")
+    header_path = os.path.join(guest_dir, "latch_fb_publish.h")
+    guest_path = os.path.join(guest_dir, "latch_guest_init.c")
+
+    for p in (header_path, guest_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(header_path, encoding="utf-8", errors="replace") as f:
+        header_raw = f.read()
+    with io.open(guest_path, encoding="utf-8", errors="replace") as f:
+        guest_raw = f.read()
+
+    header = _c_code_only(header_raw)
+    guest = _c_code_only(guest_raw)
+
+    # --- 1. NO COMPILER BARRIER ANYWHERE ---------------------------------
+    #
+    # A compiler barrier is the DEFECT, so its return is the first thing
+    # the gate looks for -- in the header and in the guest alike.  The
+    # pattern is the COMPILER barrier specifically: an asm statement with
+    # an EMPTY template and a memory clobber.  The guest's syscall
+    # wrapper (`__asm__ volatile("svc #0" ... : "memory", "cc")`) is not
+    # one -- it carries an instruction, and it is the CPU's own way of
+    # asking for a trap.
+    for label, text in (("guest/latch_fb_publish.h", header),
+                         ("guest/latch_guest_init.c", guest)):
+        m = _COMPILER_BARRIER_RE.search(text)
+        if m:
+            fail("%s carries a COMPILER barrier (%r). The guest has TWO "
+                 "vCPUs, so a word that crosses the core boundary needs a "
+                 "MEMORY barrier: a compiler barrier stops the COMPILER "
+                 "from reordering the accesses and does nothing for the "
+                 "CPU, so the watcher could still read the summary "
+                 "half-updated and still read the two sequence numbers in "
+                 "the wrong order. Use guest/latch_fb_publish.h."
+                 % (label, text[max(0, m.start() - 40):m.end() + 20].strip()))
+
+    # --- 2. THE HEADER'S ACCESSORS, AND THEIR ORDER ----------------------
+    #
+    # The accessors are DERIVED from the header, and so is the rule they
+    # have to obey:
+    #
+    #   - an accessor that STORES is a PUBLISHER: its fence must be a
+    #     RELEASE fence, and it must come BEFORE the store that
+    #     publishes the word -- a release fence placed AFTER the store
+    #     orders the store against what FOLLOWS it, not against the
+    #     payload that PRECEDES it;
+    #   - an accessor that LOADS is a CONSUMER: its fence must be an
+    #     ACQUIRE fence, and it must come AFTER the load -- an acquire
+    #     fence placed BEFORE the load orders the load against what
+    #     precedes it, and the payload that FOLLOWS it stays unordered;
+    #   - an accessor that stores or loads a word through a bare
+    #     `volatile` pointer is not an accessor at all: a `volatile`
+    #     access is not an atomic operation in the C11 model, so a
+    #     fence-based handshake built on `volatile` alone does not form
+    #     a synchronises-with edge -- the fences would be ordering
+    #     nothing.
+    header_funcs = _c_file_scope_functions(header)
+    accessors = {nm: body for nm, body in header_funcs.items()
+                 if nm.startswith("latch_fb_publish_")}
+    if not accessors:
+        fail("guest/latch_fb_publish.h defines no latch_fb_publish_* "
+             "accessor, so the guest's cross-core words have no protocol "
+             "to go through.")
+
+    for nm in sorted(accessors):
+        body = accessors[nm]
+        ret, params = _c_accessor_signature(header, nm)
+        if params is None:
+            fail("guest/latch_fb_publish.h: the signature of %s() could not "
+                 "be read out of the header, so its protocol cannot be "
+                 "checked." % nm)
+        # The CROSS-CORE WORDS are the accessor's `volatile`-qualified
+        # pointer parameters.  A plain out-pointer (`uint32_t *cmd_out`)
+        # is NOT one: it is the caller's own buffer, and the accessor
+        # owns it for the duration of the call.
+        cross_params = [p for t, p in params if "volatile" in t]
+        fences = list(re.finditer(r"__atomic_thread_fence\s*\(\s*__ATOMIC_(\w+)\s*\)",
+                                  body))
+        stores = list(re.finditer(r"__atomic_store_n\s*\(", body))
+        loads = list(re.finditer(r"__atomic_load_n\s*\(", body))
+        for p in cross_params:
+            if not re.search(r"__atomic_(?:store|load)_n\s*\(\s*%s\b"
+                             % re.escape(p), body):
+                fail("guest/latch_fb_publish.h: %s() reaches the cross-core "
+                     "word `%s` without an atomic access. A `volatile` "
+                     "access is not an atomic operation in the C11 model, "
+                     "so a fence-based handshake built on `volatile` alone "
+                     "does not form a synchronises-with edge -- the fences "
+                     "would be ordering nothing." % (nm, p))
+            if re.search(r"\*\s*%s\s*=(?!=)" % re.escape(p), body):
+                fail("guest/latch_fb_publish.h: %s() writes the cross-core "
+                     "word `%s` through a bare pointer. The protocol's "
+                     "accesses go through __atomic_store_n / "
+                     "__atomic_load_n, because the fences carry the "
+                     "ORDERING and the accesses carry the ATOMICITY."
+                     % (nm, p))
+        if not stores and not loads:
+            fail("guest/latch_fb_publish.h: %s() touches a cross-core word "
+                 "without an atomic access. A `volatile` access is not an "
+                 "atomic operation in the C11 model, so the fence-based "
+                 "handshake would order nothing." % nm)
+        if len(fences) != 1:
+            fail("guest/latch_fb_publish.h: %s() has %d memory fence(s); the "
+                 "protocol has exactly one -- the release fence BEFORE the "
+                 "publishing store, or the acquire fence AFTER the "
+                 "consuming load." % (nm, len(fences)))
+            continue
+        fence = fences[0]
+        if stores:
+            if fence.group(1) != "RELEASE":
+                fail("guest/latch_fb_publish.h: %s() publishes a word and its "
+                     "fence is __ATOMIC_%s. A publishing accessor needs a "
+                     "RELEASE fence: it is what orders the payload the "
+                     "caller wrote BEFORE the store against the store "
+                     "itself." % (nm, fence.group(1)))
+            if fence.start() > stores[-1].start():
+                fail("guest/latch_fb_publish.h: %s() executes its release "
+                     "fence AFTER the publishing store. A release fence "
+                     "placed after the store orders the store against "
+                     "what FOLLOWS it, not against the payload that "
+                     "PRECEDES it -- so the payload can still arrive late. "
+                     "The fence comes FIRST." % nm)
+            if len(stores) > 1 and not (stores[0].start() < fence.start() < stores[1].start()):
+                fail("guest/latch_fb_publish.h: %s() stores %d words and its "
+                     "fence is not BETWEEN them. The protocol publishes the "
+                     "GENERAL sequence number first and the COMMAND "
+                     "sequence number second, with the fence between: that "
+                     "is what makes 'if the watcher saw cmd_seq = N, it "
+                     "also saw seq_sent >= N' true on weakly ordered "
+                     "hardware." % (nm, len(stores)))
+        if loads:
+            if fence.group(1) != "ACQUIRE":
+                fail("guest/latch_fb_publish.h: %s() consumes a word and its "
+                     "fence is __ATOMIC_%s. A consuming accessor needs an "
+                     "ACQUIRE fence: it is what orders the payload the "
+                     "caller reads AFTER the load against the load "
+                     "itself." % (nm, fence.group(1)))
+            if fence.start() < loads[0].start():
+                fail("guest/latch_fb_publish.h: %s() executes its acquire "
+                     "fence BEFORE the consuming load. An acquire fence "
+                     "placed before the load orders the load against what "
+                     "PRECEDES it, and the payload that FOLLOWS it stays "
+                     "unordered. The fence comes SECOND." % nm)
+            if len(loads) > 1 and not (loads[0].start() < fence.start() < loads[1].start()):
+                fail("guest/latch_fb_publish.h: %s() loads %d words and its "
+                     "fence is not BETWEEN them. The protocol reads the "
+                     "COMMAND sequence number first and the GENERAL one "
+                     "second, with the fence between -- the mirror image "
+                     "of the publishing side." % (nm, len(loads)))
+
+    # --- 3. THE CROSS-CORE SET IS DERIVED --------------------------------
+    #
+    # From the thread boundary, not from a list of names.  The thread is
+    # created by the ONE function that clones with CLONE_THREAD, and the
+    # watcher's entry point is the ONE zero-argument call to a defined
+    # function inside it.
+    guest_funcs = _c_file_scope_functions(guest)
+    creators = [nm for nm, body in guest_funcs.items()
+                if "LATCH_FB_CLONE_THREAD" in body and "SYS_clone" in body]
+    if len(creators) != 1:
+        fail("guest/latch_guest_init.c: expected exactly ONE function that "
+             "clones a THREAD (CLONE_THREAD + SYS_clone), found %d (%s). The "
+             "cross-core set is derived from the thread boundary, so a "
+             "boundary that cannot be identified cannot be checked."
+             % (len(creators), ", ".join(sorted(creators)) or "none"))
+    creator = creators[0]
+    entries = [m.group(1) for m in
+               re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*;",
+                           guest_funcs[creator])
+               if m.group(1) in guest_funcs]
+    if len(entries) != 1:
+        fail("guest/latch_guest_init.c: the thread creator %s() makes %d "
+             "zero-argument calls to a defined function (%s); the watcher's "
+             "entry point has to be identifiable, or the cross-core set "
+             "cannot be derived."
+             % (creator, len(entries), ", ".join(sorted(entries)) or "none"))
+    entry = entries[0]
+
+    reachable = set()
+    stack = [entry]
+    while stack:
+        fn = stack.pop()
+        if fn in reachable:
+            continue
+        reachable.add(fn)
+        stack.extend(_c_calls_in(guest_funcs[fn], guest_funcs) - reachable)
+
+    objects = _c_file_scope_objects(guest)
+    cross_core = []
+    for var in sorted(objects):
+        type_text, is_array = objects[var]
+        if "const" in type_text:
+            # A read-only object cannot be half-updated: there is no
+            # write to order.
+            continue
+        in_watcher = [fn for fn in reachable
+                      if re.search(r"\b%s\b" % re.escape(var), guest_funcs[fn])]
+        in_other = [fn for fn in guest_funcs
+                    if fn not in reachable
+                    and re.search(r"\b%s\b" % re.escape(var), guest_funcs[fn])]
+        if in_watcher and in_other:
+            cross_core.append((var, type_text, is_array, in_watcher, in_other))
+    if not cross_core:
+        fail("guest/latch_guest_init.c: no file-scope object is shared "
+             "between the watcher thread (%s) and the main thread. The "
+             "cross-core set is DERIVED, so an empty one means the "
+             "derivation is wrong -- not that the guest is safe."
+             % entry)
+
+    # --- 4. EVERY CROSS-CORE SCALAR GOES THROUGH THE PROTOCOL -----------
+    #
+    # A cross-core SCALAR is a word the CPU can make visible in either
+    # order, so every single access to it has to be inside one of the
+    # protocol's accessors.  A cross-core AGGREGATE is plain memory
+    # whose fields cannot be fenced one at a time; it is published as a
+    # whole behind ONE flag, and rule 5 checks that.
+    for var, type_text, is_array, in_watcher, in_other in cross_core:
+        if is_array or not _c_is_scalar(type_text):
+            continue
+        for fn in sorted(set(in_watcher) | set(in_other)):
+            body = guest_funcs[fn]
+            for m in re.finditer(r"\b%s\b" % re.escape(var), body):
+                call = _c_enclosing_call(body, m.start())
+                if not call or not call.startswith("latch_fb_publish_"):
+                    fail("guest/latch_guest_init.c: %s is shared between the "
+                         "watcher thread and the main thread, and %s() "
+                         "reaches it OUTSIDE a latch_fb_publish_* accessor "
+                         "(the enclosing call is %s). A word that crosses a "
+                         "CORE boundary needs the protocol's release and "
+                         "acquire fences; a plain access is ordered by "
+                         "nothing."
+                         % (var, fn, call or "none"))
+
+    # --- 5. A CROSS-CORE AGGREGATE IS PUBLISHED BEHIND ONE FLAG ---------
+    #
+    # The summary is PLAIN memory: the watcher fills it in and the main
+    # thread reads it.  There is no fence on each field, so the
+    # publication is the WHOLE aggregate behind one word:
+    #
+    #   - the writer's LAST write to the aggregate comes BEFORE the
+    #     writer's LAST publication of the point;
+    #   - NO publication of the point sits BETWEEN the aggregate's first
+    #     and last write -- a reader that acquires that publication could
+    #     arrive while the aggregate is still half-written;
+    #   - the reader's FIRST read of the aggregate comes AFTER the
+    #     reader's acquisition of that same word.
+    #
+    # The publication point is DERIVED: it is the one word that the
+    # writer releases and the reader acquires.
+    for var, type_text, is_array, in_watcher, in_other in cross_core:
+        if is_array or _c_is_scalar(type_text):
+            continue
+        writers = [fn for fn in in_watcher if _c_assignments_to(guest_funcs[fn], var)]
+        readers = [fn for fn in set(in_watcher) | set(in_other)
+                   if fn not in writers and _c_reads_of(guest_funcs[fn], var)]
+        if not writers or not readers:
+            fail("guest/latch_guest_init.c: %s is shared across the core "
+                 "boundary but %d function(s) write it and %d read it, so "
+                 "the publication point cannot be derived."
+                 % (var, len(writers), len(readers)))
+        published = set()
+        for fn in writers:
+            published |= set(_c_published_words(guest_funcs[fn]))
+        consumed = set()
+        for fn in readers:
+            consumed |= set(_c_consumed_words(guest_funcs[fn]))
+        points = sorted(published & consumed)
+        if len(points) != 1:
+            fail("guest/latch_guest_init.c: %s is plain memory shared across "
+                 "the core boundary, and its publication point is not "
+                 "derivable: the writer(s) %s release %s and the reader(s) "
+                 "%s acquire %s, so exactly ONE word has to be common to "
+                 "both lists."
+                 % (var, ", ".join(writers), ", ".join(sorted(published)) or
+                    "nothing", ", ".join(readers), ", ".join(sorted(consumed))
+                    or "nothing"))
+        point = points[0]
+        for fn in writers:
+            body = guest_funcs[fn]
+            writes = _c_assignments_to(body, var)
+            pubs = _c_publish_call_offsets(body, point)
+            if not writes or not pubs:
+                fail("guest/latch_guest_init.c: %s() writes %s but does not "
+                     "publish the point %s, so the aggregate's visibility "
+                     "is not ordered against anything." % (fn, var, point))
+            if writes[-1] > pubs[-1]:
+                fail("guest/latch_guest_init.c: %s() writes %s AFTER it "
+                     "publishes %s. The release-store of the publication "
+                     "point is what makes the aggregate visible as a "
+                     "WHOLE; a write after it can still be in flight when "
+                     "the reader arrives, and the reader would see a "
+                     "half-updated aggregate." % (fn, var, point))
+            between = [p for p in pubs if writes[0] < p < writes[-1]]
+            if between:
+                fail("guest/latch_guest_init.c: %s() publishes %s BETWEEN its "
+                     "first and its last write of %s. A reader that "
+                     "acquires that publication can arrive while the "
+                     "aggregate is still half-written, and the whole point "
+                     "of publishing it behind ONE word is that the reader "
+                     "sees it WHOLE or not at all." % (fn, point, var))
+        for fn in readers:
+            body = guest_funcs[fn]
+            reads = _c_reads_of(body, var)
+            cons = _c_consume_call_offsets(body, point)
+            if not reads or not cons:
+                fail("guest/latch_guest_init.c: %s() reads %s but does not "
+                     "consume the point %s, so the aggregate's visibility "
+                     "is not ordered against anything." % (fn, var, point))
+            if reads[0] < cons[0]:
+                fail("guest/latch_guest_init.c: %s() reads %s BEFORE it "
+                     "consumes %s. The acquire-load of the publication "
+                     "point is what makes the whole aggregate visible; a "
+                     "read before it can see a half-updated aggregate."
+                     % (fn, var, point))
+
+    # --- 6. EVERY PROTOCOL CALL NAMES AN ACCESSOR THAT EXISTS -----------
+    used = set(re.findall(r"\b(latch_fb_publish_[A-Za-z0-9_]*)\s*\(", guest))
+    unknown = sorted(used - set(accessors))
+    if unknown:
+        fail("guest/latch_guest_init.c calls %s, which guest/latch_fb_publish.h "
+             "does not define. The protocol's accessors are the only way to "
+             "reach a cross-core word, so a call to an accessor that does "
+             "not exist is either a compile error or an unfenced access in "
+             "waiting." % ", ".join(unknown))
+
+    # --- 7. THE INSTRUCTION-LEVEL PROOF ---------------------------------
+    #
+    # The structural half proves the SOURCE says the right thing.  This
+    # half proves the COMPILER agrees: the SHIPPED header is compiled
+    # for AArch64 and the generated assembly is read.  A compiler barrier
+    # generates NO instruction, so the `dmb` has to be there -- and its
+    # DOMAIN has to be the right one.
+    #
+    #   - a publishing accessor needs `dmb ishst` or `dmb ish`: a fence
+    #     that orders STORES before the publishing store;
+    #   - a consuming accessor needs `dmb ishld` or `dmb ish`: a fence
+    #     that orders LOADS after the consuming load.
+    routes = _aarch64_compilers()
+    if not routes:
+        fail("neither `aarch64-linux-gnu-gcc` nor `clang --target="
+             "aarch64-linux-gnu` is on PATH, so the INSTRUCTION-level half "
+             "of the guest's memory-barrier gate cannot run. That half is "
+             "the one that proves the fences are HARDWARE barriers: a "
+             "compiler barrier generates no instruction at all. Install "
+             "one of them (the CI runner image already carries clang) -- a "
+             "skipped check is a failure, not a warning.")
+
+    header_text = io.open(header_path, encoding="utf-8").read()
+    tmp = tempfile.mkdtemp(prefix="latch_fb_barrier_")
+    try:
+        asm = None
+        used_route = None
+        last_err = ""
+        for argv, label in routes:
+            src_path = os.path.join(tmp, "probe.c")
+            driver, sig_err = _fb_probe_driver(header_text, accessors)
+            if driver is None:
+                last_err = sig_err
+                continue
+            with io.open(src_path, "w", encoding="utf-8") as f:
+                f.write(driver)
+            comp = subprocess.run(
+                argv + ["-O2", "-S", "-I", guest_dir, src_path,
+                        "-o", os.path.join(tmp, "probe.s")],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                last_err = (comp.stderr.strip() or comp.stdout.strip()
+                            or "exit status %d" % comp.returncode)
+                continue
+            with io.open(os.path.join(tmp, "probe.s"), encoding="utf-8",
+                         errors="replace") as f:
+                asm = f.read()
+            used_route = label
+            break
+        if asm is None:
+            fail("the shipped guest/latch_fb_publish.h does not compile for "
+                 "AArch64: %s" % last_err)
+
+        bodies = _asm_function_bodies(asm)
+        for nm in sorted(accessors):
+            probe = "latch_probe_%s" % nm
+            lines = bodies.get(probe)
+            if lines is None:
+                fail("the AArch64 build of guest/latch_fb_publish.h produced "
+                     "no %s(), so the instruction-level proof of %s() could "
+                     "not be made." % (probe, nm))
+            doms = _asm_dmb_domains(lines)
+            if not doms:
+                fail("guest/latch_fb_publish.h: %s() compiles to NO `dmb` "
+                     "instruction on AArch64 (%s). A compiler barrier "
+                     "generates no instruction at all, so the source can "
+                     "say 'fence' while the CPU is told nothing -- and the "
+                     "guest has two cores." % (nm, used_route))
+            body = accessors[nm]
+            publishes = "__atomic_store_n" in body
+            consumes = "__atomic_load_n" in body
+            wanted = {"ishst", "ish"} if publishes else {"ishld", "ish"}
+            if not (doms & wanted):
+                fail("guest/latch_fb_publish.h: %s() compiles to `dmb %s` on "
+                     "AArch64 (%s), and a %s accessor needs one of %s. The "
+                     "wrong domain orders the wrong direction: `ishld` "
+                     "orders LOADS, and `ishst` orders STORES."
+                     % (nm, ", ".join(sorted(doms)), used_route,
+                        "publishing" if publishes else "consuming",
+                        ", ".join(sorted(wanted))))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    scalars = [v for v, t, a, _, _ in cross_core
+               if not a and _c_is_scalar(t)]
+    aggregates = [v for v, t, a, _, _ in cross_core
+                  if a or not _c_is_scalar(t)]
+    pass_check("the guest's cross-core words are published with HARDWARE "
+               "barriers: %d cross-core scalar(s) (%s) reach the other core "
+               "only through guest/latch_fb_publish.h, %d cross-core "
+               "aggregate(s) (%s) are published behind one flag, and every "
+               "accessor compiles to a real `dmb` on AArch64 (%s)"
+               % (len(scalars), ", ".join(scalars) or "none",
+                  len(aggregates), ", ".join(aggregates) or "none",
+                  used_route))
+
+
 def verify_first_reader_decision():
     """The first-reader decision is shared, host-tested, and atomic.
 
@@ -6125,6 +7148,18 @@ def main():
     # See `verify_sidecar_sha256sum_format()`.
     verify_sidecar_sha256sum_format()
 
+    # --- THE GUEST'S CROSS-CORE PUBLICATION PROTOCOL (NEW-6) ------------
+    #
+    # The guest has TWO vCPUs, and the code that used to order the
+    # watcher's words against the main thread's was a COMPILER barrier,
+    # which orders nothing on weakly ordered hardware.  The protocol now
+    # lives in `guest/latch_fb_publish.h`, the cross-core set is derived
+    # from the thread boundary and a call graph, and the SHIPPED header
+    # is compiled for AArch64 so the fences are proved to be real `dmb`
+    # instructions rather than claims.  See
+    # `verify_guest_publish_barrier()`.
+    verify_guest_publish_barrier()
+
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #
     # MEASURED on the QEMU AArch64 target (2026-11-26): when the verdict
@@ -6588,13 +7623,18 @@ def main():
                "predicate is DERIVED rather than stored")
 
     # ---- I. THE SEQUENCE NUMBER IS PUBLISHED BEFORE THE FRAME GOES OUT ---
+    #
+    # The publication is now ONE call -- `latch_fb_publish_seq_set()` --
+    # because the ORDER of the two stores, and the fence between them,
+    # live inside the protocol (NEW-6).  The property this gate checks is
+    # unchanged: the sequence number is published BEFORE the frame goes
+    # on the wire.  How it is published is NEW-6's business.
     fbsend = c_func_body(guest_txt, "fb_send_frame")
     if not fbsend:
         fail("guest/latch_guest_init.c: fb_send_frame() was not found")
-    i_seq = fbsend.find("g_fb_seq_sent =")
-    i_cmdseq = fbsend.find("g_fb_cmd_seq =")
+    i_pub = fbsend.find("latch_fb_publish_seq_set(")
     i_wire = fbsend.find("send_governor_frame(")
-    if i_seq < 0 or i_wire < 0 or i_seq > i_wire:
+    if i_pub < 0 or i_wire < 0 or i_pub > i_wire:
         fail("guest/latch_guest_init.c: fb_send_frame() must publish the sequence "
              "number BEFORE the frame goes on the wire. The watcher's staleness "
              "test is `verdict.seq > last_seq_sent`, so a sequence number "
@@ -6602,10 +7642,14 @@ def main():
              "proposal the watcher had not recorded -- and that verdict would be "
              "thrown away, and the guest would wait forever for an answer it had "
              "already discarded.")
-    if i_cmdseq < 0 or i_cmdseq > i_wire:
-        fail("guest/latch_guest_init.c: fb_send_frame() must publish the COMMAND "
-             "sequence number before the frame goes on the wire, for the same "
-             "reason")
+    if not re.search(r"latch_fb_publish_seq_set\s*\(\s*&g_fb_seq_sent\s*,\s*"
+                     r"&g_fb_cmd_seq\b", fbsend):
+        fail("guest/latch_guest_init.c: fb_send_frame() must publish the sequence "
+             "number AND the command sequence number through "
+             "latch_fb_publish_seq_set(), for the same reason: only a motion "
+             "proposal arms the feedback timeout, and the two words have to be "
+             "published together so the watcher cannot see the command sequence "
+             "number without the general one.")
     pass_check("W5 sequence publication: the sequence number and the command "
                "sequence number are published BEFORE the frame goes on the wire")
 

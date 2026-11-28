@@ -26,6 +26,7 @@ exit status: 0
 [CONSISTENCY PASS] qnx/latch_qemu_governor.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] Opt-in GOVERNOR QEMU profile selects one schema-3 contract for latchd/latchlog/ingest and packages v2 guest initrd
 [CONSISTENCY PASS] qnx/latch_qemu_infer.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
+[CONSISTENCY PASS] in-guest inference initramfs size not checked (initramfs not built in this checkout)
 [CONSISTENCY PASS] Experimental in-guest inference profile: same signed contract, read-only asset disk, typed guest launch, heartbeat below the deadman lease
 [CONSISTENCY PASS] qnx/latch_qemu_fbprobe.build: SDP sysroot not in the environment ($QNX_TARGET unset) - skipping the payload-existence check
 [CONSISTENCY PASS] C-2b notification-list locking: every resource manager that touches an iofunc notification list (latch_fb_sink.c) reaches it only through the locked wrappers -- the library's trigger walks and unlinks the armed list and its remove walks and frees it with no mutex of its own, so the notify call runs with the list locked, a lock that cannot be taken refuses the operation, and the two lock families are never held together
@@ -36,6 +37,7 @@ exit status: 0
 [CONSISTENCY PASS] EVHEX hex sizing: no hex buffer carries a literal length, both sizes are derived from the things they render, and the shared renderer REFUSES a buffer that is one byte too small
 [CONSISTENCY PASS] the LPR2 proposal's size is DERIVED from `sizeof(latch_ipc_proposal_v2_t)` (56 bytes) and every judge-facing document agrees with it (10 claim(s) checked)
 [CONSISTENCY PASS] every signed contract's sidecar is a `sha256sum` line naming the contract by its repository-root-relative path, and `sha256sum -c` verifies all 5 of them from the repository root
+[CONSISTENCY PASS] the guest's cross-core words are published with HARDWARE barriers: 6 cross-core scalar(s) (g_fb_cmd_seq, g_fb_seq_sent, g_fb_verdict_word, g_fb_watcher_state, g_fb_watcher_stop_requested, g_fb_watcher_stopped) reach the other core only through guest/latch_fb_publish.h, 1 cross-core aggregate(s) (g_fb_summary) are published behind one flag, and every accessor compiles to a real `dmb` on AArch64 (aarch64-linux-gnu-gcc)
 [CONSISTENCY PASS] Feedback-transport probe (W4): read-only verdict file on virtio-blk, the sink is its only writer and writes on a dedicated thread, the probe reads with pread64 before the session opens, one console report, the production LFBK frame format, experiment's policy additions kept out of the deployment
 [CONSISTENCY PASS] LFBK feedback frame (W5): 28 bytes, session epoch beside the sequence number, CRC over the first 24, sequence+epoch correlation, zero epoch rejected
 [CONSISTENCY PASS] W5 verdict vocabulary: closed on both sides, the two implementations agree on the numbers, an unknown verdict is -EBADMSG, and the timeout verdict and the timeout flag must agree in both directions
@@ -98,7 +100,7 @@ exit status: 0
 [CONSISTENCY PASS] The evidence README embeds the run index as it stands (27 line(s))
 [CONSISTENCY PASS] The derived on-target numbers agree with the raw capture they were derived from (20261125-090128-status.txt)
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md quote the archived on-target decision latency, each figure bound to its label (last 64 cyc / 1024 ns, max 40323 cyc / 645168 ns)
-[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (2114 ns across 1 archived capture(s))
+[CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/host-sim/ instead of quoting its load-dependent latency (6051 ns across 1 archived capture(s))
 [CONSISTENCY PASS] README.md and docs/LATCH-implementation.md point at docs/evidence/governor/LATENCY.md instead of quoting its figures (the U-4 measurement is regenerated, so a copied number would rot silently)
 [CONSISTENCY PASS] README.md's reproducibility card names every QSC package id + version the SBOM declares (8 package(s))
 [CONSISTENCY PASS] Every QSC package id + version the SBOM declares is installed on this workstation (checked against /home/skanda/qnx800/.packages/metadata)

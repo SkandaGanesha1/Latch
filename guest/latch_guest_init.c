@@ -2277,9 +2277,21 @@ static void run_feedback_probe(void) {
  * fold that saw `cmd_seq = N` is guaranteed to see `seq_sent >= N` when
  * it reads it next.  The other order could see `cmd_seq = N` with
  * `seq_sent = N-1`, which is exactly the stale-verdict case above.
+ *
+ * THAT GUARANTEE IS A HARDWARE ONE, AND IT NEEDS A HARDWARE BARRIER.
+ * AArch64 is weakly ordered, so the two stores may become visible to the
+ * other core in either order and the two loads may be reordered with
+ * respect to each other -- and a compiler barrier changes neither.  The
+ * release fence between the two stores and the acquire fence between the
+ * two loads are what make the guarantee real; see
+ * `guest/latch_fb_publish.h`.
  * ========================================================================= */
 
 #include "latch_fb_decode.h"
+/* The cross-core publication protocol.  The watcher runs on its own core,
+ * so every word it shares with the main thread crosses a core boundary --
+ * and a core boundary needs a MEMORY barrier, not a compiler barrier. */
+#include "latch_fb_publish.h"
 /* The shared transport.  It is included HERE, in the W5 region, and in the
  * W4 region above -- one per profile -- because the W4 translation unit's
  * function ORDER is part of its byte-identity witness: moving the include
@@ -2421,19 +2433,34 @@ static volatile uint32_t g_fb_cmd_seq  = 0u;
 static volatile uint32_t g_fb_frames_sent = 0u;
 static volatile uint32_t g_fb_cmds_sent = 0u;
 
-/* The watcher's handshake. */
-static volatile int g_fb_watcher_ready = 0;        /* the channel is open  */
-static volatile int g_fb_watcher_failed = 0;       /* no device at all     */
-static volatile int g_fb_watcher_stop_requested = 0;
-static volatile int g_fb_watcher_stopped = 0;
+/* THE WATCHER'S HANDSHAKE.
+ *
+ * `g_fb_watcher_state` is the ONE publication point for the startup
+ * handshake: the watcher moves it out of LATCH_FB_WATCHER_STARTING
+ * exactly once -- to READY when the channel opened, or to FAILED when
+ * there is no channel at all -- and the main thread waits for that.  It
+ * was two flags (`ready` and `failed`) before, and two flags meant two
+ * publication points: the main thread had to know WHICH one it had seen
+ * to know which release fence had ordered the watcher's work.
+ */
+#define LATCH_FB_WATCHER_STARTING 0u
+#define LATCH_FB_WATCHER_READY    1u
+#define LATCH_FB_WATCHER_FAILED   2u
+
+static volatile uint32_t g_fb_watcher_state = LATCH_FB_WATCHER_STARTING;
+static volatile uint32_t g_fb_watcher_stop_requested = 0u;
+static volatile uint32_t g_fb_watcher_stopped = 0u;
 
 /* WHAT THE WATCHER PUBLISHES BACK FOR THE REPORT.
  *
  * The correlation state belongs to the watcher.  When the watcher stops it
  * copies what the report needs into this struct and then raises
  * `g_fb_watcher_stopped`; the main thread waits for that flag and then
- * reads the struct.  The barrier between them is explicit, because the
- * flag is volatile and the struct is not. */
+ * reads the struct.  The barrier between them is a RELEASE fence before
+ * the flag and an ACQUIRE fence after it, because the struct is PLAIN
+ * memory: the flag is volatile and the struct is not, and only a
+ * hardware barrier stops the other core from seeing the flag before the
+ * struct's stores.  See `guest/latch_fb_publish.h`. */
 typedef struct {
     uint32_t accepts;
     uint32_t rejects;
@@ -2457,24 +2484,23 @@ typedef struct {
 
 static fb_watch_summary_t g_fb_summary;
 
-/* A compiler barrier.  The watcher writes the summary and THEN raises the
- * volatile flag; without the barrier the compiler is free to move the
- * plain stores after the volatile one, and the main thread would read a
- * half-updated summary. */
-static inline void fb_barrier(void) {
-    __asm__ volatile("" ::: "memory");
-}
-
 /* --------------------------------------------------------------------------
  * THE WATCHER
  * ------------------------------------------------------------------------ */
 
-/* Publish one decision. */
+/* Publish one decision.
+ *
+ * The verdict word crosses the core boundary: the watcher writes it and
+ * the main thread reads it.  The release fence inside the call is what
+ * makes the word's contents visible to a reader that consumes it -- a
+ * plain store would let the CPU make the word visible before the
+ * decision it carries was complete.
+ */
 static void fb_publish(const latch_fb_state_t *st, uint8_t verdict, uint32_t seq) {
     uint64_t w = (uint64_t)seq << 8;
     w |= (uint64_t)(verdict & 0xFFu);
     w |= (uint64_t)((st->stop_reason & 0xFFu)) << 32;
-    g_fb_verdict_word = w;
+    latch_fb_publish_release_store64(&g_fb_verdict_word, w);
 }
 
 static void fb_watcher_thread(void) {
@@ -2521,16 +2547,21 @@ static void fb_watcher_thread(void) {
         st.stop_reason = LATCH_FB_STOP_TIMEOUT;
         st.timeouts = 1u;
         fb_publish(&st, 0u, 0u);
-        g_fb_watcher_failed = 1;
-        fb_barrier();
-        g_fb_watcher_stopped = 1;
+        /* THE PUBLICATION POINT.  The release fence inside the call makes
+         * the verdict word and the state visible before the state itself
+         * becomes visible, so a main thread that sees FAILED also sees
+         * WHY. */
+        latch_fb_publish_release_store32(&g_fb_watcher_state,
+                                         LATCH_FB_WATCHER_FAILED);
+        latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);
         return;
     }
 
-    g_fb_watcher_ready = 1;
+    latch_fb_publish_release_store32(&g_fb_watcher_state,
+                                     LATCH_FB_WATCHER_READY);
 
     for (;;) {
-        if (g_fb_watcher_stop_requested) {
+        if (latch_fb_publish_acquire_load32(&g_fb_watcher_stop_requested)) {
             break;
         }
 
@@ -2633,10 +2664,17 @@ static void fb_watcher_thread(void) {
 
         /* ---- THE FOLD ---------------------------------------------------
          * AFTER the read, and the command sequence number BEFORE the
-         * general one.  See the header for why the order is this one. */
+         * general one.  See the header for why the order is this one --
+         * and the acquire fence between the two loads is what MAKES the
+         * order real: without it the CPU is free to deliver the two
+         * values in either order, and the guarantee the header claims
+         * would be a claim about the source rather than about the
+         * hardware. */
         {
-            uint32_t cseq = g_fb_cmd_seq;
-            uint32_t sseq = g_fb_seq_sent;
+            uint32_t cseq = 0u;
+            uint32_t sseq = 0u;
+            latch_fb_publish_seq_get(&g_fb_cmd_seq, &g_fb_seq_sent,
+                                     &cseq, &sseq);
             latch_fb_note_cmd(&st, cseq);
             latch_fb_note_sent(&st, sseq);
         }
@@ -2692,8 +2730,12 @@ static void fb_watcher_thread(void) {
         g_fb_summary.best = best;
         g_fb_summary.opens = opens;
     }
-    fb_barrier();
-    g_fb_watcher_stopped = 1;
+    /* THE PUBLICATION POINT.  Every field of `g_fb_summary` is PLAIN
+     * memory -- not volatile, not atomic -- so the CPU is free to make
+     * the flag store visible before the summary's stores.  The release
+     * fence inside the call is what orders them, and it has to come
+     * AFTER every summary write and not one instruction earlier. */
+    latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);
 }
 
 /* Start the watcher thread.  Returns 0 when the thread was created. */
@@ -2748,16 +2790,21 @@ static int fb_start_watcher(void) {
  * `verdict.seq > last_seq_sent`, so a sequence number published after the
  * frame was on the wire could be seen by the watcher as a verdict for a
  * proposal it has not recorded -- and that verdict would be thrown away.
+ *
+ * The ORDER of the two stores, and the fence between them, live inside
+ * `latch_fb_publish_seq_set()`: the general sequence number first, the
+ * command sequence number second, with a release fence between them.
+ * That is what makes the guest's own guarantee real -- IF THE WATCHER
+ * SEES `cmd_seq = N`, IT ALSO SEES `seq_sent >= N` -- on hardware that
+ * is weakly ordered, and it is impossible to spell the pair the wrong
+ * way round at a call site.
  */
 static void fb_send_frame(int hvc_fd, lath_frame_t *frame, uint8_t kind,
                           uint32_t *seq, uint32_t *coherence, int32_t value,
                           uint8_t confidence_q8, uint32_t unit_id, int is_cmd) {
     uint32_t this_seq = *seq;
 
-    g_fb_seq_sent = this_seq;
-    if (is_cmd) {
-        g_fb_cmd_seq = this_seq;
-    }
+    latch_fb_publish_seq_set(&g_fb_seq_sent, &g_fb_cmd_seq, this_seq, is_cmd);
     g_fb_frames_sent++;
     if (is_cmd) {
         g_fb_cmds_sent++;
@@ -2778,7 +2825,11 @@ static void fb_send_frame(int hvc_fd, lath_frame_t *frame, uint8_t kind,
 static int fb_wait_for_verdict(int hvc_fd, lath_frame_t *frame, uint32_t cmd_seq,
                                uint32_t *seq, uint32_t *coherence) {
     for (uint32_t i = 0u; i < LATCH_FB_WAIT_MAX_POLLS; ++i) {
-        uint64_t w = g_fb_verdict_word;
+        /* The verdict word crosses the core boundary, so it is read
+         * through the acquire accessor: the load is relaxed and the
+         * fence that follows it is what makes the verdict's bits visible
+         * to this core. */
+        uint64_t w = latch_fb_publish_acquire_load64(&g_fb_verdict_word);
         uint32_t wseq = LATCH_FB_WORD_SEQ(w);
         uint32_t wstop = LATCH_FB_WORD_STOP(w);
 
@@ -2809,11 +2860,24 @@ static int fb_wait_for_verdict(int hvc_fd, lath_frame_t *frame, uint32_t cmd_seq
  * It ends with `end=1`, which is the completeness sentinel: a report that
  * was cut short by the console does not end with it, and the harness
  * requires it.  The marker is written AFTER the session is over, so the
- * console cost of the report cannot eat the lease. */
+ * console cost of the report cannot eat the lease.
+ *
+ * THE ACQUIRE IS HERE, INSIDE THE FUNCTION THAT READS THE SUMMARY, so
+ * that the ordering cannot be forgotten at a call site.  `g_fb_summary`
+ * is PLAIN memory written by the watcher thread, and the stopped flag is
+ * its publication point: the watcher's release fence orders the summary's
+ * stores before the flag, and the acquire fence here orders the flag's
+ * load before the summary's loads.  The two together are what make the
+ * report a coherent snapshot rather than a torn one.
+ */
 static void fb_build_report(char *dst, size_t cap) {
     size_t at = 0;
-    const fb_watch_summary_t *s = &g_fb_summary;
-    uint64_t w = g_fb_verdict_word;
+    const fb_watch_summary_t *s;
+    uint64_t w;
+
+    (void)latch_fb_publish_acquire_load32(&g_fb_watcher_stopped);
+    s = &g_fb_summary;
+    w = latch_fb_publish_acquire_load64(&g_fb_verdict_word);
 
     at = fb_append_str(dst, cap, at, "[FBVERDICT] port=");
     at = fb_append_str(dst, cap, at,
@@ -2873,6 +2937,7 @@ static void run_governor_verdict_demo(int hvc_fd) {
     uint32_t seq = 1u;
     uint32_t coherence = 0u;
     uint32_t clean_ok = 1u;
+    uint32_t watcher_state = LATCH_FB_WATCHER_STARTING;
     char report[250];
 
     /* ---- THE WATCHER ----------------------------------------------------
@@ -2886,8 +2951,14 @@ static void run_governor_verdict_demo(int hvc_fd) {
             sys_sleep_ms(60000);
         }
     }
+    /* THE HANDSHAKE.  ONE state word, published ONCE by the watcher, and
+     * read here through the acquire accessor: the load is relaxed and the
+     * fence that follows it is what makes the watcher's own work visible
+     * to this core.  Two flags would have meant two publication points
+     * and two chances to read the wrong one first. */
     for (uint32_t i = 0u; i < LATCH_FB_READY_MAX_POLLS; ++i) {
-        if (g_fb_watcher_ready || g_fb_watcher_failed) {
+        watcher_state = latch_fb_publish_acquire_load32(&g_fb_watcher_state);
+        if (watcher_state != LATCH_FB_WATCHER_STARTING) {
             break;
         }
         sys_sleep_ms(10);
@@ -2915,8 +2986,10 @@ static void run_governor_verdict_demo(int hvc_fd) {
 
     /* If the channel could not be opened at all, the guest does not
      * propose: a guest that cannot see its supervisor must not keep
-     * asking.  The report says why. */
-    if (g_fb_watcher_failed) {
+     * asking.  The report says why.  The state was read through the
+     * acquire accessor when the handshake completed, so the value here is
+     * the one the watcher published. */
+    if (watcher_state == LATCH_FB_WATCHER_FAILED) {
         fb_build_report(report, sizeof(report));
         phase_marker(report);
         for (;;) {
@@ -2966,10 +3039,16 @@ static void run_governor_verdict_demo(int hvc_fd) {
      * Nothing else goes on the wire.  The trusted host owns lease time: the
      * silence is what expires the lease, and the ladder ratchets to LATCH.
      * The guest's job is to stop asking; the host's job is to fail closed
-     * when the guest stops. */
-    g_fb_watcher_stop_requested = 1;
+     * when the guest stops.
+     *
+     * Both flags cross the core boundary, so both go through the
+     * protocol: the request is published with a release fence (so the
+     * watcher sees it), and the acknowledgement is consumed with an
+     * acquire fence (so the summary the watcher wrote is visible to the
+     * report). */
+    latch_fb_publish_release_store32(&g_fb_watcher_stop_requested, 1u);
     for (uint32_t i = 0u; i < 1000u; ++i) {
-        if (g_fb_watcher_stopped) {
+        if (latch_fb_publish_acquire_load32(&g_fb_watcher_stopped)) {
             break;
         }
         sys_sleep_ms(1);

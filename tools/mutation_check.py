@@ -326,20 +326,14 @@ MUTATIONS = [
 
     ("W5: the sequence number is published AFTER the frame goes on the wire",
      "guest/latch_guest_init.c",
-     [("    g_fb_seq_sent = this_seq;\n"
-       "    if (is_cmd) {\n"
-       "        g_fb_cmd_seq = this_seq;\n"
-       "    }\n"
+     [("    latch_fb_publish_seq_set(&g_fb_seq_sent, &g_fb_cmd_seq, this_seq, is_cmd);\n"
        "    g_fb_frames_sent++;",
        "    g_fb_frames_sent++;"),
       ("    send_governor_frame(hvc_fd, frame, kind, seq, coherence, value,\n"
        "                        confidence_q8, unit_id);\n}",
        "    send_governor_frame(hvc_fd, frame, kind, seq, coherence, value,\n"
        "                        confidence_q8, unit_id);\n"
-       "    g_fb_seq_sent = this_seq;\n"
-       "    if (is_cmd) {\n"
-       "        g_fb_cmd_seq = this_seq;\n"
-       "    }\n}")]),
+       "    latch_fb_publish_seq_set(&g_fb_seq_sent, &g_fb_cmd_seq, this_seq, is_cmd);\n}")]),
 
     ("W5: the fold order is corrupted (note_sent before note_cmd)",
      "guest/latch_guest_init.c",
@@ -1558,6 +1552,136 @@ MUTATIONS = [
      "qnx/contracts/syringe_pump_bolus.manifest.sha256",
      [(lambda t: t.strip(),
        lambda t: t.strip().replace("  ", " ", 1))]),
+
+    # ------------------------------------------------------------------------
+    # NEW-6: THE GUEST'S CROSS-CORE PUBLICATION PROTOCOL
+    # ------------------------------------------------------------------------
+    #
+    # The guest has TWO vCPUs, and the code that used to order the
+    # watcher's words against the main thread's was a COMPILER barrier:
+    #
+    #     static inline void fb_barrier(void) {
+    #         __asm__ volatile("" ::: "memory");
+    #     }
+    #
+    # That stops the COMPILER from reordering the accesses and does
+    # NOTHING for the CPU, so on weakly ordered AArch64 the watcher could
+    # still read the summary half-updated and still read the two sequence
+    # numbers in the opposite order -- which is exactly the case the
+    # guest's own documentation claims the fold's order prevents.
+    #
+    # The protocol now lives in `guest/latch_fb_publish.h`, and the gate
+    # proves it two ways: STRUCTURALLY (the order inside the accessors,
+    # and the DERIVED cross-core set -- every access to a word shared
+    # between the two threads has to go through an accessor) and at the
+    # INSTRUCTION level (the shipped header is compiled for AArch64, so
+    # the fences have to be real `dmb` instructions and not claims).
+    #
+    # These mutations attack the fence's KIND, its POSITION, the
+    # protocol's use, and the aggregate's publication -- one per way the
+    # defect can come back.
+
+    ("NEW-6: the release fence becomes a COMPILER barrier (the source still "
+     "says 'fence', but the CPU is told nothing -- and the guest has two "
+     "cores)",
+     "guest/latch_fb_publish.h",
+     [("static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    __atomic_thread_fence(__ATOMIC_RELEASE);",
+       "static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    __asm__ volatile(\"\" ::: \"memory\");")]),
+
+    ("NEW-6: the acquire fence becomes a COMPILER barrier (a reader can see "
+     "the publication point before the payload it announces)",
+     "guest/latch_fb_publish.h",
+     [("static inline uint32_t latch_fb_publish_acquire_load32(\n"
+       "    const volatile uint32_t *word) {\n"
+       "    uint32_t value = __atomic_load_n(word, __ATOMIC_RELAXED);\n"
+       "    __atomic_thread_fence(__ATOMIC_ACQUIRE);",
+       "static inline uint32_t latch_fb_publish_acquire_load32(\n"
+       "    const volatile uint32_t *word) {\n"
+       "    uint32_t value = __atomic_load_n(word, __ATOMIC_RELAXED);\n"
+       "    __asm__ volatile(\"\" ::: \"memory\");")]),
+
+    ("NEW-6: the release fence moves AFTER the publishing store (a release "
+     "fence placed after the store orders the store against what FOLLOWS "
+     "it, not against the payload that PRECEDES it)",
+     "guest/latch_fb_publish.h",
+     [("static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    __atomic_thread_fence(__ATOMIC_RELEASE);\n"
+       "    __atomic_store_n(word, value, __ATOMIC_RELAXED);\n"
+       "}",
+       "static inline void latch_fb_publish_release_store32(volatile uint32_t *word,\n"
+       "                                                    uint32_t value) {\n"
+       "    __atomic_store_n(word, value, __ATOMIC_RELAXED);\n"
+       "    __atomic_thread_fence(__ATOMIC_RELEASE);\n"
+       "}")]),
+
+    ("NEW-6: the sequence-number PAIR loses its fence (the two stores may "
+     "become visible in either order, so the watcher can see cmd_seq = N "
+     "together with seq_sent = N-1 -- the stale-verdict case)",
+     "guest/latch_fb_publish.h",
+     [("    __atomic_store_n(sent, seq, __ATOMIC_RELAXED);\n"
+       "    __atomic_thread_fence(__ATOMIC_RELEASE);\n"
+       "    if (is_cmd) {",
+       "    __atomic_store_n(sent, seq, __ATOMIC_RELAXED);\n"
+       "    if (is_cmd) {")]),
+
+    ("NEW-6: the sequence-number PAIR's READ loses its fence (the two loads "
+     "may be reordered, and the fold's guarantee is a claim about the "
+     "source rather than about the hardware)",
+     "guest/latch_fb_publish.h",
+     [("    uint32_t c = __atomic_load_n(cmd, __ATOMIC_RELAXED);\n"
+       "    __atomic_thread_fence(__ATOMIC_ACQUIRE);\n"
+       "    uint32_t s = __atomic_load_n(sent, __ATOMIC_RELAXED);",
+       "    uint32_t c = __atomic_load_n(cmd, __ATOMIC_RELAXED);\n"
+       "    uint32_t s = __atomic_load_n(sent, __ATOMIC_RELAXED);")]),
+
+    ("NEW-6: the guest reaches a cross-core word DIRECTLY again (the word "
+     "is shared between the watcher thread and the main thread, and a "
+     "plain access is ordered by nothing)",
+     "guest/latch_guest_init.c",
+     [("        latch_fb_publish_release_store32(&g_fb_watcher_state,\n"
+       "                                         LATCH_FB_WATCHER_FAILED);",
+       "        g_fb_watcher_state = LATCH_FB_WATCHER_FAILED;")]),
+
+    ("NEW-6: the VERDICT WORD is published raw again (the watcher can make "
+     "the verdict visible before the decision it carries is complete)",
+     "guest/latch_guest_init.c",
+     [("    latch_fb_publish_release_store64(&g_fb_verdict_word, w);",
+       "    g_fb_verdict_word = w;")]),
+
+    ("NEW-6: the SUMMARY is read BEFORE the publication point is consumed "
+     "(the acquire-load is what makes the whole aggregate visible; a read "
+     "before it can see a half-updated summary)",
+     "guest/latch_guest_init.c",
+     [("    (void)latch_fb_publish_acquire_load32(&g_fb_watcher_stopped);\n"
+       "    s = &g_fb_summary;\n"
+       "    w = latch_fb_publish_acquire_load64(&g_fb_verdict_word);",
+       "    s = &g_fb_summary;\n"
+       "    (void)latch_fb_publish_acquire_load32(&g_fb_watcher_stopped);\n"
+       "    w = latch_fb_publish_acquire_load64(&g_fb_verdict_word);")]),
+
+    ("NEW-6: the SUMMARY is published BETWEEN its own writes (a reader that "
+     "acquires that publication can arrive while the summary is still "
+     "half-written)",
+     "guest/latch_guest_init.c",
+     [("        g_fb_summary.torn = torn[best >= 0 ? best : 0];",
+       "        latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);\n"
+       "        g_fb_summary.torn = torn[best >= 0 ? best : 0];")]),
+
+    ("NEW-6: the SUMMARY's LAST write comes AFTER the publication point "
+     "(the release-store is what makes the aggregate visible as a WHOLE, "
+     "and a write after it can still be in flight when the reader "
+     "arrives)",
+     "guest/latch_guest_init.c",
+     [("    latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);\n"
+       "}",
+       "    latch_fb_publish_release_store32(&g_fb_watcher_stopped, 1u);\n"
+       "    g_fb_summary.opens = opens;\n"
+       "}")]),
 ]
 
 

@@ -1083,6 +1083,80 @@ cost a boot cycle; read them before changing the transport.
   `224eaf01…`; the W4 and W5 **binaries** are `f0c51a86…` and
   `80a96b2e…`. All four are unchanged by the U-4 work.
 
+- **A COMPILER BARRIER IS NOT A MEMORY BARRIER, AND THE GUEST HAS TWO
+  CORES.** The GOVERNOR qvmconf gives the guest **two** vCPUs —
+  `_cpu-2` and `_cpu-3`, each bound to its own single-CPU cluster
+  (`qnx/latch_qemu_governor.qvmconf`) — so the verdict watcher and the
+  main thread really can be running on DIFFERENT cores at the same
+  time. AArch64 is **weakly ordered**: a store can become visible to
+  another core before an EARLIER store of the same program has become
+  visible, and two loads can be reordered with respect to each other.
+
+  The W5 code used to order the watcher's words against the main
+  thread's with
+
+  ```c
+  static inline void fb_barrier(void) {
+      __asm__ volatile("" ::: "memory");
+  }
+  ```
+
+  That stops the COMPILER from reordering the accesses and does
+  **nothing for the CPU**. Two consequences, both real: the watcher's
+  summary stores (PLAIN memory, not even `volatile`) could become
+  visible *after* the `volatile` flag store that announces them, so the
+  main thread could read a **half-updated** summary; and the two
+  sequence-number stores could become visible in the OPPOSITE order, so
+  the watcher could read `cmd_seq = N` together with `seq_sent = N-1`.
+  The guest's own comment claimed the opposite — *"a fold that saw
+  `cmd_seq = N` is guaranteed to see `seq_sent >= N`"* — and a compiler
+  barrier did not deliver that guarantee on weakly ordered hardware. A
+  verdict discarded as stale by that read is a verdict the guest never
+  acts on.
+
+  **A `volatile` ACCESS IS NOT AN ATOMIC OPERATION.** In the C11 model
+  `volatile` constrains the *compiler*; it does not create a
+  synchronises-with edge, so a fence-based handshake built on
+  `volatile` alone orders nothing. The protocol's accesses go through
+  `__atomic_store_n` / `__atomic_load_n` (with `__ATOMIC_RELAXED`, so
+  each is still ONE `str`/`ldr` on AArch64) and the fences carry the
+  ORDERING.
+
+  **MEASURED, on this tree, with the SHIPPED header compiled for
+  AArch64** (`-ffreestanding -O2 -S`):
+
+  | compiler | a RELEASE accessor | an ACQUIRE accessor |
+  |---|---|---|
+  | `aarch64-linux-gnu-gcc` | `dmb ishld` + `dmb ishst` | `dmb ishld` |
+  | `clang --target=aarch64-linux-gnu` | `dmb ish` | `dmb ishld` |
+
+  Both are CORRECT, and the difference is worth knowing: gcc emits the
+  **narrowest** domain that does the job (`ishst` orders stores, `ishld`
+  orders loads), while clang emits the full `ish` for a release. The
+  gate accepts either shape — `ishst` or `ish` for a publishing
+  accessor, `ishld` or `ish` for a consuming one — and REJECTS the
+  wrong direction, because `ishld` does not order a store and `ishst`
+  does not order a load.
+
+  **AN INSTRUCTION-LEVEL PROOF NEEDS AN INSTRUCTION-LEVEL TOOL, AND
+  ONE OF THE TWO ROUTES NEEDS NO SYSROOT.** `clang
+  --target=aarch64-linux-gnu -ffreestanding -S` works with **nothing
+  installed**: clang carries its own freestanding headers, so no
+  sysroot and no cross-toolchain package are required. That is why the
+  gate can run on the CI runner image (which carries clang 16/17/18)
+  without an `apt-get install` step. The other route,
+  `aarch64-linux-gnu-gcc`, is the cross compiler this repository
+  already needs for `make guest-initrd`. **If neither is present the
+  gate FAILS** — "the instruction-level proof was skipped" is a hole in
+  the proof, and this repository's rule is that a skipped check is a
+  failure, not a warning.
+
+  The general shape, and it is the same rule the evidence index
+  follows: **a source-level "there is a fence" is a CLAIM; the
+  generated assembly is the EVIDENCE.** A compiler barrier produces no
+  instruction at all, so the source can read "fence" while the CPU is
+  told nothing — and on a two-core guest, that is the whole defect.
+
 ### 4d. Facts about the DECISION-LATENCY MEASUREMENT (U-4)
 
 These were measured on the QEMU AArch64 target on 2026-11-27. Each one
