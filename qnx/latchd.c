@@ -66,6 +66,7 @@
 #include "latch_protocol.h"
 #include "latch_manifest.h"
 #include "latch_ipc.h"
+#include "latch_hold.h"
 #include "governor_policy.h"
 #include "gov_gate_precheck.h"
 #include "gov_homeostat.h"
@@ -2505,6 +2506,28 @@ static bool latch_fill_hold_status(latch_hold_status_t *out) {
     return false;
 }
 
+/*
+ * THE OPERATOR-HOLD COMMAND'S STATE AND SNAPSHOT.
+ *
+ * These two helpers exist so that the QNX resource manager and the host
+ * simulation drive the SAME shared decision (`latch_hold_command()` in
+ * qnx/latch_hold.h) instead of each carrying its own copy of it.  The copy
+ * is how the fail-open came to exist in two places.
+ */
+static void latch_hold_state_view(latch_hold_state_t *out) {
+    if (out == NULL) return;
+    out->hold_locked = &g_simplex.operator_hold_locked;
+    out->release_pending = &g_simplex.operator_release_pending;
+    out->release_armed = &g_simplex.operator_release_armed;
+    out->release_deferred_ticks = &g_simplex.operator_release_deferred_ticks;
+    out->release_rung = &g_simplex.operator_release_rung;
+}
+
+static bool latch_hold_snapshot_cb(void *ctx, latch_hold_status_t *out) {
+    (void)ctx;
+    return latch_fill_hold_status(out);
+}
+
 static bool latch_fill_session_status(latch_session_status_t *out) {
     if (out == NULL) return false;
     memset(out, 0, sizeof(*out));
@@ -2905,36 +2928,27 @@ static int latch_io_devctl(resmgr_context_t *ctp,
             }
             const latch_force_hold_cmd_t *cmd =
                 (const latch_force_hold_cmd_t *)in_data;
-            atomic_store_explicit(&g_simplex.operator_hold_locked,
-                                  cmd->lock_hold ? 1u : 0u,
-                                  memory_order_release);
-            if (cmd->lock_hold) {
-                atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);
-                atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);
-                atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
-            } else {
-                /*
-                 * Record WHICH rung the operator was looking at.  A release
-                 * is only effective at LATCH; if the rung changes before the
-                 * ladder gets there, the request is invalidated rather than
-                 * silently applied to a different state (L-5).
-                 */
-                latch_hold_status_t before;
-                uint32_t observed_rung = 0u;
-                if (latch_fill_hold_status(&before)) {
-                    observed_rung = before.rung;
-                } else {
-                    /* FAIL LOUDLY: a torn snapshot means the supervisor state
-                     * is not trustworthy, and recording a release against an
-                     * unknown rung would be exactly the silent-application
-                     * defect this fix exists to remove. */
-                    return EBUSY;
-                }
-                atomic_store_explicit(&g_simplex.operator_release_rung,
-                                      observed_rung,
-                                      memory_order_release);
-                atomic_store_explicit(&g_simplex.operator_release_pending, 1u, memory_order_release);
-                atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+
+            /*
+             * THE ORDER IS INSIDE THE SHARED DECISION.
+             *
+             * `latch_hold_command()` takes the snapshot FIRST and mutates
+             * NOTHING if the snapshot is torn, so a refused command cannot
+             * have released the hold.  The old code stored
+             * `operator_hold_locked = 0` FIRST and only THEN took the
+             * snapshot, so an EBUSY return left the hold released even
+             * though the operator was told the command had failed.
+             */
+            latch_hold_state_t hold_state;
+            latch_hold_state_view(&hold_state);
+            if (!latch_hold_command(&hold_state, latch_hold_snapshot_cb, NULL,
+                                    cmd)) {
+                /* FAIL LOUDLY: a torn snapshot means the supervisor state
+                 * is not trustworthy, and recording a release against an
+                 * unknown rung would be exactly the silent-application
+                 * defect this fix exists to remove.  Nothing was written,
+                 * so the operator's hold is exactly as it was. */
+                return EBUSY;
             }
             nbytes_out = 0u;
             break;
@@ -3501,23 +3515,16 @@ static int latch_sim_devctl_actuator(bool caller_has_ability,
     }
     if (dcmd == (unsigned int)DCMD_LATCH_FORCE_HOLD && payload != NULL) {
         const latch_force_hold_cmd_t *cmd = (const latch_force_hold_cmd_t *)payload;
-        atomic_store_explicit(&g_simplex.operator_hold_locked,
-                              cmd->lock_hold ? 1u : 0u,
-                              memory_order_release);
-        if (cmd->lock_hold) {
-            atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);
-            atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);
-            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
-        } else {
-            latch_hold_status_t before;
-            if (!latch_fill_hold_status(&before)) {
-                return EBUSY;
-            }
-            atomic_store_explicit(&g_simplex.operator_release_rung,
-                                  before.rung,
-                                  memory_order_release);
-            atomic_store_explicit(&g_simplex.operator_release_pending, 1u, memory_order_release);
-            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);
+        /*
+         * The SAME shared decision the QNX resource manager uses, so the
+         * two paths cannot drift apart again.  The snapshot comes first and
+         * a refused command changes NOTHING.
+         */
+        latch_hold_state_t hold_state;
+        latch_hold_state_view(&hold_state);
+        if (!latch_hold_command(&hold_state, latch_hold_snapshot_cb, NULL,
+                                cmd)) {
+            return EBUSY;
         }
         return 0;
     }

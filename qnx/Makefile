@@ -84,7 +84,7 @@ GUESTD_BIN    := $(OUT_DIR)/latch_guestd
 MANIFEST_OBJ  := $(OUT_DIR)/latch_manifest.o
 IPC_OBJ       := $(OUT_DIR)/latch_ipc.o
 
-.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check
+.PHONY: all rpi4 x86_64 native host-sim check check-governor mutation-check clean dirs qemu guest-initrd guest-governor-initrd guest-governor-infer-initrd guest-governor-feedback-initrd guest-governor-feedback-verdict-initrd guest-governor-latency-soak-initrd fb-pump fbprobe-secpol ifs-qemu-fbprobe verify-fb-qemu ifs-qemu-fbverdict verify-fbverdict-qemu ifs-qemu-latency verify-latency-qemu guest-disk-image guest-disk-image-attack check-guest-initrd check-governor-initrd check-latency-initrd check-guest-disk check-guest-disk-attack governor-policy-check governor-wire-check latch-ipc-check governor-gate-check governor-homeostat-check latch-feedback-check latch-fb-decode-check latch-fb-reader-check latch-rm-attr-check latch-rm-notify-check latch-feedback-pub-check latch-manifest-check latch-action-check governor-e2e-check homeostat-e2e-check gov-replay-check verify-governor-qemu verify-governor-qemu-prebuilt ifs-qemu-infer ifs-qemu-infer-attack verify-infer-qemu verify-infer-qemu-attack stack-usage evidence evidence-host-sim evidence-on-target evidence-rederive-on-target evidence-build evidence-history evidence-tape evidence-resolution evidence-governor evidence-governor-qemu evidence-governor-vm-kill evidence-governor-feedback evidence-governor-latency evidence-baseline evidence-index evidence-check secpol-dump evidence-secpol-audit latch-soak-pace-check latch-hold-check
 
 ifeq ($(GUESTD_OK),1)
 all: $(LATCHD_BIN) $(INGEST_BIN) $(LATCHCTL_BIN) $(LATCHLOG_BIN) $(VERIFY_BIN) $(GUESTD_BIN)
@@ -192,6 +192,7 @@ check-governor: host-sim
 	$(MAKE) --no-print-directory latch-rm-attr-check
 	$(MAKE) --no-print-directory latch-rm-notify-check
 	$(MAKE) --no-print-directory latch-soak-pace-check
+	$(MAKE) --no-print-directory latch-hold-check
 	$(MAKE) --no-print-directory latch-feedback-pub-check
 	$(MAKE) --no-print-directory latch-manifest-check
 	./$(BUILD_DIR)/host-sim/latchctl manifest-verify contracts/governor_servo.manifest
@@ -273,7 +274,9 @@ check-asan:
 	$$ASAN_CC $$ASAN_FLAGS latch_rm_attr_test.c -o $(BUILD_DIR)/asan/latch_rm_attr_test -lpthread -lrt -lm && \
 	./$(BUILD_DIR)/asan/latch_rm_attr_test && \
 	$$ASAN_CC $$ASAN_FLAGS latch_rm_notify_test.c -o $(BUILD_DIR)/asan/latch_rm_notify_test -lpthread -lrt -lm && \
-	./$(BUILD_DIR)/asan/latch_rm_notify_test
+	./$(BUILD_DIR)/asan/latch_rm_notify_test && \
+	$$ASAN_CC $$ASAN_FLAGS latch_hold_test.c -o $(BUILD_DIR)/asan/latch_hold_test -lpthread -lrt -lm && \
+	./$(BUILD_DIR)/asan/latch_hold_test
 	@echo "[ASAN/UBSAN] ALL SANITIZER SUITES PASSED (0 MEMORY / UB VIOLATIONS)"
 
 fuzz: host-sim
@@ -362,6 +365,26 @@ $(BUILD_DIR)/host-sim/latch_soak_pace_test: ../guest/latch_soak_pace.h latch_soa
 
 latch-soak-pace-check: $(BUILD_DIR)/host-sim/latch_soak_pace_test
 	./$(BUILD_DIR)/host-sim/latch_soak_pace_test
+
+# THE OPERATOR-HOLD COMMAND'S ORDER OF OPERATIONS.
+#
+# `DCMD_LATCH_FORCE_HOLD` releases the operator's hold on the plant, and it
+# needs a snapshot of the supervisor's own state (to record WHICH rung the
+# operator was looking at).  The snapshot can fail, and when it does the
+# command must be REFUSED WITHOUT having changed anything -- the old code
+# released the hold BEFORE it took the snapshot, so an EBUSY return left the
+# hold released even though the operator was told the command had failed.
+#
+# The order now lives inside the SHIPPED header `qnx/latch_hold.h`, which
+# both the QNX resource manager and the host simulation call, so the two
+# copies cannot drift apart again.  The header takes the snapshot as a
+# CALLBACK, which is what lets this test hand it a snapshot that fails on
+# purpose and assert that not one byte of the hold state moved.
+$(BUILD_DIR)/host-sim/latch_hold_test: latch_hold.h latch_protocol.h latch_hold_test.c | dirs
+	$(CC) $(CFLAGS) latch_hold_test.c -o $@ $(LDFLAGS)
+
+latch-hold-check: $(BUILD_DIR)/host-sim/latch_hold_test
+	./$(BUILD_DIR)/host-sim/latch_hold_test
 
 # THE FEEDBACK SINK'S "FIRST READER" DECISION (C-1).
 #

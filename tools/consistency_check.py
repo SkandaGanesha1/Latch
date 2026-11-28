@@ -125,6 +125,41 @@ def c_func_body(src: str, name: str):
     return None
 
 
+def snapshot_callback_bodies(src: str):
+    """The bodies of every snapshot-callback definition in `src`.
+
+    The callback is found by its SIGNATURE, not by its name: the point of
+    the rule is that the test drives the shipped decision with a snapshot
+    that FAILS, and a gate that pinned the callback's name would be a
+    gate about a spelling rather than about the behaviour.
+
+    The body is extracted with brace matching rather than with a regular
+    expression, because a callback's `return false` is normally preceded
+    by statements -- and a pattern that assumed it came first would
+    quietly stop matching a perfectly good test.
+    """
+    bodies = []
+    for m in re.finditer(
+            r"(?m)^[ \t]*(?:static[ \t]+)?bool[ \t]+[A-Za-z_][A-Za-z0-9_]*"
+            r"[ \t]*\([ \t]*void[ \t]*\*[ \t]*ctx[ \t]*,[ \t]*"
+            r"latch_hold_status_t[ \t]*\*[ \t]*out[ \t]*\)[ \t]*\{",
+            src):
+        i = m.end() - 1
+        depth = 0
+        j = i
+        n = len(src)
+        while j < n:
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies.append(src[i:j + 1])
+                    break
+            j += 1
+    return bodies
+
+
 def phase_marker_calls(src: str):
     """Return (start, end, argument_text) for every phase_marker(...) call.
 
@@ -1582,6 +1617,215 @@ def verify_feedback_pub_lifetime():
                "once by pthread_once, never destroyed, and the shipped "
                "host test proves that a refused publish, a status "
                "snapshot and a RESTART all work after a stop")
+
+
+# ---------------------------------------------------------------------------
+# THE OPERATOR-HOLD COMMAND'S ORDER OF OPERATIONS (NEW-4)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT IS A FAIL-OPEN ON THE ERROR PATH.
+#
+# `DCMD_LATCH_FORCE_HOLD` releases the operator's hold on the plant.  It
+# needs a snapshot of the supervisor's own state -- to record WHICH rung the
+# operator was looking at -- and the snapshot can fail (a torn seqlock
+# read).
+#
+# The old code stored `operator_hold_locked = 0` FIRST and only THEN took
+# the snapshot, so an EBUSY return left the hold RELEASED even though the
+# operator was told the command had failed.  A supervisor that reports an
+# error and changes the plant's behaviour at the same time is the worst
+# kind of fail-open.
+#
+# It existed in TWO places, because the QNX resource manager and the host
+# simulation each carried their own copy of the logic.  So the fix is not a
+# reorder -- it is ONE shared decision, `latch_hold_command()` in
+# qnx/latch_hold.h, whose ORDER is inside the function: it snapshots first
+# and mutates nothing if the snapshot fails.
+#
+# The gate therefore checks three things:
+#
+#   1. THE SHARED HEADER: the snapshot comes before the first write.
+#   2. BOTH CALL SITES: they call the shared decision, and NEITHER writes
+#      the hold itself -- so the two copies cannot come back.
+#   3. THE HOST TEST: it drives the SHIPPED header with a snapshot that
+#      fails on purpose and asserts that not one byte moved.
+
+
+def verify_force_hold_ordering():
+    """A refused operator-hold command changes NOTHING."""
+    qnx_dir = os.path.join(REPO_ROOT, "qnx")
+    hold_h_path = os.path.join(qnx_dir, "latch_hold.h")
+    latchd_path = os.path.join(qnx_dir, "latchd.c")
+    test_path = os.path.join(qnx_dir, "latch_hold_test.c")
+    makefile_path = os.path.join(qnx_dir, "Makefile")
+
+    for p in (hold_h_path, latchd_path, test_path, makefile_path):
+        if not os.path.isfile(p):
+            fail("Required artifact missing: %s" % p)
+
+    with io.open(hold_h_path, encoding="utf-8", errors="replace") as f:
+        hold_h = f.read()
+    with io.open(latchd_path, encoding="utf-8", errors="replace") as f:
+        latchd = f.read()
+    with io.open(test_path, encoding="utf-8", errors="replace") as f:
+        test_src = f.read()
+    with io.open(makefile_path, encoding="utf-8", errors="replace") as f:
+        makefile_text = f.read()
+
+    hold_h_code = strip_c_comments(hold_h)
+    latchd_code = strip_c_comments(latchd)
+
+    # --- 1. THE ORDER IS INSIDE THE SHARED DECISION ----------------------
+    #
+    # The snapshot has to come BEFORE the first write, and it has to be
+    # INSIDE the function: a caller that chose the order could choose it
+    # wrong again.
+    cmd_body = _c_inline_func_body(hold_h_code, "latch_hold_command")
+    if not cmd_body:
+        fail("qnx/latch_hold.h does not define latch_hold_command(): the "
+             "operator-hold command's order of operations has to live in ONE "
+             "place, because the QNX resource manager and the host "
+             "simulation each used to carry their own copy of it -- and one "
+             "of them had the hold released before the snapshot.")
+    else:
+        m_snap = re.search(r"snapshot\s*\(\s*ctx\s*,\s*&", cmd_body)
+        m_write = re.search(r"atomic_store_explicit\s*\(", cmd_body)
+        if not m_snap:
+            fail("qnx/latch_hold.h: latch_hold_command() must take the "
+                 "supervisor's snapshot BEFORE it writes anything.")
+        elif not m_write:
+            fail("qnx/latch_hold.h: latch_hold_command() does not write the "
+                 "hold state, so it cannot be the shared decision.")
+        elif m_snap.start() > m_write.start():
+            fail("qnx/latch_hold.h: latch_hold_command() WRITES the hold "
+                 "state before it takes the snapshot. The old code did "
+                 "exactly that, so a torn snapshot returned EBUSY with the "
+                 "operator's hold ALREADY RELEASED. The snapshot must come "
+                 "first, and a failed snapshot must mutate NOTHING.")
+        # And a refused snapshot must return BEFORE any write.
+        m_fail = re.search(r"if\s*\(\s*!\s*snapshot\s*\([^)]*\)\s*\)", cmd_body)
+        if not m_fail:
+            fail("qnx/latch_hold.h: latch_hold_command() must CHECK the "
+                 "snapshot's result, not merely take it.")
+        elif m_fail.end() > m_write.start():
+            fail("qnx/latch_hold.h: latch_hold_command() writes the hold "
+                 "state before it has checked whether the snapshot "
+                 "succeeded.")
+
+    # --- 2. BOTH CALL SITES USE THE SHARED DECISION ----------------------
+    #
+    # No copy of the logic may come back, so the supervisor must not write
+    # the hold itself: the ONLY writer is the shared header.
+    direct_writes = re.findall(
+        r"atomic_store_explicit\s*\(\s*&g_simplex\.operator_hold_locked",
+        latchd_code)
+    if direct_writes:
+        fail("qnx/latchd.c writes g_simplex.operator_hold_locked directly, "
+             "%d time(s). The hold's state is changed by ONE shared "
+             "decision (qnx/latch_hold.h's latch_hold_command()), so the "
+             "QNX resource manager and the host simulation cannot drift "
+             "apart -- which is how the fail-open came to exist in two "
+             "places in the first place." % len(direct_writes))
+
+    for label, anchor in (
+            ("the QNX resource manager's devctl path",
+             "case (unsigned int)DCMD_LATCH_FORCE_HOLD: {"),
+            ("the host simulation's devctl path",
+             "if (dcmd == (unsigned int)DCMD_LATCH_FORCE_HOLD && payload != NULL) {")):
+        i = latchd_code.find(anchor)
+        if i < 0:
+            fail("qnx/latchd.c no longer has %s (the anchor %r is gone), so "
+                 "the operator-hold command's order of operations cannot be "
+                 "checked." % (label, anchor))
+            continue
+        window = latchd_code[i:i + 2500]
+        if "latch_hold_command(" not in window:
+            fail("qnx/latchd.c: %s must call the shared "
+                 "latch_hold_command(). A hand-rolled copy of the logic is "
+                 "how the fail-open came to exist in two places." % label)
+        if "latch_hold_state_view(" not in window:
+            fail("qnx/latchd.c: %s must reach the hold state through "
+                 "latch_hold_state_view(), so both paths address the SAME "
+                 "members." % label)
+
+    # --- 3. THE HOST TEST DRIVES THE SHIPPED HEADER ----------------------
+    #
+    # The decisive check is the one the defect makes impossible: a snapshot
+    # that FAILS must leave every byte of the hold state alone.  The test
+    # has to contain a snapshot callback that fails, or it is not testing
+    # the thing.
+    #
+    # The callback is found by its SIGNATURE and its body is extracted with
+    # brace matching, because a callback's `return false` normally comes
+    # after a few statements -- a pattern that assumed it came first would
+    # quietly stop matching a perfectly good test.
+    failing_callbacks = [
+        b for b in snapshot_callback_bodies(strip_c_comments(test_src))
+        if re.search(r"\breturn\s+false\b", b)
+    ]
+    if not failing_callbacks:
+        fail("qnx/latch_hold_test.c must contain a snapshot callback that "
+             "FAILS. The decisive property is that a torn snapshot leaves "
+             "the hold state untouched, and a test that only ever hands the "
+             "command a good snapshot cannot see it.")
+
+    if "latch-hold-check" not in makefile_text:
+        fail("qnx/Makefile has no `latch-hold-check` target: the "
+             "operator-hold command's order of operations has no proof at "
+             "all.")
+    gov_target = ""
+    m_gov = re.search(r"(?ms)^check-governor:(.*?)(?=^\S)", makefile_text)
+    if m_gov:
+        gov_target = m_gov.group(1)
+    if "latch-hold-check" not in gov_target:
+        fail("qnx/Makefile's check-governor target must RUN "
+             "latch-hold-check, or the operator-hold command's order of "
+             "operations is not part of the regression suite.")
+
+    # --- 4. THE SHIPPED HEADER COMPILES AND BEHAVES ----------------------
+    cc = _c_compiler()
+    if cc is None:
+        pass_check("NEW-4 hold ordering: the shared decision snapshots "
+                   "before it writes, both call sites use it, and the host "
+                   "test is in the regression suite (the COMPILED proof was "
+                   "skipped -- no C compiler on PATH, so only the "
+                   "structural half of the gate ran)")
+    else:
+        tmp = tempfile.mkdtemp(prefix="latch_hold_")
+        try:
+            test_bin = os.path.join(tmp, "latch_hold_test")
+            comp = subprocess.run(
+                [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-D_POSIX_C_SOURCE=200809L", "-DLATCH_HOST_SIM",
+                 "-I", qnx_dir, test_path, "-o", test_bin,
+                 "-lpthread", "-lrt", "-lm"],
+                capture_output=True, text=True, timeout=180)
+            if comp.returncode != 0:
+                fail("the shipped qnx/latch_hold.h does not compile against "
+                     "its own host test: %s. The operator-hold command's "
+                     "order of operations has to be reachable from a HOST "
+                     "test, or the property it encodes cannot be proved "
+                     "off-target."
+                     % (comp.stderr.strip() or comp.stdout.strip()))
+            else:
+                run = subprocess.run([test_bin], capture_output=True, text=True,
+                                     timeout=120)
+                if run.returncode != 0:
+                    detail = (run.stdout.strip() or run.stderr.strip() or
+                              "exit status %d" % run.returncode)
+                    fail("a REFUSED operator-hold command does NOT leave "
+                         "the hold state untouched: %s. The old code "
+                         "released the hold BEFORE it took the snapshot, so "
+                         "an EBUSY return left the hold released even "
+                         "though the operator was told the command had "
+                         "failed." % detail)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        pass_check("NEW-4 hold ordering: the shared decision takes the "
+                   "snapshot BEFORE it writes, both call sites use it, and "
+                   "the shipped host test proves that a refused command "
+                   "changes NOTHING")
 
 
 def verify_first_reader_decision():
@@ -5225,6 +5469,15 @@ def main():
     # the defect is invisible when the code is RUN, so it is checked in
     # the SOURCE.  See `verify_feedback_pub_lifetime()`.
     verify_feedback_pub_lifetime()
+
+    # --- THE OPERATOR-HOLD COMMAND'S ORDER OF OPERATIONS (NEW-4) --------
+    #
+    # A refused `latchctl hold 0` must change NOTHING.  The old code
+    # released the hold BEFORE it took the snapshot, so an EBUSY return
+    # left the hold released even though the operator was told the command
+    # had failed -- a fail-open on the error path, in two copies.  See
+    # `verify_force_hold_ordering()`.
+    verify_force_hold_ordering()
 
     # THE TRANSPORT MUST NOT DEPEND ON THE MAILBOX.
     #

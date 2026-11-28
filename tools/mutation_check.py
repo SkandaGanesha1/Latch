@@ -1309,6 +1309,95 @@ MUTATIONS = [
      "qnx/latch_feedback_pub_test.c",
      [("        if (latch_feedback_pub_start(g_node_path_2) != 0) {",
        "        if (0) {")]),
+
+
+    # ------------------------------------------------------------------------
+    # NEW-4: THE OPERATOR-HOLD COMMAND'S ORDER OF OPERATIONS
+    # ------------------------------------------------------------------------
+    #
+    # `DCMD_LATCH_FORCE_HOLD` releases the operator's hold on the plant, and
+    # it needs a snapshot of the supervisor's own state.  The old code
+    # stored `operator_hold_locked = 0` FIRST and only THEN took the
+    # snapshot, so a torn snapshot returned EBUSY with the hold ALREADY
+    # RELEASED -- a fail-open on the error path, in two copies (the QNX
+    # resource manager and the host simulation each had their own).
+    #
+    # The fix is ONE shared decision whose ORDER is inside the function, so
+    # these mutations attack the order, the duplication and the proof.
+
+    ("NEW-4: the shared decision WRITES the hold before it takes the "
+     "snapshot (the old fail-open: a torn snapshot returned EBUSY with the "
+     "operator's hold already released)",
+     "qnx/latch_hold.h",
+     [("    if (!snapshot(ctx, &before)) {\n"
+       "        return false;\n"
+       "    }\n"
+       "\n"
+       "    atomic_store_explicit(st->hold_locked,\n"
+       "                          cmd->lock_hold ? 1u : 0u,\n"
+       "                          memory_order_release);",
+       "    atomic_store_explicit(st->hold_locked,\n"
+       "                          cmd->lock_hold ? 1u : 0u,\n"
+       "                          memory_order_release);\n"
+       "\n"
+       "    if (!snapshot(ctx, &before)) {\n"
+       "        return false;\n"
+       "    }")]),
+
+    ("NEW-4: the shared decision IGNORES the snapshot's failure (a torn "
+     "snapshot would be treated as a good one, and the release would be "
+     "recorded against a rung nobody saw)",
+     "qnx/latch_hold.h",
+     [("    if (!snapshot(ctx, &before)) {\n"
+       "        return false;\n"
+       "    }",
+       "    (void)snapshot(ctx, &before);")]),
+
+    ("NEW-4: the supervisor writes the hold state DIRECTLY again (the two "
+     "copies of the logic are how the fail-open came to exist in two "
+     "places)",
+     "qnx/latchd.c",
+     [("        latch_hold_state_t hold_state;\n"
+       "        latch_hold_state_view(&hold_state);\n"
+       "        if (!latch_hold_command(&hold_state, latch_hold_snapshot_cb, NULL,\n"
+       "                                cmd)) {\n"
+       "            return EBUSY;\n"
+       "        }",
+       "        atomic_store_explicit(&g_simplex.operator_hold_locked,\n"
+       "                              cmd->lock_hold ? 1u : 0u,\n"
+       "                              memory_order_release);\n"
+       "        if (cmd->lock_hold) {\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_pending, 0u, memory_order_release);\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_armed, 0u, memory_order_release);\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);\n"
+       "        } else {\n"
+       "            latch_hold_status_t before;\n"
+       "            if (!latch_fill_hold_status(&before)) {\n"
+       "                return EBUSY;\n"
+       "            }\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_rung,\n"
+       "                                  before.rung,\n"
+       "                                  memory_order_release);\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_pending, 1u, memory_order_release);\n"
+       "            atomic_store_explicit(&g_simplex.operator_release_deferred_ticks, 0u, memory_order_release);\n"
+       "        }")]),
+
+    ("NEW-4: the host test stops driving the FAILED-snapshot path (the one "
+     "the defect makes impossible is the one that would not be tested)",
+     "qnx/latch_hold_test.c",
+     [("    const bool applied = latch_hold_command(&g_state, snapshot_torn, NULL, &cmd);\n"
+       "\n"
+       "    check(!applied,\n"
+       "          \"a command whose snapshot FAILED is REFUSED\");",
+       "    const bool applied = latch_hold_command(&g_state, snapshot_ok, NULL, &cmd);\n"
+       "\n"
+       "    check(applied,\n"
+       "          \"a command whose snapshot FAILED is REFUSED\");")]),
+
+    ("NEW-4: the host test is dropped from the regression suite (the "
+     "operator-hold command's order of operations would have no proof)",
+     "qnx/Makefile",
+     [("\t$(MAKE) --no-print-directory latch-hold-check\n", "")]),
 ]
 
 
